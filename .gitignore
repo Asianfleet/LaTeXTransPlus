@@ -1,0 +1,8 @@
+.codex
+.claude
+.agent
+__pycache__
+*.pyc
+config/default.toml
+outputs
+tex source
