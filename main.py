@@ -1,8 +1,11 @@
 ﻿import argparse
 import os
+import sys
 import tarfile
 import zipfile
+from contextlib import contextmanager, redirect_stderr, redirect_stdout
 from pathlib import Path
+from typing import Iterator, Optional, TextIO
 
 import toml
 
@@ -18,6 +21,47 @@ from src.formats.latex.utils import (
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parent
+
+
+class _TeeWriter:
+    def __init__(self, *streams: TextIO):
+        self._streams = streams
+
+    def write(self, data: str) -> int:
+        for stream in self._streams:
+            stream.write(data)
+        return len(data)
+
+    def flush(self) -> None:
+        for stream in self._streams:
+            stream.flush()
+
+    def isatty(self) -> bool:
+        return any(getattr(stream, "isatty", lambda: False)() for stream in self._streams)
+
+
+@contextmanager
+def _tee_console_to_log(
+    log_path: Path,
+    stdout: Optional[TextIO] = None,
+    stderr: Optional[TextIO] = None,
+) -> Iterator[Path]:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    console_stdout = sys.stdout if stdout is None else stdout
+    console_stderr = sys.stderr if stderr is None else stderr
+
+    with log_path.open("w", encoding="utf-8", buffering=1) as log_file:
+        with redirect_stdout(_TeeWriter(console_stdout, log_file)):
+            with redirect_stderr(_TeeWriter(console_stderr, log_file)):
+                yield log_path
+
+
+def _project_output_dir(output_dir: str, target_language: str, project_dir: str) -> Path:
+    return Path(output_dir) / f"{target_language}_{os.path.basename(project_dir)}"
+
+
+def _project_log_path(output_dir: str, target_language: str, project_dir: str) -> Path:
+    return _project_output_dir(output_dir, target_language, project_dir) / "latextrans.log"
 
 
 def _resolve_path(path_value: str) -> Path:
@@ -198,19 +242,23 @@ def main():
         raise ValueError("No valid TeX projects available for processing.")
 
     total_projects = len(projects)
+    target_language = config.get("target_language", "ch")
     for idx, project_dir in enumerate(projects, start=1):
-        print(f"[{idx}/{total_projects}] Processing {os.path.basename(project_dir)}")
+        log_path = _project_log_path(output_dir, target_language, project_dir)
+        with _tee_console_to_log(log_path):
+            print(f"Console log will be saved to: {log_path}")
+            print(f"[{idx}/{total_projects}] Processing {os.path.basename(project_dir)}")
 
-        try:
-            latex_trans = CoordinatorAgent(
-                config=config,
-                project_dir=project_dir,
-                output_dir=output_dir,
-            )
-            latex_trans.workflow_latextrans()
-        except Exception as e:
-            print(f"Error processing project {os.path.basename(project_dir)}: {e}")
-            continue
+            try:
+                latex_trans = CoordinatorAgent(
+                    config=config,
+                    project_dir=project_dir,
+                    output_dir=output_dir,
+                )
+                latex_trans.workflow_latextrans()
+            except Exception as e:
+                print(f"Error processing project {os.path.basename(project_dir)}: {e}")
+                continue
 
 
 if __name__ == "__main__":
