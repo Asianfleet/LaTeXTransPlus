@@ -661,7 +661,7 @@ class TranslatorAgent(BaseToolAgent):
                                                    type: str,
                                                    session: aiohttp.ClientSession) -> str:
 
-        user_prompt = f"[Original]:\n{part['content']}\n[Translation]:\n{part['trans_content']}\n[Error]:\n{error_message}"
+        user_prompt = self._build_retranslation_user_prompt(part, error_message)
         # print(user_prompt,'\n')
         payload = {
             "model": f"{self.model}",
@@ -707,6 +707,66 @@ class TranslatorAgent(BaseToolAgent):
 
                     print(f"Failed to translate text, return original text: {fail_part}. {e}")
                     return part["trans_content"]
+
+    def _build_retranslation_user_prompt(self, part: Dict[str, Any], error_message: str) -> str:
+        diagnostics = self._build_error_diagnostics(part, error_message)
+        return (
+            f"[Original]:\n{part['content']}\n"
+            f"[Translation]:\n{part['trans_content']}\n"
+            f"[Error]:\n{error_message}\n"
+            f"[Concrete Fix Checklist]:\n{diagnostics}"
+        )
+
+    def _build_error_diagnostics(self, part: Dict[str, Any], error_message: str) -> str:
+        diagnostics = []
+        command_errors = re.findall(
+            r"'(\\[^']+)'\s+—\s+expected\s+(\d+),\s+found\s+(\d+)",
+            error_message,
+        )
+        for command, expected, found in command_errors:
+            diagnostics.append(
+                f"- Preserve command `{command}`: source count={expected}, translation count={found}."
+            )
+            source_occurrences = self._format_command_occurrences(
+                "Source occurrences", part.get("content", ""), command
+            )
+            translation_occurrences = self._format_command_occurrences(
+                "Translation occurrences", part.get("trans_content", ""), command
+            )
+            diagnostics.extend([source_occurrences, translation_occurrences])
+
+        if "Brackets error" in error_message:
+            diagnostics.append(
+                "- Fix only the reported bracket mismatch. Keep LaTeX optional labels such as "
+                r"`\item[...]` structurally valid and do not add unmatched text parentheses."
+            )
+
+        if "Missing placeholders" in error_message or "Extra placeholders" in error_message:
+            diagnostics.append(
+                "- Match every placeholder in [Original] exactly once in the corrected translation."
+            )
+
+        if not diagnostics:
+            diagnostics.append("- Apply the [Error] details exactly and preserve all LaTeX syntax.")
+
+        diagnostics.append(
+            "- Return the full corrected translation, not a patch or explanation."
+        )
+        return "\n".join(diagnostics)
+
+    def _format_command_occurrences(self, title: str, text: str, command: str) -> str:
+        snippets = []
+        for idx, match in enumerate(re.finditer(re.escape(command), text), start=1):
+            start = max(0, match.start() - 40)
+            end = min(len(text), match.end() + 80)
+            snippet = text[start:end].replace("\n", " ")
+            snippets.append(f"  {idx}. ...{snippet}...")
+            if idx >= 5:
+                break
+
+        if not snippets:
+            return f"{title}:\n  none"
+        return f"{title}:\n" + "\n".join(snippets)
 
     async def _request_llm_for_extract_terms(self, system_prompt, src, tgt,
                                        session: aiohttp.ClientSession) -> str:

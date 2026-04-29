@@ -16,6 +16,22 @@ from .tool_agents.validator_agent import ValidatorAgent
 import gc
 
 
+def format_translation_result_message(
+    system_name: str,
+    base_name: str,
+    pdf_path: str,
+    validation_error_count: int = 0,
+) -> str:
+    if validation_error_count:
+        errors_report_path = os.path.join(os.path.dirname(pdf_path), "errors_report.json")
+        return (
+            f"🤖⚠️ {system_name}: PDF generated with validation warnings for {base_name}; "
+            f"remaining validation errors: {validation_error_count}. "
+            f"PDF: {pdf_path}. Error report: {errors_report_path}."
+        )
+    return f"🤖🎉 {system_name}: Successfully translated {base_name} to {pdf_path}."
+
+
 class CoordinatorAgent:
     """
     The main orchestrator agent for the translation system.
@@ -80,6 +96,8 @@ class CoordinatorAgent:
             errors_report = validator_agent.execute(errors_report)
             retry_count += 1
 
+        validation_error_count = len(errors_report) if errors_report else 0
+
         generator_agent = GeneratorAgent(config=self.config,
                                          project_dir=self.project_dir,
                                          output_dir=transed_project_dir)
@@ -93,7 +111,14 @@ class CoordinatorAgent:
         if PDF_file_path:
             new_PDF_path = os.path.join(transed_project_dir, f"{self.target_language}_{base_name}.pdf")
             shutil.move(PDF_file_path, new_PDF_path)
-            print(f"🤖🎉 {self.name}: Successfully translated {os.path.basename(self.project_dir)} to {new_PDF_path}.")
+            print(
+                format_translation_result_message(
+                    system_name=self.name,
+                    base_name=os.path.basename(self.project_dir),
+                    pdf_path=new_PDF_path,
+                    validation_error_count=validation_error_count,
+                )
+            )
         else:
             print(f"🤖🚧 {self.name}: Failed to translated {os.path.basename(self.project_dir)}.")
 

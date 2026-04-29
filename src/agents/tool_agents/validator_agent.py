@@ -91,14 +91,23 @@ class ValidatorAgent(BaseToolAgent):
 
         errors = []
         for elem, count in src_counter.items():
-            match = re.findall(re.escape(elem), trans)
-            # trans_count = trans_counter.get(elem, 0)
-            if len(match) < count:
-                errors.append(f"'{elem}' — expected {count}, found {len(match)}")
+            aliases = self._equivalent_commands(elem)
+            found = sum(trans_counter.get(alias, 0) for alias in aliases)
+            if found < count:
+                errors.append(f"'{elem}' — expected {count}, found {found}")
 
         if errors:
             return "LaTeX command translation error or is missing:\n" + "\n".join(errors)
         return None        
+
+    def _equivalent_commands(self, command: str) -> set[str]:
+        equivalent_groups = [
+            {"\\bf", "\\textbf"},
+        ]
+        for group in equivalent_groups:
+            if command in group:
+                return group
+        return {command}
 
     def _validate_placeholder(self, part :Dict[str, Any])-> Optional[str]:
 
@@ -130,6 +139,7 @@ class ValidatorAgent(BaseToolAgent):
         if org:
             bracket_pairs = {'[': ']', '{': '}'}    
         else:
+            content = self._mask_item_optional_labels(content)
             bracket_pairs = {'(': ')', '[': ']', '{': '}'}
         opening_brackets = set(bracket_pairs.keys())
         closing_brackets = set(bracket_pairs.values())
@@ -155,6 +165,34 @@ class ValidatorAgent(BaseToolAgent):
             errors.append(f"Unmatched opening bracket '{open_bracket}' at position {pos}, fragment: {fragment}")
 
         return errors
+
+    def _mask_item_optional_labels(self, content: str) -> str:
+        chars = list(content)
+        item_pattern = re.compile(r"\\item\b")
+        for match in item_pattern.finditer(content):
+            idx = match.end()
+            while idx < len(content) and content[idx].isspace():
+                idx += 1
+            if idx >= len(content) or content[idx] != "[":
+                continue
+
+            depth = 0
+            pos = idx
+            while pos < len(content):
+                if content[pos] == "\\":
+                    pos += 2
+                    continue
+                if content[pos] == "[":
+                    depth += 1
+                elif content[pos] == "]":
+                    depth -= 1
+                    if depth == 0:
+                        for mask_pos in range(idx, pos + 1):
+                            chars[mask_pos] = " "
+                        break
+                pos += 1
+
+        return "".join(chars)
 
     def _extract_latex_elements_with_counts(self, content: str) -> Counter:
         elements = []
