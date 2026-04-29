@@ -23,7 +23,6 @@ setup(
     entry_points={
         "console_scripts": [
             "latextrans=main:main",
-            "latextrans-gui=src.gui.launcher:main",
         ],
     },
 )

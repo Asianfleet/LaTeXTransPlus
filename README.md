@@ -153,20 +153,6 @@ To process every existing project under `tex source`, run:
 latextrans --all-existing
 ```
 
-### GUI via Streamlit
-
-If you want a browser-based GUI with live workflow progress, logs, and runtime configuration, launch:
-
-```bash
-latextrans-gui
-```
-
-Or run Streamlit directly:
-
-```bash
-streamlit run src/gui/streamlit_app.py
-```
-
  > [!NOTE]
 Although LaTeXTrans supports translation from any language to any language, the current version has only made relatively complete compilation adaptations for translation from English to Chinese. When translating to other languages, the final output pdf may contain errors. We welcome you to raise an issue to describe the problem you have encountered, and we will solve it case by case.
 

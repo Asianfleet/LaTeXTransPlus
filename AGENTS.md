@@ -2,15 +2,13 @@
 
 ## Project Structure & Module Organization
 
-LaTeXTrans is a Python package for translating LaTeX paper sources and generating translated PDFs. The CLI entry point lives in `main.py`, while reusable package code is under `src/`. Agent orchestration code is in `src/agents/`, LaTeX parsing/compilation helpers are in `src/formats/latex/`, GUI launch code is in `src/gui/`, and runtime/config helpers are in `src/runtime.py` and `src/config.py`. Default configuration lives in `config/default.toml`. Terminology CSVs are stored in `terms/`, examples and sample PDFs/images in `examples/`, evaluation scripts in `evaluation/scripts/`, and tests in `tests/`.
+LaTeXTrans is a Python package for translating LaTeX paper sources and generating translated PDFs. The CLI entry point lives in `main.py`, while reusable package code is under `src/`. Agent orchestration code is in `src/agents/`, LaTeX parsing/compilation helpers are in `src/formats/latex/`, and runtime/config helpers are in `src/runtime.py` and `src/config.py`. Default configuration lives in `config/default.toml`. Terminology CSVs are stored in `terms/`, examples and sample PDFs/images in `examples/`, evaluation scripts in `evaluation/scripts/`, and tests in `tests/`.
 
 ## Build, Test, and Development Commands
 
 - `pip install -e .`: install the package in editable mode with console scripts.
 - `latextrans --arxiv 2508.18791`: run the translation workflow for an arXiv ID.
 - `latextrans --project D:\path\to\paper_source.tar.gz`: process a local LaTeX project or archive.
-- `latextrans-gui`: launch the Streamlit GUI through the package entry point.
-- `streamlit run src/gui/streamlit_app.py`: run the GUI directly during development.
 - `python -m unittest discover tests`: run the current test suite.
 
 Install MiKTeX or TeXLive before testing PDF compilation paths.
@@ -25,11 +23,11 @@ Tests currently use the standard `unittest` framework. Add tests under `tests/` 
 
 ## Project Lessons
 
-- 这个项目有两条配置加载路径，`main.py` 和 `src/runtime.py` 都会加载配置；类似配置语义变更必须抽出公共 helper，否则 CLI 和 GUI 很容易行为不一致。
+- 这个项目有两条配置加载路径，`main.py` 和 `src/runtime.py` 都会加载配置；类似配置语义变更必须抽出公共 helper，否则 CLI 入口和 runtime helper 很容易行为不一致。
 
 ## Commit & Pull Request Guidelines
 
-Recent commits use short messages such as `chore: 忽略生成文件` and `Update README`. Prefer concise, imperative messages; use a scoped conventional prefix when helpful, for example `fix(config): resolve API key from env`. Pull requests should describe the workflow affected, list verification commands, note configuration changes, and include screenshots only for GUI-facing changes.
+Recent commits use short messages such as `chore: 忽略生成文件` and `Update README`. Prefer concise, imperative messages; use a scoped conventional prefix when helpful, for example `fix(config): resolve API key from env`. Pull requests should describe the workflow affected, list verification commands, and note configuration changes.
 
 ## Security & Configuration Tips
 

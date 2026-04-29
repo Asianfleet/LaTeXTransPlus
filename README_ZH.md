@@ -145,21 +145,7 @@ latextrans --project D:\\path\\to\\paper_project_dir
 latextrans --all-existing
 ```
 
-### Streamlit GUI
-
-如果你想使用带有进度显示、日志和可配置参数的图形界面，可以运行：
-
-```bash
-latextrans-gui
-```
-
-也可以直接使用 Streamlit：
-
-```bash
-streamlit run src/gui/streamlit_app.py
-```
-
-该命令将：
+LaTeXTrans CLI 会根据输入执行以下流程：
 
 1. 从 arXiv 下载 LaTeX 源码并解压
 2. 执行由解析、翻译、重构和编译组成的工作流
