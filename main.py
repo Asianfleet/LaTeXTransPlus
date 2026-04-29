@@ -7,6 +7,7 @@ from pathlib import Path
 import toml
 
 from src.agents.coordinator_agent import CoordinatorAgent
+from src.config import resolve_llm_api_key
 from src.formats.latex.prompts import *
 from src.formats.latex.utils import (
     batch_download_arxiv_tex,
@@ -145,6 +146,7 @@ def main():
         config["llm_config"]["model"] = args.model
     if args.key:
         config["llm_config"]["api_key"] = args.key
+    resolve_llm_api_key(config)
     if args.source:
         config["tex_sources_dir"] = args.source
     if args.output:

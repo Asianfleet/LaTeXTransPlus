@@ -75,13 +75,15 @@ pip install -e .
 config/default.toml
 ```
 
-设置语言模型的API密钥和基础URL：
+设置语言模型的 API key 环境变量名称和基础 URL：
 
 ```toml
 model = " " # model name (For example, deepseek-chat)
-api_key = " " # your_api_key_here
+api_key_env = " " # 保存 API key 的环境变量名称
 base_url = " " # base url of the API (For example, https://api.deepseek.com/v1/chat/completions)
 ```
+
+例如在 `default.toml` 中设置 `api_key_env = "MY_LLM_API_KEY"`，然后在 shell 或系统环境变量中把 `MY_LLM_API_KEY` 设置为真实 API key。
 
  > [!NOTE]
 下面的例子是对于不同的模型，推荐使用的base_url：

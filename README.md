@@ -77,13 +77,15 @@ Please edit the configuration file before use:
 config/default.toml
 ```
 
-Set the language model's API key and base URL in default.toml :
+Set the language model's API key environment variable name and base URL in default.toml :
 
 ```toml
 model = " " # model name (For example, deepseek-chat)
-api_key = " " # your_api_key_here
+api_key_env = " " # environment variable name that stores your API key
 base_url = " " # base url of the API (For example, https://api.deepseek.com/v1/chat/completions)
 ```
+
+For example, set `api_key_env = "MY_LLM_API_KEY"` in `default.toml`, then set `MY_LLM_API_KEY` in your shell or system environment to the real API key.
 
  > [!NOTE]
 The following example shows the recommended base_url for different models:

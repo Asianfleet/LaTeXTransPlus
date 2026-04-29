@@ -23,6 +23,10 @@ Use Python 3.10+ style with 4-space indentation, explicit imports, and `pathlib.
 
 Tests currently use the standard `unittest` framework. Add tests under `tests/` with filenames like `test_runtime_config.py` and test classes ending in `Tests`. Prefer temporary directories and environment variable isolation for filesystem or configuration behavior. Run `python -m unittest discover tests` before submitting changes.
 
+## Project Lessons
+
+- 这个项目有两条配置加载路径，`main.py` 和 `src/runtime.py` 都会加载配置；类似配置语义变更必须抽出公共 helper，否则 CLI 和 GUI 很容易行为不一致。
+
 ## Commit & Pull Request Guidelines
 
 Recent commits use short messages such as `chore: 忽略生成文件` and `Update README`. Prefer concise, imperative messages; use a scoped conventional prefix when helpful, for example `fix(config): resolve API key from env`. Pull requests should describe the workflow affected, list verification commands, note configuration changes, and include screenshots only for GUI-facing changes.

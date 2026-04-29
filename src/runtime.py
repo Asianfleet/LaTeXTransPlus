@@ -7,6 +7,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
 import toml
 
 from src.agents.coordinator_agent import CoordinatorAgent
+from src.config import resolve_llm_api_key
 from src.formats.latex.utils import (
     batch_download_arxiv_tex,
     extract_arxiv_ids,
@@ -128,6 +129,7 @@ def load_runtime_config(
         llm_config["model"] = overrides["model"]
     if overrides.get("key"):
         llm_config["api_key"] = overrides["key"]
+    resolve_llm_api_key(config)
 
     for key in ("source", "output", "source_language", "target_language", "user_term"):
         if overrides.get(key):
