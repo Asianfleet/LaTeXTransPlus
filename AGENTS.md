@@ -1,0 +1,32 @@
+# Repository Guidelines
+
+## Project Structure & Module Organization
+
+LaTeXTrans is a Python package for translating LaTeX paper sources and generating translated PDFs. The CLI entry point lives in `main.py`, while reusable package code is under `src/`. Agent orchestration code is in `src/agents/`, LaTeX parsing/compilation helpers are in `src/formats/latex/`, GUI launch code is in `src/gui/`, and runtime/config helpers are in `src/runtime.py` and `src/config.py`. Default configuration lives in `config/default.toml`. Terminology CSVs are stored in `terms/`, examples and sample PDFs/images in `examples/`, evaluation scripts in `evaluation/scripts/`, and tests in `tests/`.
+
+## Build, Test, and Development Commands
+
+- `pip install -e .`: install the package in editable mode with console scripts.
+- `latextrans --arxiv 2508.18791`: run the translation workflow for an arXiv ID.
+- `latextrans --project D:\path\to\paper_source.tar.gz`: process a local LaTeX project or archive.
+- `latextrans-gui`: launch the Streamlit GUI through the package entry point.
+- `streamlit run src/gui/streamlit_app.py`: run the GUI directly during development.
+- `python -m unittest discover tests`: run the current test suite.
+
+Install MiKTeX or TeXLive before testing PDF compilation paths.
+
+## Coding Style & Naming Conventions
+
+Use Python 3.10+ style with 4-space indentation, explicit imports, and `pathlib.Path` for filesystem paths where practical. Keep functions small and name helpers with clear snake_case verbs, such as `_safe_extract_tar` or `load_runtime_config`. Preserve existing public CLI option names and configuration keys. When editing configuration examples, keep TOML keys aligned with `config/default.toml`.
+
+## Testing Guidelines
+
+Tests currently use the standard `unittest` framework. Add tests under `tests/` with filenames like `test_runtime_config.py` and test classes ending in `Tests`. Prefer temporary directories and environment variable isolation for filesystem or configuration behavior. Run `python -m unittest discover tests` before submitting changes.
+
+## Commit & Pull Request Guidelines
+
+Recent commits use short messages such as `chore: 忽略生成文件` and `Update README`. Prefer concise, imperative messages; use a scoped conventional prefix when helpful, for example `fix(config): resolve API key from env`. Pull requests should describe the workflow affected, list verification commands, note configuration changes, and include screenshots only for GUI-facing changes.
+
+## Security & Configuration Tips
+
+Do not commit API keys. Store secrets in environment variables. Treat `outputs/`, `tex source/`, downloaded archives, and compiled PDFs as generated artifacts unless a fixture is intentionally added for tests or documentation.
