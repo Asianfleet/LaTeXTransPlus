@@ -1,0 +1,33 @@
+sys_name = "LaTeXTrans"
+version = "0.1.0"
+target_language = "ch"
+source_language = "en"
+paper_list = []
+tex_sources_dir = "tex source"
+output_dir = "outputs"
+category = {}
+update_term = "False"
+mode = 0
+user_term = ""
+
+[validation.retry]
+max_attempts = 3
+generate_pdf_on_error = true
+fail_on_error = true
+
+[validation.issues.command_mismatch]
+severity = "error"
+retryable = true
+
+[validation.issues.placeholder_mismatch]
+severity = "error"
+retryable = true
+
+[validation.issues.bracket_mismatch]
+severity = "error"
+retryable = true
+
+[llm_config]
+model = "deepseek-v4-flash"
+api_key_env = "DEEPSEEK_API_KEY"
+base_url = "https://api.deepseek.com/chat/completions"
