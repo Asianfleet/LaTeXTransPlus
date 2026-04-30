@@ -13,6 +13,7 @@ from .tool_agents.parser_agent import ParserAgent
 from .tool_agents.translator_agent import TranslatorAgent 
 from .tool_agents.generator_agent import GeneratorAgent
 from .tool_agents.validator_agent import ValidatorAgent
+from src.validation_policy import ValidationPolicy
 import gc
 
 
@@ -59,14 +60,47 @@ def merge_validation_reports(
     return preserved_reports + retry_results
 
 
+def should_generate_pdf_after_validation(
+    validation_summary: Dict[str, int],
+    generate_pdf_on_error: bool,
+) -> bool:
+    return validation_summary.get("errors", 0) == 0 or generate_pdf_on_error
+
+
+def build_workflow_result(
+    project_name: str,
+    pdf_path: Optional[str],
+    errors_report_path: str,
+    validation_summary: Dict[str, int],
+    validation_failed: bool,
+    error: Optional[str] = None,
+) -> Dict[str, Any]:
+    return {
+        "project_name": project_name,
+        "ok": not validation_failed and error is None,
+        "pdf_path": pdf_path,
+        "errors_report_path": errors_report_path,
+        "validation_summary": validation_summary,
+        "error": error,
+    }
+
+
 def format_translation_result_message(
     system_name: str,
     base_name: str,
     pdf_path: str,
     validation_summary: Optional[Dict[str, int]] = None,
+    validation_failed: bool = False,
 ) -> str:
     validation_summary = validation_summary or {"warnings": 0, "errors": 0, "total": 0}
     errors_report_path = os.path.join(os.path.dirname(pdf_path), "errors_report.json")
+    if validation_failed and validation_summary["errors"]:
+        return (
+            f"🤖❌ {system_name}: PDF generated but validation failed for {base_name}; "
+            f"remaining validation errors: {validation_summary['errors']}, "
+            f"warnings: {validation_summary['warnings']}. "
+            f"PDF: {pdf_path}. Error report: {errors_report_path}."
+        )
     if validation_summary["errors"]:
         return (
             f"🤖⚠️ {system_name}: PDF generated with validation errors for {base_name}; "
@@ -106,6 +140,7 @@ class CoordinatorAgent:
         self.output_dir = output_dir  # Output directory for parsed files
         self.loop = asyncio.new_event_loop()
         self.mode = config.get("mode", 0)
+        self.validation_policy = ValidationPolicy.from_config(config or {})
 
     def run_async(self, coro):
         """
@@ -113,7 +148,7 @@ class CoordinatorAgent:
         """
         return self.loop.run_until_complete(coro)
 
-    async def workflow_latextrans_async(self) -> None:
+    async def workflow_latextrans_async(self) -> Dict[str, Any]:
         """
         initializes the tool agent based on the provided agent name key.
         """
@@ -137,14 +172,14 @@ class CoordinatorAgent:
                                             output_dir=transed_project_dir)
         errors_report = validator_agent.execute()
         retryable_reports = filter_retryable_reports(errors_report)
-        MAX_RETRIES = 3
+        max_retries = self.validation_policy.max_attempts()
         retry_count = 0
         if retryable_reports:
             translator_agent.trans_mode = 1
 
-        while retryable_reports and retry_count < MAX_RETRIES: # 3 times
+        while retryable_reports and retry_count < max_retries:
             translator_agent.errors_report = retryable_reports
-            await translator_agent.execute(error_retry_count=retry_count, Maxtry=MAX_RETRIES)
+            await translator_agent.execute(error_retry_count=retry_count, Maxtry=max_retries)
             retry_results = validator_agent.execute(retryable_reports)
             errors_report = merge_validation_reports(errors_report, retryable_reports, retry_results)
             validator_agent.save_file(Path(transed_project_dir, "errors_report.json"), "json", errors_report)
@@ -152,6 +187,24 @@ class CoordinatorAgent:
             retry_count += 1
 
         validation_summary = summarize_validation_reports(errors_report or [])
+        validation_failed = self.validation_policy.should_fail(validation_summary)
+        errors_report_path = os.path.join(transed_project_dir, "errors_report.json")
+
+        if not should_generate_pdf_after_validation(
+            validation_summary=validation_summary,
+            generate_pdf_on_error=self.validation_policy.generate_pdf_on_error(),
+        ):
+            print(
+                f"🤖❌ {self.name}: Validation failed for {base_name}; "
+                f"PDF generation skipped. Error report: {errors_report_path}."
+            )
+            return build_workflow_result(
+                project_name=base_name,
+                pdf_path=None,
+                errors_report_path=errors_report_path,
+                validation_summary=validation_summary,
+                validation_failed=True,
+            )
 
         generator_agent = GeneratorAgent(config=self.config,
                                          project_dir=self.project_dir,
@@ -161,7 +214,14 @@ class CoordinatorAgent:
             PDF_file_path = generator_agent.execute()
         except Exception as e:
             print(f"🤖🚧 {self.name}: Failed to translated {os.path.basename(self.project_dir)}.{e}")
-            return
+            return build_workflow_result(
+                project_name=base_name,
+                pdf_path=None,
+                errors_report_path=errors_report_path,
+                validation_summary=validation_summary,
+                validation_failed=True,
+                error=str(e),
+            )
         
         if PDF_file_path:
             new_PDF_path = os.path.join(transed_project_dir, f"{self.target_language}_{base_name}.pdf")
@@ -172,13 +232,29 @@ class CoordinatorAgent:
                     base_name=os.path.basename(self.project_dir),
                     pdf_path=new_PDF_path,
                     validation_summary=validation_summary,
+                    validation_failed=validation_failed,
                 )
+            )
+            return build_workflow_result(
+                project_name=base_name,
+                pdf_path=new_PDF_path,
+                errors_report_path=errors_report_path,
+                validation_summary=validation_summary,
+                validation_failed=validation_failed,
             )
         else:
             print(f"🤖🚧 {self.name}: Failed to translated {os.path.basename(self.project_dir)}.")
+            return build_workflow_result(
+                project_name=base_name,
+                pdf_path=None,
+                errors_report_path=errors_report_path,
+                validation_summary=validation_summary,
+                validation_failed=True,
+                error="PDF generation returned no output path",
+            )
 
 
-    def workflow_latextrans(self) -> None:
+    def workflow_latextrans(self) -> Dict[str, Any]:
         """
         Initialize the tool agent and execute the LaTeX conversion workflow 
         (with event loop security management)
@@ -191,7 +267,7 @@ class CoordinatorAgent:
         asyncio.set_event_loop(self.loop)
 
         try:
-            self.loop.run_until_complete(self.workflow_latextrans_async())
+            return self.loop.run_until_complete(self.workflow_latextrans_async())
 
         finally:
             # Complete all asynchronous resource recycling
