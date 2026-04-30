@@ -16,17 +16,68 @@ from .tool_agents.validator_agent import ValidatorAgent
 import gc
 
 
+def filter_retryable_reports(reports: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    return [report for report in reports if report.get("retryable", True)]
+
+
+def summarize_validation_reports(reports: List[Dict[str, Any]]) -> Dict[str, int]:
+    summary = {"warnings": 0, "errors": 0, "total": len(reports)}
+    for report in reports:
+        severity = report.get("severity", "error")
+        if severity == "warning":
+            summary["warnings"] += 1
+        else:
+            summary["errors"] += 1
+    return summary
+
+
+def _validation_report_key(report: Dict[str, Any]) -> Optional[tuple]:
+    part = report.get("part")
+    identifier = report.get("num_or_ph")
+    if part is None or identifier is None:
+        return None
+    return part, identifier
+
+
+def merge_validation_reports(
+    previous_reports: List[Dict[str, Any]],
+    retryable_reports: List[Dict[str, Any]],
+    retry_results: List[Dict[str, Any]],
+) -> List[Dict[str, Any]]:
+    retried_keys = {
+        key for key in (_validation_report_key(report) for report in retryable_reports)
+        if key is not None
+    }
+    preserved_reports = []
+    for report in previous_reports:
+        key = _validation_report_key(report)
+        if key is not None:
+            if key not in retried_keys:
+                preserved_reports.append(report)
+        elif report not in retryable_reports:
+            preserved_reports.append(report)
+    return preserved_reports + retry_results
+
+
 def format_translation_result_message(
     system_name: str,
     base_name: str,
     pdf_path: str,
-    validation_error_count: int = 0,
+    validation_summary: Optional[Dict[str, int]] = None,
 ) -> str:
-    if validation_error_count:
-        errors_report_path = os.path.join(os.path.dirname(pdf_path), "errors_report.json")
+    validation_summary = validation_summary or {"warnings": 0, "errors": 0, "total": 0}
+    errors_report_path = os.path.join(os.path.dirname(pdf_path), "errors_report.json")
+    if validation_summary["errors"]:
+        return (
+            f"🤖⚠️ {system_name}: PDF generated with validation errors for {base_name}; "
+            f"remaining validation errors: {validation_summary['errors']}, "
+            f"warnings: {validation_summary['warnings']}. "
+            f"PDF: {pdf_path}. Error report: {errors_report_path}."
+        )
+    if validation_summary["warnings"]:
         return (
             f"🤖⚠️ {system_name}: PDF generated with validation warnings for {base_name}; "
-            f"remaining validation errors: {validation_error_count}. "
+            f"remaining validation warnings: {validation_summary['warnings']}. "
             f"PDF: {pdf_path}. Error report: {errors_report_path}."
         )
     return f"🤖🎉 {system_name}: Successfully translated {base_name} to {pdf_path}."
@@ -85,18 +136,22 @@ class CoordinatorAgent:
                                             project_dir=self.project_dir,
                                             output_dir=transed_project_dir)
         errors_report = validator_agent.execute()
+        retryable_reports = filter_retryable_reports(errors_report)
         MAX_RETRIES = 3
         retry_count = 0
-        if errors_report:
+        if retryable_reports:
             translator_agent.trans_mode = 1
 
-        while errors_report and retry_count < MAX_RETRIES: # 3 times
-            translator_agent.errors_report = errors_report
+        while retryable_reports and retry_count < MAX_RETRIES: # 3 times
+            translator_agent.errors_report = retryable_reports
             await translator_agent.execute(error_retry_count=retry_count, Maxtry=MAX_RETRIES)
-            errors_report = validator_agent.execute(errors_report)
+            retry_results = validator_agent.execute(retryable_reports)
+            errors_report = merge_validation_reports(errors_report, retryable_reports, retry_results)
+            validator_agent.save_file(Path(transed_project_dir, "errors_report.json"), "json", errors_report)
+            retryable_reports = filter_retryable_reports(errors_report)
             retry_count += 1
 
-        validation_error_count = len(errors_report) if errors_report else 0
+        validation_summary = summarize_validation_reports(errors_report or [])
 
         generator_agent = GeneratorAgent(config=self.config,
                                          project_dir=self.project_dir,
@@ -116,7 +171,7 @@ class CoordinatorAgent:
                     system_name=self.name,
                     base_name=os.path.basename(self.project_dir),
                     pdf_path=new_PDF_path,
-                    validation_error_count=validation_error_count,
+                    validation_summary=validation_summary,
                 )
             )
         else:

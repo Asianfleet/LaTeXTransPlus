@@ -44,41 +44,64 @@ class ValidatorAgent(BaseToolAgent):
             error_report = self._validate(part)
             if error_report:
                 errors_report.append(error_report)
-        if errors_report:
-            self.save_file(Path(self.output_dir, "errors_report.json"), "json", errors_report)
+        self.save_file(Path(self.output_dir, "errors_report.json"), "json", errors_report)
 
         self.log(f"✅ Verification Complete for {os.path.basename(self.project_dir)}, remaining Errors: {len(errors_report)}.")
         return errors_report
 
+    def _make_issue(self, issue_type: str, message: str, severity: str, retryable: bool) -> Dict[str, Any]:
+        return {"type": issue_type, "severity": severity, "retryable": retryable, "message": message}
+
+    def _highest_severity(self, issues: List[Dict[str, Any]]) -> str:
+        if any(issue["severity"] == "error" for issue in issues):
+            return "error"
+        return "warning"
+
+    def _is_retryable(self, issues: List[Dict[str, Any]]) -> bool:
+        return any(issue.get("retryable", False) for issue in issues)
+
+    def _messages_for_type(self, issues: List[Dict[str, Any]], issue_type: str) -> List[str]:
+        return [issue["message"] for issue in issues if issue["type"] == issue_type]
+
     def _validate(self, part :Dict[str, Any]) -> Dict[str, Any]:
-        command_error = self._validate_command(part)
-        ph_error = self._validate_placeholder(part)
-        bracket_error = self._validate_closed_brackets(part)
-        error_report = {}
+        issues = []
+        issues.extend(self._validate_command(part) or [])
+        issues.extend(self._validate_placeholder(part) or [])
+        issues.extend(self._validate_closed_brackets(part) or [])
 
-        if not command_error and not ph_error and not bracket_error:
+        if not issues:
             return None
-        else: 
-            if "section" in part:
-                error_report["part"] = "sec"
-                error_report["num_or_ph"] = part["section"]
-            elif "env_name" in part:
-                error_report["part"] = "env"
-                error_report["num_or_ph"] = part["placeholder"]
-            elif "cap_type" in part:
-                error_report["part"] = "cap"
-                error_report["num_or_ph"] = part["placeholder"]
 
-            if command_error:
-                error_report["command_error"] = command_error
-            if ph_error:
-                error_report["ph_error"] = ph_error
-            if bracket_error:
-                error_report["bracket_error"] = bracket_error
+        error_report = {
+            "severity": self._highest_severity(issues),
+            "retryable": self._is_retryable(issues),
+            "issues": issues,
+        }
+
+        if "section" in part:
+            error_report["part"] = "sec"
+            error_report["num_or_ph"] = part["section"]
+        elif "env_name" in part:
+            error_report["part"] = "env"
+            error_report["num_or_ph"] = part["placeholder"]
+        elif "cap_type" in part:
+            error_report["part"] = "cap"
+            error_report["num_or_ph"] = part["placeholder"]
+
+        command_messages = self._messages_for_type(issues, "command_mismatch")
+        placeholder_messages = self._messages_for_type(issues, "placeholder_mismatch")
+        bracket_messages = self._messages_for_type(issues, "bracket_mismatch")
+
+        if command_messages:
+            error_report["command_error"] = "LaTeX command translation error or is missing:\n" + "\n".join(command_messages)
+        if placeholder_messages:
+            error_report["ph_error"] = "\n".join(placeholder_messages)
+        if bracket_messages:
+            error_report["bracket_error"] = "Brackets error:\n" + "\n".join(bracket_messages)
 
         return error_report
 
-    def _validate_command(self, part :Dict[str, Any])-> Optional[str]:
+    def _validate_command(self, part :Dict[str, Any])-> Optional[List[Dict[str, Any]]]:
         content = part.get("content", "")
         trans = part.get("trans_content", "")
 
@@ -89,16 +112,19 @@ class ValidatorAgent(BaseToolAgent):
         if src_counter == trans_counter:
             return None
 
-        errors = []
+        issues = []
         for elem, count in src_counter.items():
             aliases = self._equivalent_commands(elem)
             found = sum(trans_counter.get(alias, 0) for alias in aliases)
             if found < count:
-                errors.append(f"'{elem}' — expected {count}, found {found}")
+                issues.append(self._make_issue(
+                    issue_type="command_mismatch",
+                    message=f"'{elem}' — expected {count}, found {found}",
+                    severity="warning",
+                    retryable=False,
+                ))
 
-        if errors:
-            return "LaTeX command translation error or is missing:\n" + "\n".join(errors)
-        return None        
+        return issues or None
 
     def _equivalent_commands(self, command: str) -> set[str]:
         equivalent_groups = [
@@ -109,20 +135,30 @@ class ValidatorAgent(BaseToolAgent):
                 return group
         return {command}
 
-    def _validate_placeholder(self, part :Dict[str, Any])-> Optional[str]:
+    def _validate_placeholder(self, part :Dict[str, Any])-> Optional[List[Dict[str, Any]]]:
 
         original_placeholders = self._extract_placeholders(part["content"])
         translated_placeholders = self._extract_placeholders(part["trans_content"])
         missing = original_placeholders - translated_placeholders
         extra = translated_placeholders - original_placeholders
-        errors = []
+        issues = []
         if missing:
-            errors.append(f"Missing placeholders: {', '.join(sorted(missing))} translation error or is missing!") 
+            issues.append(self._make_issue(
+                issue_type="placeholder_mismatch",
+                message=f"Missing placeholders: {', '.join(sorted(missing))} translation error or is missing!",
+                severity="error",
+                retryable=True,
+            ))
         if extra:
-            errors.append(f"Extra placeholders: {', '.join(sorted(extra))} translation error or is redundant")
-        return "\n".join(errors) if errors else None
+            issues.append(self._make_issue(
+                issue_type="placeholder_mismatch",
+                message=f"Extra placeholders: {', '.join(sorted(extra))} translation error or is redundant",
+                severity="error",
+                retryable=True,
+            ))
+        return issues or None
         
-    def _validate_closed_brackets(self, part: Dict[str, Any]) -> Optional[str]:
+    def _validate_closed_brackets(self, part: Dict[str, Any]) -> Optional[List[Dict[str, Any]]]:
 
         content = part.get("content", "")
         trans_content = part.get("trans_content", "")
@@ -130,9 +166,13 @@ class ValidatorAgent(BaseToolAgent):
         errors = self._find_brackets_errors(trans_content)
 
         if errors and not org_errors:
-            return "Brackets error:\n" + "\n".join(errors)
-        else:
-            return None
+            return [self._make_issue(
+                issue_type="bracket_mismatch",
+                message="\n".join(errors),
+                severity="error",
+                retryable=True,
+            )]
+        return None
         
     def _find_brackets_errors(self, content, org=None):
 
@@ -140,7 +180,7 @@ class ValidatorAgent(BaseToolAgent):
             bracket_pairs = {'[': ']', '{': '}'}    
         else:
             content = self._mask_item_optional_labels(content)
-            bracket_pairs = {'(': ')', '[': ']', '{': '}'}
+            bracket_pairs = {'(': ')', '（': '）', '[': ']', '{': '}'}
         opening_brackets = set(bracket_pairs.keys())
         closing_brackets = set(bracket_pairs.values())
 
