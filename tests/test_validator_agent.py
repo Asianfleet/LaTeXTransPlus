@@ -26,7 +26,7 @@ class ValidatorAgentTests(unittest.TestCase):
 
         self.assertIsNone(self.validator._validate_closed_brackets(part))
 
-    def test_validate_command_mismatch_is_warning_not_retryable(self):
+    def test_validate_command_mismatch_uses_strict_default_policy(self):
         part = {
             "section": "5_3",
             "content": r"Use \textit{confidence} and \textit{uncertainty}.",
@@ -35,12 +35,36 @@ class ValidatorAgentTests(unittest.TestCase):
 
         report = self.validator._validate(part)
 
+        self.assertEqual(report["severity"], "error")
+        self.assertTrue(report["retryable"])
+        self.assertEqual(report["issues"][0]["type"], "command_mismatch")
+        self.assertEqual(report["issues"][0]["severity"], "error")
+        self.assertTrue(report["issues"][0]["retryable"])
+        self.assertIn("command_error", report)
+
+    def test_validate_command_mismatch_can_be_configured_as_warning(self):
+        validator = ValidatorAgent(config={
+            "validation": {
+                "issues": {
+                    "command_mismatch": {
+                        "severity": "warning",
+                        "retryable": False,
+                    }
+                }
+            }
+        })
+        part = {
+            "section": "5_3",
+            "content": r"Use \textit{confidence} and \textit{uncertainty}.",
+            "trans_content": r"使用 \textit{置信度} 和不确定性。",
+        }
+
+        report = validator._validate(part)
+
         self.assertEqual(report["severity"], "warning")
         self.assertFalse(report["retryable"])
-        self.assertEqual(report["issues"][0]["type"], "command_mismatch")
         self.assertEqual(report["issues"][0]["severity"], "warning")
         self.assertFalse(report["issues"][0]["retryable"])
-        self.assertIn("command_error", report)
 
     def test_validate_placeholder_mismatch_is_error_retryable(self):
         part = {

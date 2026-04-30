@@ -1,5 +1,6 @@
 from typing import Dict, Any, List, Optional
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
+from src.validation_policy import ValidationPolicy
 # from base_tool_agent import BaseToolAgent
 from pathlib import Path
 from collections import Counter
@@ -20,6 +21,7 @@ class ValidatorAgent(BaseToolAgent):
                  ):
         super().__init__(agent_name="ValidatorAgent", config=config)
         self.config = config
+        self.policy = ValidationPolicy.from_config(config or {})
         self.project_dir = project_dir
         self.output_dir = output_dir
 
@@ -51,6 +53,14 @@ class ValidatorAgent(BaseToolAgent):
 
     def _make_issue(self, issue_type: str, message: str, severity: str, retryable: bool) -> Dict[str, Any]:
         return {"type": issue_type, "severity": severity, "retryable": retryable, "message": message}
+
+    def _make_policy_issue(self, issue_type: str, message: str) -> Dict[str, Any]:
+        return self._make_issue(
+            issue_type=issue_type,
+            message=message,
+            severity=self.policy.issue_severity(issue_type),
+            retryable=self.policy.issue_retryable(issue_type),
+        )
 
     def _highest_severity(self, issues: List[Dict[str, Any]]) -> str:
         if any(issue["severity"] == "error" for issue in issues):
@@ -117,11 +127,9 @@ class ValidatorAgent(BaseToolAgent):
             aliases = self._equivalent_commands(elem)
             found = sum(trans_counter.get(alias, 0) for alias in aliases)
             if found < count:
-                issues.append(self._make_issue(
+                issues.append(self._make_policy_issue(
                     issue_type="command_mismatch",
                     message=f"'{elem}' — expected {count}, found {found}",
-                    severity="warning",
-                    retryable=False,
                 ))
 
         return issues or None
@@ -143,18 +151,14 @@ class ValidatorAgent(BaseToolAgent):
         extra = translated_placeholders - original_placeholders
         issues = []
         if missing:
-            issues.append(self._make_issue(
+            issues.append(self._make_policy_issue(
                 issue_type="placeholder_mismatch",
                 message=f"Missing placeholders: {', '.join(sorted(missing))} translation error or is missing!",
-                severity="error",
-                retryable=True,
             ))
         if extra:
-            issues.append(self._make_issue(
+            issues.append(self._make_policy_issue(
                 issue_type="placeholder_mismatch",
                 message=f"Extra placeholders: {', '.join(sorted(extra))} translation error or is redundant",
-                severity="error",
-                retryable=True,
             ))
         return issues or None
         
@@ -166,11 +170,9 @@ class ValidatorAgent(BaseToolAgent):
         errors = self._find_brackets_errors(trans_content)
 
         if errors and not org_errors:
-            return [self._make_issue(
+            return [self._make_policy_issue(
                 issue_type="bracket_mismatch",
                 message="\n".join(errors),
-                severity="error",
-                retryable=True,
             )]
         return None
         
