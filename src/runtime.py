@@ -208,6 +208,35 @@ def prepare_projects(
     return projects, config, projects_dir, output_dir
 
 
+def classify_project_result(
+    index: int,
+    total: int,
+    project_name: str,
+    project_dir: str,
+    workflow_result: Dict[str, Any],
+) -> Dict[str, Any]:
+    ok = workflow_result.get("ok", False)
+    return {
+        "type": "completed" if ok else "failed",
+        "ok": ok,
+        "index": index,
+        "total": total,
+        "project_name": project_name,
+        "project_dir": project_dir,
+        "pdf_path": workflow_result.get("pdf_path"),
+        "errors_report_path": workflow_result.get("errors_report_path"),
+        "validation_summary": workflow_result.get(
+            "validation_summary",
+            {"warnings": 0, "errors": 0, "total": 0},
+        ),
+        "error": workflow_result.get("error"),
+    }
+
+
+def should_exit_with_failure(project_status: Dict[str, List[Dict[str, Any]]]) -> bool:
+    return bool(project_status.get("failed_projects"))
+
+
 def run_projects(
     config: Dict[str, Any],
     projects: Sequence[str],
@@ -237,11 +266,20 @@ def run_projects(
                 project_dir=project_dir,
                 output_dir=output_dir,
             )
-            latex_trans.workflow_latextrans()
+            workflow_result = latex_trans.workflow_latextrans()
+            project_result = classify_project_result(
+                index=idx,
+                total=total_projects,
+                project_name=project_name,
+                project_dir=project_dir,
+                workflow_result=workflow_result,
+            )
         except Exception as e:
             print(f"Error processing project {project_name}: {e}")
             failed_projects.append(
                 {
+                    "type": "failed",
+                    "ok": False,
                     "index": idx,
                     "total": total_projects,
                     "project_name": project_name,
@@ -259,25 +297,28 @@ def run_projects(
                         "project_dir": project_dir,
                         "error": str(e),
                     }
-                )
+            )
             continue
 
-        completed_projects.append(
-            {
-                "index": idx,
-                "total": total_projects,
-                "project_name": project_name,
-                "project_dir": project_dir,
-            }
-        )
+        if project_result["ok"]:
+            completed_projects.append(project_result)
+            event_type = "project_complete"
+        else:
+            failed_projects.append(project_result)
+            event_type = "project_error"
+
         if event_callback:
             event_callback(
                 {
-                    "type": "project_complete",
+                    "type": event_type,
                     "index": idx,
                     "total": total_projects,
                     "project_name": project_name,
                     "project_dir": project_dir,
+                    "pdf_path": project_result.get("pdf_path"),
+                    "errors_report_path": project_result.get("errors_report_path"),
+                    "validation_summary": project_result.get("validation_summary"),
+                    "error": project_result.get("error"),
                 }
             )
     return {

@@ -19,6 +19,7 @@ from src.formats.latex.utils import (
     get_arxiv_category,
     get_profect_dirs,
 )
+from src.runtime import should_exit_with_failure
 
 PROJECT_ROOT = Path(__file__).resolve().parent
 
@@ -243,6 +244,10 @@ def main():
 
     total_projects = len(projects)
     target_language = config.get("target_language", "ch")
+    project_status = {
+        "completed_projects": [],
+        "failed_projects": [],
+    }
     for idx, project_dir in enumerate(projects, start=1):
         log_path = _project_log_path(output_dir, target_language, project_dir)
         with _tee_console_to_log(log_path):
@@ -255,10 +260,23 @@ def main():
                     project_dir=project_dir,
                     output_dir=output_dir,
                 )
-                latex_trans.workflow_latextrans()
+                workflow_result = latex_trans.workflow_latextrans()
+                if workflow_result.get("ok", False):
+                    project_status["completed_projects"].append(workflow_result)
+                else:
+                    project_status["failed_projects"].append(workflow_result)
             except Exception as e:
                 print(f"Error processing project {os.path.basename(project_dir)}: {e}")
+                project_status["failed_projects"].append({
+                    "project_name": os.path.basename(project_dir),
+                    "project_dir": project_dir,
+                    "ok": False,
+                    "error": str(e),
+                })
                 continue
+
+    if should_exit_with_failure(project_status):
+        sys.exit(1)
 
 
 if __name__ == "__main__":
