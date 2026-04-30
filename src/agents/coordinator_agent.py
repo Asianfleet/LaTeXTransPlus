@@ -203,7 +203,7 @@ class CoordinatorAgent:
                 pdf_path=None,
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
-                validation_failed=True,
+                validation_failed=validation_failed,
             )
 
         generator_agent = GeneratorAgent(config=self.config,

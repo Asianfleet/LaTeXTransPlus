@@ -122,6 +122,18 @@ class CoordinatorMessageTests(unittest.TestCase):
         self.assertEqual(result["project_name"], "2510.14901")
         self.assertTrue(result["pdf_path"].endswith("ch_2510.14901.pdf"))
 
+    def test_build_workflow_result_respects_lenient_validation_policy(self):
+        result = build_workflow_result(
+            project_name="2510.14901",
+            pdf_path=None,
+            errors_report_path=r"outputs\ch_2510.14901\errors_report.json",
+            validation_summary={"warnings": 0, "errors": 1, "total": 1},
+            validation_failed=False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["pdf_path"])
+
 
 if __name__ == "__main__":
     unittest.main()
