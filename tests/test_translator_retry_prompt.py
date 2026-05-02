@@ -4,6 +4,16 @@ from src.agents.tool_agents.translator_agent import TranslatorAgent
 
 
 class TranslatorRetryPromptTests(unittest.TestCase):
+    def test_update_term_string_true_enables_dynamic_terms(self):
+        agent = TranslatorAgent(config={"llm_config": {}, "update_term": "True"})
+
+        self.assertIs(agent.update_term, True)
+
+    def test_update_term_defaults_to_false_when_missing(self):
+        agent = TranslatorAgent(config={"llm_config": {}})
+
+        self.assertIs(agent.update_term, False)
+
     def test_retranslation_prompt_includes_concrete_command_context(self):
         agent = TranslatorAgent(config={"llm_config": {}})
         part = {

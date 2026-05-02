@@ -27,13 +27,14 @@ class TranslatorAgent(BaseToolAgent):
                  project_dir: Optional[str] = None,
                  output_dir: Optional[str] = None,
                  errors_report: Optional[List[Dict]] = None,
-                 ):
+        ):
         super().__init__(agent_name="TranslatorAgent", config=config)
         self.config = config
-        if(config.get("update_term") == "True"):
-            self.update_term = True 
-            self.update_term = False
-        # self.update_term = config.get("update_term", False)
+        update_term = config.get("update_term", False)
+        if isinstance(update_term, str):
+            self.update_term = update_term.strip().lower() == "true"
+        else:
+            self.update_term = bool(update_term)
         self.model = config["llm_config"].get("model", "gpt-4o")
         self.base_url = config["llm_config"].get("base_url", None)
         self.API_KEY = config["llm_config"].get("api_key", None)
