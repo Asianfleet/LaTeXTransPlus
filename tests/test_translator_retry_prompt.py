@@ -4,6 +4,34 @@ from src.agents.tool_agents.translator_agent import TranslatorAgent
 
 
 class TranslatorRetryPromptTests(unittest.TestCase):
+    def test_translation_mode_defaults_to_plain_string(self):
+        agent = TranslatorAgent(config={"llm_config": {}})
+
+        self.assertEqual(agent.trans_mode, "plain")
+
+    def test_translation_mode_accepts_terms_string(self):
+        agent = TranslatorAgent(config={"llm_config": {}}, trans_mode="terms")
+
+        self.assertEqual(agent.trans_mode, "terms")
+
+    def test_translation_mode_keeps_legacy_number_compatibility(self):
+        self.assertEqual(
+            TranslatorAgent(config={"llm_config": {}}, trans_mode=0).trans_mode,
+            "plain",
+        )
+        self.assertEqual(
+            TranslatorAgent(config={"llm_config": {}}, trans_mode=1).trans_mode,
+            "retry",
+        )
+        self.assertEqual(
+            TranslatorAgent(config={"llm_config": {}}, trans_mode=2).trans_mode,
+            "terms",
+        )
+
+    def test_translation_mode_rejects_unknown_value(self):
+        with self.assertRaisesRegex(ValueError, "Invalid translation mode"):
+            TranslatorAgent(config={"llm_config": {}}, trans_mode="unknown")
+
     def test_update_term_string_true_enables_dynamic_terms(self):
         agent = TranslatorAgent(config={"llm_config": {}, "update_term": "True"})
 

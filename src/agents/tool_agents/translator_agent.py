@@ -20,10 +20,33 @@ base_dir = os.getcwd()
 sys.path.append(base_dir)
 
 
+TRANSLATION_MODE_ALIASES = {
+    0: "plain",
+    1: "retry",
+    2: "terms",
+    "0": "plain",
+    "1": "retry",
+    "2": "terms",
+    "plain": "plain",
+    "retry": "retry",
+    "terms": "terms",
+}
+
+
+def normalize_translation_mode(mode: Any) -> str:
+    if mode is None:
+        return "plain"
+    normalized = mode.strip().lower() if isinstance(mode, str) else mode
+    if normalized in TRANSLATION_MODE_ALIASES:
+        return TRANSLATION_MODE_ALIASES[normalized]
+    valid_modes = ", ".join(sorted({"plain", "retry", "terms"}))
+    raise ValueError(f"Invalid translation mode: {mode!r}. Expected one of: {valid_modes}.")
+
+
 class TranslatorAgent(BaseToolAgent):
     def __init__(self, 
                  config: Dict[str, Any], 
-                 trans_mode: int = 0,
+                 trans_mode: Any = "plain",
                  project_dir: Optional[str] = None,
                  output_dir: Optional[str] = None,
                  errors_report: Optional[List[Dict]] = None,
@@ -48,7 +71,7 @@ class TranslatorAgent(BaseToolAgent):
         self.fail_env_phs = []
         self.have_fail_parts = False
         self.errors_report = errors_report if errors_report is not None else []
-        self.trans_mode = trans_mode if trans_mode is not None else 0
+        self.trans_mode = normalize_translation_mode(trans_mode)
         # self.term_dict = config.get("term_dict", {})  # Dictionary for terminology translation
         self.term_dict = {}
         self.summary = ''
@@ -73,7 +96,7 @@ class TranslatorAgent(BaseToolAgent):
         captions = self.read_file(Path(self.output_dir, "captions_map.json"), "json")
         envs = self.read_file(Path(self.output_dir, "envs_map.json"), "json")
 
-        if self.trans_mode == 0 or self.trans_mode == 2:
+        if self.trans_mode in {"plain", "terms"}:
             self.log(f"Starting translation for project: {os.path.basename(self.project_dir)}.")
 
             sys.stderr = open(os.devnull, 'w')
@@ -130,7 +153,7 @@ class TranslatorAgent(BaseToolAgent):
                 sys.stderr = sys.__stderr__
                 self.log("Successfully translated sections.")
 
-        elif self.trans_mode == 1:
+        elif self.trans_mode == "retry":
 
             sys.stderr = open(os.devnull, "w")
             status_text = st.empty()
@@ -385,7 +408,7 @@ class TranslatorAgent(BaseToolAgent):
         
         transed_section = section.copy()
         section_num = section["section"]
-        if self.trans_mode == 0:
+        if self.trans_mode == "plain":
             
             transed_section["trans_content"] = await self._request_llm_for_trans(
                 pm.section_system_prompt,
@@ -394,7 +417,7 @@ class TranslatorAgent(BaseToolAgent):
                 type="sec",
                 session=session
             )
-        elif self.trans_mode == 1:
+        elif self.trans_mode == "retry":
             transed_section["trans_content"] = await self._request_llm_for_retrans_error_parts(
             pm.retrans_error_parts_system_prompt,
             part=transed_section,
@@ -403,7 +426,7 @@ class TranslatorAgent(BaseToolAgent):
             type="sec",
             session=session)
 
-        elif self.trans_mode == 2:
+        elif self.trans_mode == "terms":
             """
             Combined with terminology translation
             """
@@ -447,14 +470,14 @@ class TranslatorAgent(BaseToolAgent):
         """
         transed_caption = caption.copy()
         placeholder = caption["placeholder"]
-        if self.trans_mode == 0:
+        if self.trans_mode == "plain":
             transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
                                                         caption["content"],
                                                         fail_part=placeholder,
                                                         type="cap",
                                                         session=session
                                                         )
-        elif self.trans_mode == 1:
+        elif self.trans_mode == "retry":
             # Keep current retranslating path for captions.
             print("translate_caption_mode_1")
             transed_caption["trans_content"] = await self._request_llm_for_retrans_error_parts(pm.retrans_error_parts_system_prompt,
@@ -464,7 +487,7 @@ class TranslatorAgent(BaseToolAgent):
                                                                                          type="cap",
                                                                                          session=session)
             
-        elif self.trans_mode == 2:
+        elif self.trans_mode == "terms":
             if not self.term_dict:
                 transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
                                                         caption["content"], 
@@ -501,7 +524,7 @@ class TranslatorAgent(BaseToolAgent):
         """
         transed_env = env.copy()
         placeholder = env["placeholder"]
-        if self.trans_mode == 0: # sum
+        if self.trans_mode == "plain":
             if env["need_trans"]:
                 transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,
                                                             env["content"], 
@@ -511,14 +534,14 @@ class TranslatorAgent(BaseToolAgent):
                                                             )                
             else:
                 transed_env["trans_content"] = env["content"]
-        elif self.trans_mode == 1:
+        elif self.trans_mode == "retry":
                 transed_env["trans_content"] = await self._request_llm_for_retrans_error_parts(pm.retrans_error_parts_system_prompt,
                                                                                          part=transed_env,
                                                                                          error_message=error_message,
                                                                                          fail_part=placeholder,
                                                                                          type="env",
                                                                                          session = session)
-        elif self.trans_mode == 2: # dict or sum+dict
+        elif self.trans_mode == "terms":
             if not self.term_dict:
                 if env["need_trans"]:
                     transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,

@@ -7,7 +7,7 @@ tex_sources_dir = "tex source"
 output_dir = "outputs"
 category = {}
 update_term = "False"
-mode = 0
+mode = "plain"
 user_term = ""
 
 [validation.retry]

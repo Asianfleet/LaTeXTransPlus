@@ -10,7 +10,7 @@ sys.path.append(base_dir)
 
 from .tool_agents.base_tool_agent import BaseToolAgent
 from .tool_agents.parser_agent import ParserAgent
-from .tool_agents.translator_agent import TranslatorAgent 
+from .tool_agents.translator_agent import TranslatorAgent, normalize_translation_mode
 from .tool_agents.generator_agent import GeneratorAgent
 from .tool_agents.validator_agent import ValidatorAgent
 from src.validation_policy import ValidationPolicy
@@ -139,7 +139,7 @@ class CoordinatorAgent:
         self.project_dir = project_dir  # Project path for parsing
         self.output_dir = output_dir  # Output directory for parsed files
         self.loop = asyncio.new_event_loop()
-        self.mode = config.get("mode", 0)
+        self.mode = normalize_translation_mode(config.get("mode", "plain"))
         self.validation_policy = ValidationPolicy.from_config(config or {})
 
     def run_async(self, coro):
@@ -175,7 +175,7 @@ class CoordinatorAgent:
         max_retries = self.validation_policy.max_attempts()
         retry_count = 0
         if retryable_reports:
-            translator_agent.trans_mode = 1
+            translator_agent.trans_mode = "retry"
 
         while retryable_reports and retry_count < max_retries:
             translator_agent.errors_report = retryable_reports
