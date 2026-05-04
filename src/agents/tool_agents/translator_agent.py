@@ -21,12 +21,6 @@ sys.path.append(base_dir)
 
 
 TRANSLATION_MODE_ALIASES = {
-    0: "plain",
-    1: "retry",
-    2: "terms",
-    "0": "plain",
-    "1": "retry",
-    "2": "terms",
     "plain": "plain",
     "retry": "retry",
     "terms": "terms",

@@ -14,19 +14,11 @@ class TranslatorRetryPromptTests(unittest.TestCase):
 
         self.assertEqual(agent.trans_mode, "terms")
 
-    def test_translation_mode_keeps_legacy_number_compatibility(self):
-        self.assertEqual(
-            TranslatorAgent(config={"llm_config": {}}, trans_mode=0).trans_mode,
-            "plain",
-        )
-        self.assertEqual(
-            TranslatorAgent(config={"llm_config": {}}, trans_mode=1).trans_mode,
-            "retry",
-        )
-        self.assertEqual(
-            TranslatorAgent(config={"llm_config": {}}, trans_mode=2).trans_mode,
-            "terms",
-        )
+    def test_translation_mode_rejects_legacy_number_values(self):
+        for mode in (0, 1, 2, "0", "1", "2"):
+            with self.subTest(mode=mode):
+                with self.assertRaisesRegex(ValueError, "Invalid translation mode"):
+                    TranslatorAgent(config={"llm_config": {}}, trans_mode=mode)
 
     def test_translation_mode_rejects_unknown_value(self):
         with self.assertRaisesRegex(ValueError, "Invalid translation mode"):
