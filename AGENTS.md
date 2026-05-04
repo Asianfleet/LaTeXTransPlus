@@ -24,6 +24,7 @@ Tests currently use the standard `unittest` framework. Add tests under `tests/` 
 ## Project Lessons
 
 - 这个项目有两条配置加载路径，`main.py` 和 `src/runtime.py` 都会加载配置；类似配置语义变更必须抽出公共 helper，否则 CLI 入口和 runtime helper 很容易行为不一致。
+- 去除旧版兼容时要彻底清理，不仅要改配置示例或入口参数，还要检查并删除底层 helper、别名映射、回退分支和旧测试中的残留兼容逻辑，避免文档与真实运行时语义再次漂移。
 
 ## Commit & Pull Request Guidelines
 
