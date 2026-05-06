@@ -22,7 +22,6 @@ sys.path.append(base_dir)
 
 TRANSLATION_MODE_ALIASES = {
     "plain": "plain",
-    "retry": "retry",
     "terms": "terms",
 }
 
@@ -33,7 +32,7 @@ def normalize_translation_mode(mode: Any) -> str:
     normalized = mode.strip().lower() if isinstance(mode, str) else mode
     if normalized in TRANSLATION_MODE_ALIASES:
         return TRANSLATION_MODE_ALIASES[normalized]
-    valid_modes = ", ".join(sorted({"plain", "retry", "terms"}))
+    valid_modes = ", ".join(sorted(TRANSLATION_MODE_ALIASES))
     raise ValueError(f"Invalid translation mode: {mode!r}. Expected one of: {valid_modes}.")
 
 
@@ -66,6 +65,7 @@ class TranslatorAgent(BaseToolAgent):
         self.have_fail_parts = False
         self.errors_report = errors_report if errors_report is not None else []
         self.trans_mode = normalize_translation_mode(trans_mode)
+        self.retrying = False
         # self.term_dict = config.get("term_dict", {})  # Dictionary for terminology translation
         self.term_dict = {}
         self.summary = ''
@@ -90,7 +90,7 @@ class TranslatorAgent(BaseToolAgent):
         captions = self.read_file(Path(self.output_dir, "captions_map.json"), "json")
         envs = self.read_file(Path(self.output_dir, "envs_map.json"), "json")
 
-        if self.trans_mode in {"plain", "terms"}:
+        if not self.retrying:
             self.log(f"Starting translation for project: {os.path.basename(self.project_dir)}.")
 
             sys.stderr = open(os.devnull, 'w')
@@ -147,7 +147,7 @@ class TranslatorAgent(BaseToolAgent):
                 sys.stderr = sys.__stderr__
                 self.log("Successfully translated sections.")
 
-        elif self.trans_mode == "retry":
+        else:
 
             sys.stderr = open(os.devnull, "w")
             status_text = st.empty()
@@ -184,6 +184,9 @@ class TranslatorAgent(BaseToolAgent):
             time.sleep(3)
             sys.stderr = sys.__stderr__
             self.log("Successfully retranslated error parts.")
+
+    def enable_retranslation(self) -> None:
+        self.retrying = True
 
     async def translate(self,
                         section: Dict[str, Any],
@@ -402,8 +405,16 @@ class TranslatorAgent(BaseToolAgent):
         
         transed_section = section.copy()
         section_num = section["section"]
-        if self.trans_mode == "plain":
-            
+        if self.retrying:
+            transed_section["trans_content"] = await self._request_llm_for_retrans_error_parts(
+                pm.retrans_error_parts_system_prompt,
+                part=transed_section,
+                error_message=error_message,
+                fail_part=section_num,
+                type="sec",
+                session=session,
+            )
+        elif self.trans_mode == "plain":
             transed_section["trans_content"] = await self._request_llm_for_trans(
                 pm.section_system_prompt,
                 section["content"],
@@ -411,14 +422,6 @@ class TranslatorAgent(BaseToolAgent):
                 type="sec",
                 session=session
             )
-        elif self.trans_mode == "retry":
-            transed_section["trans_content"] = await self._request_llm_for_retrans_error_parts(
-            pm.retrans_error_parts_system_prompt,
-            part=transed_section,
-            error_message=error_message,
-            fail_part=section_num,
-            type="sec",
-            session=session)
 
         elif self.trans_mode == "terms":
             """
@@ -464,22 +467,22 @@ class TranslatorAgent(BaseToolAgent):
         """
         transed_caption = caption.copy()
         placeholder = caption["placeholder"]
-        if self.trans_mode == "plain":
+        if self.retrying:
+            transed_caption["trans_content"] = await self._request_llm_for_retrans_error_parts(
+                pm.retrans_error_parts_system_prompt,
+                part=transed_caption,
+                error_message=error_message,
+                fail_part=placeholder,
+                type="cap",
+                session=session,
+            )
+        elif self.trans_mode == "plain":
             transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
                                                         caption["content"],
                                                         fail_part=placeholder,
                                                         type="cap",
                                                         session=session
                                                         )
-        elif self.trans_mode == "retry":
-            # Keep current retranslating path for captions.
-            print("translate_caption_mode_1")
-            transed_caption["trans_content"] = await self._request_llm_for_retrans_error_parts(pm.retrans_error_parts_system_prompt,
-                                                                                         part=transed_caption,
-                                                                                         error_message=error_message,
-                                                                                         fail_part=placeholder,
-                                                                                         type="cap",
-                                                                                         session=session)
             
         elif self.trans_mode == "terms":
             if not self.term_dict:
@@ -518,7 +521,16 @@ class TranslatorAgent(BaseToolAgent):
         """
         transed_env = env.copy()
         placeholder = env["placeholder"]
-        if self.trans_mode == "plain":
+        if self.retrying:
+            transed_env["trans_content"] = await self._request_llm_for_retrans_error_parts(
+                pm.retrans_error_parts_system_prompt,
+                part=transed_env,
+                error_message=error_message,
+                fail_part=placeholder,
+                type="env",
+                session=session,
+            )
+        elif self.trans_mode == "plain":
             if env["need_trans"]:
                 transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,
                                                             env["content"], 
@@ -528,13 +540,6 @@ class TranslatorAgent(BaseToolAgent):
                                                             )                
             else:
                 transed_env["trans_content"] = env["content"]
-        elif self.trans_mode == "retry":
-                transed_env["trans_content"] = await self._request_llm_for_retrans_error_parts(pm.retrans_error_parts_system_prompt,
-                                                                                         part=transed_env,
-                                                                                         error_message=error_message,
-                                                                                         fail_part=placeholder,
-                                                                                         type="env",
-                                                                                         session = session)
         elif self.trans_mode == "terms":
             if not self.term_dict:
                 if env["need_trans"]:
@@ -680,13 +685,22 @@ class TranslatorAgent(BaseToolAgent):
                                                    session: aiohttp.ClientSession) -> str:
 
         user_prompt = self._build_retranslation_user_prompt(part, error_message)
-        # print(user_prompt,'\n')
+        system_content = str(system_prompt)
+        if self.trans_mode == "terms":
+            system_content = (
+                f"{system_content}\n"
+                "When translating, you must strictly use the following glossary for substitution. "
+                "This is the highest priority rule to ensure the consistency of terms throughout the text.\n"
+                f"<Glossary>:\n{self.term_dict}\n"
+                "Now, please translate the following new paragraph. Maintain the terminology from the glossary provided."
+            )
+
         payload = {
             "model": f"{self.model}",
             "messages": [
                 {
                     "role": "system",
-                    "content": f"{system_prompt}\nWhen translating, you must strictly use the following glossary for substitution. This is the highest priority rule to ensure the consistency of terms throughout the text.\n<Glossary>:\n{self.term_dict}\nNow, please translate the following new paragraph. Maintain the terminology from the glossary provided."
+                    "content": system_content
                 },
                 {
                     "role": "user",
@@ -710,7 +724,7 @@ class TranslatorAgent(BaseToolAgent):
                     result = await response.json()
                     return result["choices"][0]["message"]["content"].strip()
 
-            except requests.exceptions.RequestException as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 # print(f"Warning: request {attempt} failed for {fail_part}: {e}")
                 if attempt < 3:
                     await asyncio.sleep(5)

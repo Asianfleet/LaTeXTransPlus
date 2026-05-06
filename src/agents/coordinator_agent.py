@@ -175,7 +175,7 @@ class CoordinatorAgent:
         max_retries = self.validation_policy.max_attempts()
         retry_count = 0
         if retryable_reports:
-            translator_agent.trans_mode = "retry"
+            translator_agent.enable_retranslation()
 
         while retryable_reports and retry_count < max_retries:
             translator_agent.errors_report = retryable_reports
