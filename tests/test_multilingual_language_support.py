@@ -180,6 +180,27 @@ class MultilingualTerminologyTests(unittest.TestCase):
         self.assertNotIn("Graph", agent.term_dict)
         self.assertFalse(agent._project_terms_loaded)
 
+    def test_build_term_dict_preserves_input_placeholder_terms(self):
+        agent = TranslatorAgent(
+            config={
+                "source_language": "de",
+                "target_language": "jp",
+                "llm_config": {},
+            },
+            project_dir="paper",
+        )
+        agent.term_dict = {
+            "<PLACEHOLDER_INPUT_begin>": "<PLACEHOLDER_INPUT_begin>",
+            "Graph": "旧图",
+        }
+
+        agent.build_term_dict()
+
+        self.assertEqual(
+            agent.term_dict,
+            {"<PLACEHOLDER_INPUT_begin>": "<PLACEHOLDER_INPUT_begin>"},
+        )
+
 
 class MultilingualTerminologyRequestTests(unittest.IsolatedAsyncioTestCase):
     async def test_terminology_request_uses_configured_language_labels(self):

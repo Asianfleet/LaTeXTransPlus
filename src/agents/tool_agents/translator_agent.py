@@ -1104,7 +1104,7 @@ class TranslatorAgent(BaseToolAgent):
         return self.trans_mode == "terms" or self._project_terms_loaded
 
     def _is_placeholder_term(self, key: str, value: str) -> bool:
-        return key == value and bool(re.fullmatch(r"<PLACEHOLDER_[A-Z]+_\d+>", key))
+        return key == value and bool(re.fullmatch(r"<PLACEHOLDER_[^>]+>", key))
 
     def add_placeholder(self):
 
