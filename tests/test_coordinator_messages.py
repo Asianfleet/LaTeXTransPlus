@@ -1,10 +1,12 @@
 import unittest
 
 from src.agents.coordinator_agent import (
+    build_review_required_result,
     build_workflow_result,
     filter_retryable_reports,
     format_translation_result_message,
     merge_validation_reports,
+    should_run_terminology_scan,
     should_generate_pdf_after_validation,
     summarize_validation_reports,
 )
@@ -133,6 +135,23 @@ class CoordinatorMessageTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertIsNone(result["pdf_path"])
+
+    def test_should_run_terminology_scan_respects_config(self):
+        self.assertTrue(should_run_terminology_scan({"terminology": {"enabled": True}}))
+        self.assertTrue(should_run_terminology_scan({}))
+        self.assertFalse(should_run_terminology_scan({"terminology": {"enabled": False}}))
+
+    def test_build_review_required_result_marks_workflow_not_ok(self):
+        result = build_review_required_result(
+            project_name="paper",
+            project_terms_path=r"outputs\ch_paper\project_terms.csv",
+            project_terms_decisions_path=r"outputs\ch_paper\project_terms_decisions.json",
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertEqual(result["status"], "needs_term_review")
+        self.assertIn("project_terms.csv", result["project_terms_path"])
+        self.assertIn("project_terms_decisions.json", result["project_terms_decisions_path"])
 
 
 if __name__ == "__main__":

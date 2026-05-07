@@ -13,6 +13,8 @@ from .tool_agents.parser_agent import ParserAgent
 from .tool_agents.translator_agent import TranslatorAgent, normalize_translation_mode
 from .tool_agents.generator_agent import GeneratorAgent
 from .tool_agents.validator_agent import ValidatorAgent
+from .tool_agents.terminology_agent import TerminologyAgent
+from src.terminology import TerminologyConfig
 from src.validation_policy import ValidationPolicy
 import gc
 
@@ -82,6 +84,28 @@ def build_workflow_result(
         "errors_report_path": errors_report_path,
         "validation_summary": validation_summary,
         "error": error,
+    }
+
+
+def should_run_terminology_scan(config: Dict[str, Any]) -> bool:
+    return TerminologyConfig.from_config(config or {}).enabled
+
+
+def build_review_required_result(
+    project_name: str,
+    project_terms_path: str,
+    project_terms_decisions_path: str,
+) -> Dict[str, Any]:
+    return {
+        "project_name": project_name,
+        "ok": False,
+        "status": "needs_term_review",
+        "pdf_path": None,
+        "errors_report_path": None,
+        "validation_summary": {"warnings": 0, "errors": 0, "total": 0},
+        "error": "Project terms generated; review project_terms.csv before translation.",
+        "project_terms_path": project_terms_path,
+        "project_terms_decisions_path": project_terms_decisions_path,
     }
 
 
@@ -161,6 +185,25 @@ class CoordinatorAgent:
                                    project_dir=self.project_dir,
                                    output_dir=transed_project_dir)
         parser_agent.execute()  
+
+        terminology_config = TerminologyConfig.from_config(self.config or {})
+        if terminology_config.enabled:
+            terminology_agent = TerminologyAgent(
+                config=self.config,
+                project_dir=self.project_dir,
+                output_dir=transed_project_dir,
+            )
+            terminology_result = terminology_agent.execute()
+            if terminology_config.review_before_translate:
+                print(
+                    f"🤖⏸️ {self.name}: Project terms generated for {base_name}. "
+                    f"Review {terminology_result['project_terms_path']} and rerun with --retranslate-with-terms."
+                )
+                return build_review_required_result(
+                    project_name=base_name,
+                    project_terms_path=terminology_result["project_terms_path"],
+                    project_terms_decisions_path=terminology_result["project_terms_decisions_path"],
+                )
 
         translator_agent = TranslatorAgent(config=self.config,
                                            project_dir=self.project_dir,
