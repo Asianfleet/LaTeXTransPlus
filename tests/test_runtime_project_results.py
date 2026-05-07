@@ -142,6 +142,40 @@ class RuntimeProjectResultTests(unittest.TestCase):
         self.assertEqual(calls, [("retranslate", r"D:\paper")])
         self.assertEqual(len(status["completed_projects"]), 1)
 
+    def test_run_projects_event_payload_preserves_term_review_status(self):
+        events = []
+
+        class FakeCoordinatorAgent:
+            def __init__(self, config, project_dir, output_dir):
+                pass
+
+            def workflow_latextrans(self):
+                return {
+                    "ok": False,
+                    "status": "needs_term_review",
+                    "project_terms_path": r"outputs\ch_paper\project_terms.csv",
+                    "project_terms_decisions_path": r"outputs\ch_paper\project_terms_decisions.json",
+                    "error": "review terms",
+                }
+
+        with patch("src.runtime.CoordinatorAgent", FakeCoordinatorAgent):
+            with redirect_stdout(StringIO()):
+                run_projects(
+                    config={},
+                    projects=[r"D:\paper"],
+                    output_dir="outputs",
+                    event_callback=events.append,
+                )
+
+        final_event = events[-1]
+        self.assertEqual(final_event["type"], "project_error")
+        self.assertEqual(final_event["status"], "needs_term_review")
+        self.assertEqual(final_event["project_terms_path"], r"outputs\ch_paper\project_terms.csv")
+        self.assertEqual(
+            final_event["project_terms_decisions_path"],
+            r"outputs\ch_paper\project_terms_decisions.json",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

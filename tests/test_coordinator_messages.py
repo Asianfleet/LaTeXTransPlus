@@ -1,6 +1,8 @@
 import os
+import json
 import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import AsyncMock, Mock, patch
 
 from src.agents import coordinator_agent
@@ -173,6 +175,115 @@ class CoordinatorMessageTests(unittest.TestCase):
         ]
 
         clear_translated_content(sections, captions, envs)
+
+        self.assertEqual(sections[0]["trans_content"], "preamble")
+        self.assertEqual(sections[1]["trans_content"], "front")
+        self.assertEqual(sections[2]["trans_content"], "")
+        self.assertEqual(captions[0]["trans_content"], "")
+        self.assertEqual(envs[0]["trans_content"], "")
+        self.assertEqual(envs[1]["trans_content"], "")
+
+    def test_retranslation_workflow_reuses_existing_terms_without_parsing(self):
+        events = []
+
+        class FakeTranslatorAgent:
+            def __init__(self, config, project_dir, output_dir, trans_mode):
+                self.output_dir = Path(output_dir)
+
+            def read_file(self, file_path, file_format):
+                with open(file_path, "r", encoding="utf-8") as file:
+                    return json.load(file)
+
+            def save_file(self, file_path, file_format, data):
+                with open(file_path, "w", encoding="utf-8") as file:
+                    json.dump(data, file, ensure_ascii=False)
+
+            async def execute(self, *args, **kwargs):
+                events.append(("translator", args, kwargs))
+
+            def enable_retranslation(self):
+                events.append(("enable_retranslation", (), {}))
+
+        class FakeValidatorAgent:
+            def __init__(self, config, project_dir, output_dir):
+                pass
+
+            def execute(self, *args):
+                events.append(("validator", args, {}))
+                return []
+
+            def save_file(self, file_path, file_format, data):
+                with open(file_path, "w", encoding="utf-8") as file:
+                    json.dump(data, file, ensure_ascii=False)
+
+        class FakeGeneratorAgent:
+            def __init__(self, config, project_dir, output_dir):
+                self.output_dir = Path(output_dir)
+
+            def execute(self):
+                events.append(("generator", (), {}))
+                pdf_path = self.output_dir / "build.pdf"
+                pdf_path.write_bytes(b"%PDF")
+                return str(pdf_path)
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = os.path.join(tmpdir, "paper")
+            output_dir = os.path.join(tmpdir, "output")
+            transed_dir = Path(output_dir) / "ch_paper"
+            transed_dir.mkdir(parents=True)
+
+            (transed_dir / "sections_map.json").write_text(
+                json.dumps([
+                    {"section": "-1", "content": "preamble", "trans_content": "preamble"},
+                    {"section": "0", "content": "front", "trans_content": "front"},
+                    {"section": "1", "content": "body", "trans_content": "旧译文"},
+                ], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (transed_dir / "captions_map.json").write_text(
+                json.dumps([{"content": "caption", "trans_content": "旧图题"}], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (transed_dir / "envs_map.json").write_text(
+                json.dumps([
+                    {"content": "math", "trans_content": "", "need_trans": False},
+                    {"content": "env", "trans_content": "旧环境", "need_trans": True},
+                ], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (transed_dir / "project_terms.csv").write_text(
+                "Source Term,Target Translation\nGraph,图\n",
+                encoding="utf-8",
+            )
+
+            agent = CoordinatorAgent(
+                config={"target_language": "ch"},
+                project_dir=project_dir,
+                output_dir=output_dir,
+            )
+            try:
+                with patch.object(coordinator_agent, "ParserAgent") as parser_cls, \
+                        patch.object(coordinator_agent, "TerminologyAgent") as terminology_cls, \
+                        patch.object(coordinator_agent, "TranslatorAgent", FakeTranslatorAgent), \
+                        patch.object(coordinator_agent, "ValidatorAgent", FakeValidatorAgent), \
+                        patch.object(coordinator_agent, "GeneratorAgent", FakeGeneratorAgent), \
+                        patch("builtins.print"):
+                    result = agent.workflow_latextrans_with_existing_terms()
+            finally:
+                if not agent.loop.is_closed():
+                    agent.loop.close()
+
+            parser_cls.assert_not_called()
+            terminology_cls.assert_not_called()
+            self.assertEqual([event[0] for event in events], ["translator", "validator", "generator"])
+            self.assertEqual(result["pdf_path"], str(transed_dir / "ch_paper.pdf"))
+
+            with open(transed_dir / "sections_map.json", "r", encoding="utf-8") as file:
+                sections = json.load(file)
+            with open(transed_dir / "captions_map.json", "r", encoding="utf-8") as file:
+                captions = json.load(file)
+            with open(transed_dir / "envs_map.json", "r", encoding="utf-8") as file:
+                envs = json.load(file)
 
         self.assertEqual(sections[0]["trans_content"], "preamble")
         self.assertEqual(sections[1]["trans_content"], "front")

@@ -317,19 +317,21 @@ def run_projects(
             event_type = "project_error"
 
         if event_callback:
-            event_callback(
-                {
-                    "type": event_type,
-                    "index": idx,
-                    "total": total_projects,
-                    "project_name": project_name,
-                    "project_dir": project_dir,
-                    "pdf_path": project_result.get("pdf_path"),
-                    "errors_report_path": project_result.get("errors_report_path"),
-                    "validation_summary": project_result.get("validation_summary"),
-                    "error": project_result.get("error"),
-                }
-            )
+            event_payload = {
+                "type": event_type,
+                "index": idx,
+                "total": total_projects,
+                "project_name": project_name,
+                "project_dir": project_dir,
+                "pdf_path": project_result.get("pdf_path"),
+                "errors_report_path": project_result.get("errors_report_path"),
+                "validation_summary": project_result.get("validation_summary"),
+                "error": project_result.get("error"),
+            }
+            for key in ("status", "project_terms_path", "project_terms_decisions_path"):
+                if key in project_result:
+                    event_payload[key] = project_result[key]
+            event_callback(event_payload)
     return {
         "completed_projects": completed_projects,
         "failed_projects": failed_projects,
