@@ -303,6 +303,39 @@ class TerminologyAgentExecuteTests(unittest.TestCase):
         self.assertEqual(decisions["decisions"][0]["decision_source"], "llm_failed")
         self.assertIn("decisions", decisions["decisions"][0]["reason"])
 
+    def test_top_level_list_llm_schema_records_failure_decisions(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            self._write_maps(output_dir)
+            agent = TerminologyAgent(
+                config={
+                    "source_language": "en",
+                    "target_language": "ch",
+                    "llm_config": {
+                        "api_key": "test-key",
+                        "base_url": "https://api.deepseek.com/chat/completions",
+                    },
+                    "terminology": {"max_llm_candidates": 10},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+
+            with patch(
+                "src.agents.tool_agents.terminology_agent.requests.post",
+                return_value=_FakeResponse(json.dumps([{"source_term": "x"}])),
+            ):
+                result = agent.execute()
+
+            terms_content = (output_dir / PROJECT_TERMS_FILENAME).read_text(encoding="utf-8")
+            decisions = json.loads((output_dir / PROJECT_TERMS_DECISIONS_FILENAME).read_text(encoding="utf-8"))
+
+        self.assertTrue(result["ok"])
+        self.assertIn("Source Term,Target Translation", terms_content)
+        self.assertNotIn("power sampling,", terms_content)
+        self.assertEqual(decisions["decisions"][0]["decision_source"], "llm_failed")
+        self.assertIn("decisions", decisions["decisions"][0]["reason"])
+
 
 if __name__ == "__main__":
     unittest.main()

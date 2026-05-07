@@ -344,14 +344,9 @@ class TerminologyAgent(BaseToolAgent):
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
         parsed = json.loads(self._extract_json_payload(content))
-        if isinstance(parsed, list):
-            decisions = parsed
-        elif isinstance(parsed, dict):
-            if "decisions" not in parsed:
-                raise ValueError("Terminology LLM response must contain a decisions array")
-            decisions = parsed["decisions"]
-        else:
+        if not isinstance(parsed, dict) or "decisions" not in parsed:
             raise ValueError("Terminology LLM response must contain a decisions array")
+        decisions = parsed["decisions"]
         if not isinstance(decisions, list):
             raise ValueError("Terminology LLM response must contain a decisions array")
         return decisions
