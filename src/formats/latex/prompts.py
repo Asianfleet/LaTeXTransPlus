@@ -32,16 +32,39 @@ section_system_prompt_with_prev = None
 section_system_prompt_with_terms_prev = None
 
 
+LANGUAGE_LABELS = {
+    "ar": "Arabic",
+    "ch": "Chinese",
+    "cn": "Chinese",
+    "de": "German",
+    "en": "English",
+    "es": "Spanish",
+    "fr": "French",
+    "it": "Italian",
+    "ja": "Japanese",
+    "jp": "Japanese",
+    "ko": "Korean",
+    "pt": "Portuguese",
+    "ru": "Russian",
+    "zh": "Chinese",
+}
+
+
+def language_label(language: str) -> str:
+    if language is None:
+        return ""
+    normalized = str(language).strip()
+    return LANGUAGE_LABELS.get(normalized.lower(), normalized)
+
+
 def init_prompts(source_lang: str, target_lang: str):
     global caption_system_prompt, section_system_prompt, env_system_prompt, caption_system_prompt_with_dict, section_system_prompt_with_dict, \
         env_system_prompt_with_dict, set_need_trans_for_envs_system_prompt, retrans_error_parts_system_prompt, extract_terminology_system_prompt, \
         get_summary_system_prompt, refine_summary_system_prompt, section_system_prompt_with_sum, caption_system_prompt_with_sum, env_system_prompt_with_sum, \
         section_system_prompt_with_terms_sum, section_system_prompt_with_prev, section_system_prompt_with_terms_prev
 
-    if(source_lang == "en"):
-        source_lang = "English"
-    if(target_lang == "ch"):
-        target_lang = "Chinese"
+    source_lang = language_label(source_lang)
+    target_lang = language_label(target_lang)
 
     latex_structure_guardrails = fr"""
     ### Strict LaTeX Structure Preservation
@@ -289,7 +312,7 @@ def init_prompts(source_lang: str, target_lang: str):
     """
 
     extract_terminology_system_prompt = fr"""
-    You are an en-zh bilingual expert. Given an {source_lang} source sentence and its corresponding {target_lang} translation, your task is to extract all domain-specific terms from the {source_lang} sentence, along with their exact translations as they appear in the {target_lang} sentence.
+    You are a {source_lang}-{target_lang} bilingual terminology expert. Given a {source_lang} source sentence and its corresponding {target_lang} translation, your task is to extract all domain-specific terms from the {source_lang} sentence, along with their exact translations as they appear in the {target_lang} sentence.
     
     These include:
     - Technical terms and expressions
@@ -304,12 +327,12 @@ def init_prompts(source_lang: str, target_lang: str):
     "<{source_lang} Term>" - "<{target_lang} Translation>"
     
     If there are no such terms, output: `N/A`.
-    
-    Here are some examples of English translation into Chinese:
-    
-    Example 1:
-    <en source> Model Architecture Our evaluation model architecture follows COMET <cit.>, which employs the LM as an encoder and the feed-forward network as a regressor.
-    <zh translation> 模型架构 我们的评估模型架构遵循 COMET <cit.>，该架构采用语言模型（LM）作为编码器，前馈网络作为回归器。
+
+    The following examples demonstrate the expected alignment format across language pairs. They are format examples only; for the current task, extract terms from {source_lang} and their exact {target_lang} translations.
+
+    Example 1 (English to Chinese):
+    <English source> Model Architecture Our evaluation model architecture follows COMET <cit.>, which employs the LM as an encoder and the feed-forward network as a regressor.
+    <Chinese translation> 模型架构 我们的评估模型架构遵循 COMET <cit.>，该架构采用语言模型（LM）作为编码器，前馈网络作为回归器。
     <Proper nouns>
     "Model Architecture" - "模型架构"
     "evaluation model architecture" - "评估模型架构"
@@ -318,16 +341,15 @@ def init_prompts(source_lang: str, target_lang: str):
     "encoder" - "编码器"
     "feed-forward network" - "前馈网络"
     "regressor" - "回归器"
-    
-    Example 2:
-    <en source> Reinforcement Learning The optimization objective of RL for sequence generation models is to maximize the long-term reward.
-    <zh translation> 强化学习 序列生成模型的强化学习优化目标是最大化长期奖励，
+
+    Example 2 (German to Japanese):
+    <German source> Graph Neural Networks Das Graphmodell verwendet einen Encoder, um Knotendarstellungen zu erzeugen.
+    <Japanese translation> グラフニューラルネットワーク グラフモデルはエンコーダを用いてノード表現を生成する。
     <Proper nouns>
-    "Reinforcement Learning" - "强化学习"
-    "sequence generation models" - "序列生成模型"
-    "RL" - "强化学习"
-    "optimization objective" - "优化目标"
-    "long-term reward" - "长期奖励"
+    "Graph Neural Networks" - "グラフニューラルネットワーク"
+    "Graphmodell" - "グラフモデル"
+    "Encoder" - "エンコーダ"
+    "Knotendarstellungen" - "ノード表現"
     
     Now annotate all domain-specific term pairs in the following sentence:
     <source> {{src}}

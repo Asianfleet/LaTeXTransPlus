@@ -802,6 +802,8 @@ class TranslatorAgent(BaseToolAgent):
 
     async def _request_llm_for_extract_terms(self, system_prompt, src, tgt,
                                        session: aiohttp.ClientSession) -> str:
+        source_label = self._source_language_label()
+        target_label = self._target_language_label()
 
         payload = {
             "model": f"{self.model}",
@@ -812,7 +814,7 @@ class TranslatorAgent(BaseToolAgent):
                 },
                 {
                     "role": "user", 
-                    "content": f"<en source>\n{src}\n<zh translation>\n{tgt}"
+                    "content": f"<{source_label} source>\n{src}\n<{target_label} translation>\n{tgt}"
                 }
             ],
             "temperature": 0.7,
@@ -919,6 +921,18 @@ class TranslatorAgent(BaseToolAgent):
                     print("Warning: failed to refine summary, set N/A.")
                     return "N/A"
 
+    def _source_language_label(self) -> str:
+        return pm.language_label(self.config.get("source_language", "en"))
+
+    def _target_language_label(self) -> str:
+        return pm.language_label(self.config.get("target_language", "ch"))
+
+    def _uses_default_english_chinese_terms(self) -> bool:
+        return (
+            self._source_language_label().lower() == "english"
+            and self._target_language_label().lower() == "chinese"
+        )
+
     def _updated_term_dict(self, text: str) -> None:
         """
         Updates the term dictionary with new terms.
@@ -1024,17 +1038,20 @@ class TranslatorAgent(BaseToolAgent):
 
     def build_term_dict(self):
         if self.user_term:
-            df = pd.read_csv(self.user_term, header=None, names=['English Term', 'Chinese Translation'])
-            self.term_dict.update(zip(df['English Term'], df['Chinese Translation']))
+            df = pd.read_csv(self.user_term, header=None, names=['Source Term', 'Target Translation'])
+            self.term_dict.update(zip(df['Source Term'], df['Target Translation']))
+        elif not self._uses_default_english_chinese_terms():
+            return
         else:
             arxiv_id = os.path.basename(self.project_dir)
-            if self.category.get(arxiv_id):
+            category_map = self.category or {}
+            if category_map.get(arxiv_id):
                 term_dict_loaded = False
-                for category in self.category[arxiv_id]:
+                for category in category_map[arxiv_id]:
                     file_path = os.path.join('terms', f'{category}.csv')
                     try:
-                        df = pd.read_csv(file_path, header=None, names=['English Term', 'Chinese Translation'])
-                        self.term_dict.update(zip(df['English Term'], df['Chinese Translation']))
+                        df = pd.read_csv(file_path, header=None, names=['Source Term', 'Target Translation'])
+                        self.term_dict.update(zip(df['Source Term'], df['Target Translation']))
                         term_dict_loaded = True
 
                     except FileNotFoundError:
@@ -1043,15 +1060,15 @@ class TranslatorAgent(BaseToolAgent):
                 if not term_dict_loaded:
                     try:
                         df = pd.read_csv('terms/default.csv', header=None,
-                                         names=['English Term', 'Chinese Translation'])
-                        self.term_dict.update(zip(df['English Term'], df['Chinese Translation']))
+                                         names=['Source Term', 'Target Translation'])
+                        self.term_dict.update(zip(df['Source Term'], df['Target Translation']))
                     except FileNotFoundError as e:
                         print(f"Error: Default terminology file not found: {e}")
             else:
                 try:
                     df = pd.read_csv('terms/default.csv', header=None,
-                                     names=['English Term', 'Chinese Translation'])
-                    self.term_dict.update(zip(df['English Term'], df['Chinese Translation']))
+                                     names=['Source Term', 'Target Translation'])
+                    self.term_dict.update(zip(df['Source Term'], df['Target Translation']))
                 except FileNotFoundError as e:
                     print(f"Error: Default terminology file not found: {e}")
 
