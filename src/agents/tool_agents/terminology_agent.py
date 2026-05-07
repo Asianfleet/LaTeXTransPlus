@@ -324,7 +324,7 @@ class TerminologyAgent(BaseToolAgent):
                 ]
             },
         }
-        endpoint = (self.base_url or "https://api.openai.com/v1").rstrip("/") + "/chat/completions"
+        endpoint = self.base_url or "https://api.openai.com/v1/chat/completions"
         response = requests.post(
             endpoint,
             headers={
@@ -343,22 +343,38 @@ class TerminologyAgent(BaseToolAgent):
         )
         response.raise_for_status()
         content = response.json()["choices"][0]["message"]["content"]
-        parsed = json.loads(self._strip_json_fence(content))
+        parsed = json.loads(self._extract_json_payload(content))
         if isinstance(parsed, list):
             decisions = parsed
         elif isinstance(parsed, dict):
-            decisions = parsed.get("decisions", [])
+            if "decisions" not in parsed:
+                raise ValueError("Terminology LLM response must contain a decisions array")
+            decisions = parsed["decisions"]
         else:
-            decisions = []
+            raise ValueError("Terminology LLM response must contain a decisions array")
         if not isinstance(decisions, list):
             raise ValueError("Terminology LLM response must contain a decisions array")
         return decisions
 
-    def _strip_json_fence(self, content: str) -> str:
+    def _extract_json_payload(self, content: str) -> str:
         stripped = content.strip()
-        if stripped.startswith("```"):
-            stripped = re.sub(r"^```(?:json)?\s*", "", stripped)
-            stripped = re.sub(r"\s*```$", "", stripped)
+        fence_match = re.search(
+            r"```(?:json)?\s*(.*?)\s*```",
+            stripped,
+            flags=re.DOTALL | re.IGNORECASE,
+        )
+        if fence_match:
+            return fence_match.group(1).strip()
+
+        decoder = json.JSONDecoder()
+        for index, char in enumerate(stripped):
+            if char not in "[{":
+                continue
+            try:
+                _parsed, end = decoder.raw_decode(stripped[index:])
+            except json.JSONDecodeError:
+                continue
+            return stripped[index : index + end].strip()
         return stripped.strip()
 
     def _write_decision_log(

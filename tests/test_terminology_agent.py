@@ -8,6 +8,17 @@ from src.agents.tool_agents.terminology_agent import TerminologyAgent
 from src.terminology import PROJECT_TERMS_DECISIONS_FILENAME, PROJECT_TERMS_FILENAME
 
 
+class _FakeResponse:
+    def __init__(self, content: str):
+        self.content = content
+
+    def raise_for_status(self):
+        return None
+
+    def json(self):
+        return {"choices": [{"message": {"content": self.content}}]}
+
+
 class TerminologyAgentContextTests(unittest.TestCase):
     def test_extracts_paper_context_from_captions_and_sections(self):
         agent = TerminologyAgent(
@@ -196,6 +207,101 @@ class TerminologyAgentExecuteTests(unittest.TestCase):
         self.assertNotIn("power sampling,", terms_content)
         self.assertEqual(decisions["decisions"][0]["decision_source"], "llm_failed")
         self.assertIn("llm down", decisions["decisions"][0]["reason"])
+
+    def test_request_llm_uses_configured_full_chat_completions_endpoint(self):
+        endpoint = "https://api.deepseek.com/chat/completions"
+        agent = TerminologyAgent(
+            config={
+                "source_language": "en",
+                "target_language": "ch",
+                "llm_config": {
+                    "api_key": "test-key",
+                    "base_url": endpoint,
+                    "model": "deepseek-chat",
+                },
+            },
+            project_dir="paper",
+            output_dir="unused",
+        )
+        captured = {}
+
+        def fake_post(url, **kwargs):
+            captured["url"] = url
+            return _FakeResponse(json.dumps({
+                "decisions": [
+                    {
+                        "source_term": "power sampling",
+                        "candidate_translations": ["幂采样"],
+                        "selected_translation": "幂采样",
+                        "reason": "Confirmed by context.",
+                    }
+                ]
+            }))
+
+        with patch("src.agents.tool_agents.terminology_agent.requests.post", side_effect=fake_post):
+            decisions = agent._request_llm_for_term_decisions(
+                ["power sampling"],
+                {"title": "Reasoning by Sampling"},
+                {"power sampling": ["Power sampling works."]},
+                {},
+            )
+
+        self.assertEqual(captured["url"], endpoint)
+        self.assertEqual(decisions[0]["selected_translation"], "幂采样")
+
+    def test_extract_json_payload_handles_preface_uppercase_fence_and_trailing_text(self):
+        agent = TerminologyAgent(
+            config={"source_language": "en", "target_language": "ch", "llm_config": {}},
+            project_dir="paper",
+            output_dir="unused",
+        )
+        content = (
+            "Here is the terminology decision:\n"
+            "```JSON\n"
+            "{\"decisions\": [{\"source_term\": \"power sampling\", \"selected_translation\": \"幂采样\"}]}\n"
+            "```\n"
+            "Use these terms consistently."
+        )
+
+        payload = agent._extract_json_payload(content)
+
+        self.assertEqual(
+            json.loads(payload)["decisions"][0]["source_term"],
+            "power sampling",
+        )
+
+    def test_invalid_llm_schema_records_failure_decisions(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            self._write_maps(output_dir)
+            agent = TerminologyAgent(
+                config={
+                    "source_language": "en",
+                    "target_language": "ch",
+                    "llm_config": {
+                        "api_key": "test-key",
+                        "base_url": "https://api.deepseek.com/chat/completions",
+                    },
+                    "terminology": {"max_llm_candidates": 10},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+
+            with patch(
+                "src.agents.tool_agents.terminology_agent.requests.post",
+                return_value=_FakeResponse(json.dumps({"foo": []})),
+            ):
+                result = agent.execute()
+
+            terms_content = (output_dir / PROJECT_TERMS_FILENAME).read_text(encoding="utf-8")
+            decisions = json.loads((output_dir / PROJECT_TERMS_DECISIONS_FILENAME).read_text(encoding="utf-8"))
+
+        self.assertTrue(result["ok"])
+        self.assertIn("Source Term,Target Translation", terms_content)
+        self.assertNotIn("power sampling,", terms_content)
+        self.assertEqual(decisions["decisions"][0]["decision_source"], "llm_failed")
+        self.assertIn("decisions", decisions["decisions"][0]["reason"])
 
 
 if __name__ == "__main__":
