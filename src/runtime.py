@@ -146,6 +146,8 @@ def load_runtime_config(
         config["mode"] = overrides["mode"]
     if overrides.get("update_term") is not None:
         config["update_term"] = overrides["update_term"]
+    if overrides.get("retranslate_with_terms") is not None:
+        config["retranslate_with_terms"] = bool(overrides["retranslate_with_terms"])
 
     extra_papers = overrides.get("paper_list") or []
     if extra_papers:
@@ -216,7 +218,7 @@ def classify_project_result(
     workflow_result: Dict[str, Any],
 ) -> Dict[str, Any]:
     ok = workflow_result.get("ok", False)
-    return {
+    result = {
         "type": "completed" if ok else "failed",
         "ok": ok,
         "index": index,
@@ -231,6 +233,10 @@ def classify_project_result(
         ),
         "error": workflow_result.get("error"),
     }
+    for key in ("status", "project_terms_path", "project_terms_decisions_path"):
+        if key in workflow_result:
+            result[key] = workflow_result[key]
+    return result
 
 
 def should_exit_with_failure(project_status: Dict[str, List[Dict[str, Any]]]) -> bool:
@@ -266,7 +272,10 @@ def run_projects(
                 project_dir=project_dir,
                 output_dir=output_dir,
             )
-            workflow_result = latex_trans.workflow_latextrans()
+            if config.get("retranslate_with_terms", False):
+                workflow_result = latex_trans.workflow_latextrans_with_existing_terms()
+            else:
+                workflow_result = latex_trans.workflow_latextrans()
             project_result = classify_project_result(
                 index=idx,
                 total=total_projects,

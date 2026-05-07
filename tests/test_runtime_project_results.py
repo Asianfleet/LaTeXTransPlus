@@ -40,6 +40,29 @@ class RuntimeProjectResultTests(unittest.TestCase):
         self.assertFalse(result["ok"])
         self.assertEqual(result["validation_summary"]["errors"], 1)
 
+    def test_classify_project_result_preserves_term_review_status(self):
+        result = classify_project_result(
+            index=1,
+            total=2,
+            project_name="paper",
+            project_dir=r"D:\paper",
+            workflow_result={
+                "ok": False,
+                "status": "needs_term_review",
+                "project_terms_path": r"outputs\ch_paper\project_terms.csv",
+                "project_terms_decisions_path": r"outputs\ch_paper\project_terms_decisions.json",
+                "error": "review terms",
+            },
+        )
+
+        self.assertEqual(result["type"], "failed")
+        self.assertEqual(result["status"], "needs_term_review")
+        self.assertEqual(result["project_terms_path"], r"outputs\ch_paper\project_terms.csv")
+        self.assertEqual(
+            result["project_terms_decisions_path"],
+            r"outputs\ch_paper\project_terms_decisions.json",
+        )
+
     def test_should_exit_with_failure_when_any_project_failed(self):
         self.assertTrue(should_exit_with_failure({
             "completed_projects": [{"project_name": "a"}],
@@ -87,6 +110,37 @@ class RuntimeProjectResultTests(unittest.TestCase):
         self.assertEqual(len(status["completed_projects"]), 1)
         self.assertEqual(status["failed_projects"][0]["project_name"], "first")
         self.assertEqual(status["completed_projects"][0]["project_name"], "second")
+
+    def test_run_projects_uses_retranslation_workflow_when_requested(self):
+        calls = []
+
+        class FakeCoordinatorAgent:
+            def __init__(self, config, project_dir, output_dir):
+                self.project_dir = project_dir
+
+            def workflow_latextrans_with_existing_terms(self):
+                calls.append(("retranslate", self.project_dir))
+                return {
+                    "ok": True,
+                    "pdf_path": r"outputs\ch_paper\ch_paper.pdf",
+                    "validation_summary": {"warnings": 0, "errors": 0, "total": 0},
+                    "error": None,
+                }
+
+            def workflow_latextrans(self):
+                calls.append(("normal", self.project_dir))
+                return {"ok": False, "error": "wrong path"}
+
+        with patch("src.runtime.CoordinatorAgent", FakeCoordinatorAgent):
+            with redirect_stdout(StringIO()):
+                status = run_projects(
+                    config={"retranslate_with_terms": True},
+                    projects=[r"D:\paper"],
+                    output_dir="outputs",
+                )
+
+        self.assertEqual(calls, [("retranslate", r"D:\paper")])
+        self.assertEqual(len(status["completed_projects"]), 1)
 
 
 if __name__ == "__main__":

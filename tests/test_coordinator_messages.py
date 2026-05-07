@@ -158,6 +158,29 @@ class CoordinatorMessageTests(unittest.TestCase):
         self.assertIn("project_terms.csv", result["project_terms_path"])
         self.assertIn("project_terms_decisions.json", result["project_terms_decisions_path"])
 
+    def test_clear_translated_content_preserves_nontranslated_sections(self):
+        from src.agents.coordinator_agent import clear_translated_content
+
+        sections = [
+            {"section": "-1", "content": "preamble", "trans_content": "preamble"},
+            {"section": "0", "content": "front", "trans_content": "front"},
+            {"section": "1", "content": "body", "trans_content": "旧译文"},
+        ]
+        captions = [{"content": "caption", "trans_content": "旧图题"}]
+        envs = [
+            {"content": "math", "trans_content": "", "need_trans": False},
+            {"content": "env", "trans_content": "旧环境", "need_trans": True},
+        ]
+
+        clear_translated_content(sections, captions, envs)
+
+        self.assertEqual(sections[0]["trans_content"], "preamble")
+        self.assertEqual(sections[1]["trans_content"], "front")
+        self.assertEqual(sections[2]["trans_content"], "")
+        self.assertEqual(captions[0]["trans_content"], "")
+        self.assertEqual(envs[0]["trans_content"], "")
+        self.assertEqual(envs[1]["trans_content"], "")
+
     def test_workflow_pauses_after_terminology_review_and_skips_translation(self):
         events = []
 

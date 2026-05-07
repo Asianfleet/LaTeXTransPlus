@@ -171,6 +171,11 @@ def main():
         action="store_true",
         help="Process all existing projects under tex source directory when no --arxiv/--project is provided.",
     )
+    parser.add_argument(
+        "--retranslate-with-terms",
+        action="store_true",
+        help="Reuse an existing parsed output directory and project_terms.csv, then fully retranslate.",
+    )
 
     args = parser.parse_args()
     config = toml.load(args.config)
@@ -196,6 +201,8 @@ def main():
         config["tex_sources_dir"] = args.source
     if args.output:
         config["output_dir"] = args.output
+    if args.retranslate_with_terms:
+        config["retranslate_with_terms"] = True
 
     input_items = config.get("paper_list", [])
     projects_dir = str(_resolve_path(config.get("tex_sources_dir", "tex source")))
@@ -260,7 +267,10 @@ def main():
                     project_dir=project_dir,
                     output_dir=output_dir,
                 )
-                workflow_result = latex_trans.workflow_latextrans()
+                if config.get("retranslate_with_terms", False):
+                    workflow_result = latex_trans.workflow_latextrans_with_existing_terms()
+                else:
+                    workflow_result = latex_trans.workflow_latextrans()
                 if workflow_result.get("ok", False):
                     project_status["completed_projects"].append(workflow_result)
                 else:

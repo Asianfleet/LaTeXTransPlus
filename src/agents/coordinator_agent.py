@@ -14,7 +14,7 @@ from .tool_agents.translator_agent import TranslatorAgent, normalize_translation
 from .tool_agents.generator_agent import GeneratorAgent
 from .tool_agents.validator_agent import ValidatorAgent
 from .tool_agents.terminology_agent import TerminologyAgent
-from src.terminology import TerminologyConfig
+from src.terminology import TerminologyConfig, require_retranslation_inputs
 from src.validation_policy import ValidationPolicy
 import gc
 
@@ -107,6 +107,22 @@ def build_review_required_result(
         "project_terms_path": project_terms_path,
         "project_terms_decisions_path": project_terms_decisions_path,
     }
+
+
+def clear_translated_content(
+    sections: List[Dict[str, Any]],
+    captions: List[Dict[str, Any]],
+    envs: List[Dict[str, Any]],
+) -> None:
+    for section in sections:
+        if str(section.get("section")) in {"-1", "0"}:
+            section["trans_content"] = section.get("content", section.get("trans_content", ""))
+        else:
+            section["trans_content"] = ""
+    for caption in captions:
+        caption["trans_content"] = ""
+    for env in envs:
+        env["trans_content"] = ""
 
 
 def format_translation_result_message(
@@ -295,6 +311,125 @@ class CoordinatorAgent:
                 validation_failed=True,
                 error="PDF generation returned no output path",
             )
+
+    async def workflow_latextrans_with_existing_terms_async(self) -> Dict[str, Any]:
+        base_name = os.path.basename(self.project_dir)
+        transed_project_dir = os.path.join(self.output_dir, f"{self.target_language}_{base_name}")
+        require_retranslation_inputs(Path(transed_project_dir))
+
+        translator_agent = TranslatorAgent(
+            config=self.config,
+            project_dir=self.project_dir,
+            output_dir=transed_project_dir,
+            trans_mode=self.mode,
+        )
+
+        sections = translator_agent.read_file(Path(transed_project_dir, "sections_map.json"), "json")
+        captions = translator_agent.read_file(Path(transed_project_dir, "captions_map.json"), "json")
+        envs = translator_agent.read_file(Path(transed_project_dir, "envs_map.json"), "json")
+        clear_translated_content(sections, captions, envs)
+        translator_agent.save_file(Path(transed_project_dir, "sections_map.json"), "json", sections)
+        translator_agent.save_file(Path(transed_project_dir, "captions_map.json"), "json", captions)
+        translator_agent.save_file(Path(transed_project_dir, "envs_map.json"), "json", envs)
+
+        await translator_agent.execute()
+
+        validator_agent = ValidatorAgent(
+            config=self.config,
+            project_dir=self.project_dir,
+            output_dir=transed_project_dir,
+        )
+        errors_report = validator_agent.execute()
+        retryable_reports = filter_retryable_reports(errors_report)
+        max_retries = self.validation_policy.max_attempts()
+        retry_count = 0
+        if retryable_reports:
+            translator_agent.enable_retranslation()
+
+        while retryable_reports and retry_count < max_retries:
+            translator_agent.errors_report = retryable_reports
+            await translator_agent.execute(error_retry_count=retry_count, Maxtry=max_retries)
+            retry_results = validator_agent.execute(retryable_reports)
+            errors_report = merge_validation_reports(errors_report, retryable_reports, retry_results)
+            validator_agent.save_file(Path(transed_project_dir, "errors_report.json"), "json", errors_report)
+            retryable_reports = filter_retryable_reports(errors_report)
+            retry_count += 1
+
+        validation_summary = summarize_validation_reports(errors_report or [])
+        validation_failed = self.validation_policy.should_fail(validation_summary)
+        errors_report_path = os.path.join(transed_project_dir, "errors_report.json")
+
+        if not should_generate_pdf_after_validation(
+            validation_summary=validation_summary,
+            generate_pdf_on_error=self.validation_policy.generate_pdf_on_error(),
+        ):
+            return build_workflow_result(
+                project_name=base_name,
+                pdf_path=None,
+                errors_report_path=errors_report_path,
+                validation_summary=validation_summary,
+                validation_failed=validation_failed,
+            )
+
+        generator_agent = GeneratorAgent(
+            config=self.config,
+            project_dir=self.project_dir,
+            output_dir=transed_project_dir,
+        )
+        try:
+            pdf_file_path = generator_agent.execute()
+        except Exception as e:
+            return build_workflow_result(
+                project_name=base_name,
+                pdf_path=None,
+                errors_report_path=errors_report_path,
+                validation_summary=validation_summary,
+                validation_failed=True,
+                error=str(e),
+            )
+
+        if not pdf_file_path:
+            return build_workflow_result(
+                project_name=base_name,
+                pdf_path=None,
+                errors_report_path=errors_report_path,
+                validation_summary=validation_summary,
+                validation_failed=True,
+                error="PDF generation returned no output path",
+            )
+
+        new_pdf_path = os.path.join(transed_project_dir, f"{self.target_language}_{base_name}.pdf")
+        shutil.move(pdf_file_path, new_pdf_path)
+        print(
+            format_translation_result_message(
+                system_name=self.name,
+                base_name=base_name,
+                pdf_path=new_pdf_path,
+                validation_summary=validation_summary,
+                validation_failed=validation_failed,
+            )
+        )
+        return build_workflow_result(
+            project_name=base_name,
+            pdf_path=new_pdf_path,
+            errors_report_path=errors_report_path,
+            validation_summary=validation_summary,
+            validation_failed=validation_failed,
+        )
+
+    def workflow_latextrans_with_existing_terms(self) -> Dict[str, Any]:
+        if hasattr(self, "loop") and not self.loop.is_closed():
+            self.loop.close()
+        self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
+        try:
+            return self.loop.run_until_complete(self.workflow_latextrans_with_existing_terms_async())
+        finally:
+            if tasks := asyncio.all_tasks(self.loop):
+                self.loop.run_until_complete(asyncio.gather(*tasks, return_exceptions=True))
+            if sys.platform == "win32":
+                self.loop.run_until_complete(self.loop.shutdown_asyncgens())
+            self.loop.run_until_complete(self.loop.shutdown_default_executor())
 
 
     def workflow_latextrans(self) -> Dict[str, Any]:
