@@ -130,6 +130,56 @@ class MultilingualTerminologyTests(unittest.TestCase):
         self.assertEqual(agent.term_dict["Graph"], "用户图")
         self.assertEqual(agent.term_dict["Tree"], "树")
 
+    def test_empty_project_terms_do_not_enable_plain_terms_prompt(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            (output_dir / "project_terms.csv").write_text(
+                "Source Term,Target Translation\n",
+                encoding="utf-8",
+            )
+            agent = TranslatorAgent(
+                config={
+                    "source_language": "de",
+                    "target_language": "jp",
+                    "llm_config": {},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+
+            agent.build_term_dict()
+
+        self.assertEqual(agent.term_dict, {})
+        self.assertFalse(agent._should_use_terms_prompt())
+
+    def test_build_term_dict_does_not_keep_stale_project_terms(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            terms_path = output_dir / "project_terms.csv"
+            terms_path.write_text(
+                "Source Term,Target Translation\nGraph,图\n",
+                encoding="utf-8",
+            )
+            agent = TranslatorAgent(
+                config={
+                    "source_language": "en",
+                    "target_language": "jp",
+                    "llm_config": {},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+
+            agent.build_term_dict()
+            terms_path.write_text(
+                "Source Term,Target Translation\n",
+                encoding="utf-8",
+            )
+            agent.build_term_dict()
+
+        self.assertNotIn("Graph", agent.term_dict)
+        self.assertFalse(agent._project_terms_loaded)
+
 
 class MultilingualTerminologyRequestTests(unittest.IsolatedAsyncioTestCase):
     async def test_terminology_request_uses_configured_language_labels(self):

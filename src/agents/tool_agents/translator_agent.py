@@ -416,15 +416,6 @@ class TranslatorAgent(BaseToolAgent):
                 type="sec",
                 session=session,
             )
-        elif self.trans_mode == "plain":
-            transed_section["trans_content"] = await self._request_llm_for_trans(
-                pm.section_system_prompt,
-                section["content"],
-                fail_part=section_num,
-                type="sec",
-                session=session
-            )
-
         elif self._should_use_terms_prompt():
             """
             Combined with terminology translation
@@ -445,7 +436,7 @@ class TranslatorAgent(BaseToolAgent):
                                                             type="sec",
                                                             session=session
                                                             )
-                
+
             try:
                 if self.update_term == True:
                     src_text = self._extract_text_from_tex(transed_section["content"])
@@ -460,6 +451,15 @@ class TranslatorAgent(BaseToolAgent):
                     self._updated_term_dict_v2(term_text)
             except Exception as e:
                 return transed_section
+
+        elif self.trans_mode == "plain":
+            transed_section["trans_content"] = await self._request_llm_for_trans(
+                pm.section_system_prompt,
+                section["content"],
+                fail_part=section_num,
+                type="sec",
+                session=session
+            )
 
         return transed_section
 
@@ -478,14 +478,6 @@ class TranslatorAgent(BaseToolAgent):
                 type="cap",
                 session=session,
             )
-        elif self.trans_mode == "plain":
-            transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
-                                                        caption["content"],
-                                                        fail_part=placeholder,
-                                                        type="cap",
-                                                        session=session
-                                                        )
-            
         elif self._should_use_terms_prompt():
             if not self.term_dict:
                 transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
@@ -515,6 +507,14 @@ class TranslatorAgent(BaseToolAgent):
             except Exception as e:
                 return transed_caption
 
+        elif self.trans_mode == "plain":
+            transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
+                                                        caption["content"],
+                                                        fail_part=placeholder,
+                                                        type="cap",
+                                                        session=session
+                                                        )
+
         return transed_caption
 
     async def _translate_env(self, env: Dict[str, Any], session: aiohttp.ClientSession, error_message=None) -> Dict[str, Any]:
@@ -532,16 +532,6 @@ class TranslatorAgent(BaseToolAgent):
                 type="env",
                 session=session,
             )
-        elif self.trans_mode == "plain":
-            if env["need_trans"]:
-                transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,
-                                                            env["content"], 
-                                                            fail_part=placeholder,
-                                                            type="env",
-                                                            session=session
-                                                            )                
-            else:
-                transed_env["trans_content"] = env["content"]
         elif self._should_use_terms_prompt():
             if not self.term_dict:
                 if env["need_trans"]:
@@ -579,6 +569,16 @@ class TranslatorAgent(BaseToolAgent):
                 except Exception as e:
                     return transed_env
 
+        elif self.trans_mode == "plain":
+            if env["need_trans"]:
+                transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,
+                                                            env["content"],
+                                                            fail_part=placeholder,
+                                                            type="env",
+                                                            session=session
+                                                            )
+            else:
+                transed_env["trans_content"] = env["content"]
 
         return transed_env
 
@@ -1039,6 +1039,14 @@ class TranslatorAgent(BaseToolAgent):
         return "\n".join(merged_content)
 
     def build_term_dict(self):
+        placeholder_terms = {
+            key: value
+            for key, value in self.term_dict.items()
+            if self._is_placeholder_term(key, value)
+        }
+        self.term_dict = dict(placeholder_terms)
+        self._project_terms_loaded = False
+
         source_language = self.config.get("source_language", "en")
         user_terms = {}
         project_terms = {}
@@ -1057,7 +1065,7 @@ class TranslatorAgent(BaseToolAgent):
                 for warning in project_result.warnings:
                     print(f"Warning: {warning}")
                 project_terms = project_result.terms
-                self._project_terms_loaded = True
+                self._project_terms_loaded = bool(project_terms)
 
         if self._uses_default_english_chinese_terms():
             arxiv_id = os.path.basename(self.project_dir or "")
@@ -1094,6 +1102,9 @@ class TranslatorAgent(BaseToolAgent):
 
     def _should_use_terms_prompt(self) -> bool:
         return self.trans_mode == "terms" or self._project_terms_loaded
+
+    def _is_placeholder_term(self, key: str, value: str) -> bool:
+        return key == value and bool(re.fullmatch(r"<PLACEHOLDER_[A-Z]+_\d+>", key))
 
     def add_placeholder(self):
 

@@ -1,3 +1,4 @@
+import asyncio
 import unittest
 from unittest.mock import AsyncMock, patch
 
@@ -110,6 +111,31 @@ class TranslatorRetryPromptTests(unittest.TestCase):
 
         self.assertTrue(agent._should_use_terms_prompt())
 
+    def test_plain_project_terms_section_uses_terms_request(self):
+        agent = TranslatorAgent(config={"llm_config": {}}, trans_mode="plain")
+        agent.term_dict = {"Graph": "图"}
+        agent._project_terms_loaded = True
+
+        with (
+            patch.object(agent, "_request_llm_for_trans", new_callable=AsyncMock) as plain_request,
+            patch.object(
+                agent,
+                "_request_llm_for_trans_with_terms",
+                new_callable=AsyncMock,
+                return_value="图",
+            ) as terms_request,
+        ):
+            result = asyncio.run(
+                agent._translate_section(
+                    {"section": "1", "content": "Graph"},
+                    session=None,
+                )
+            )
+
+        self.assertEqual(result["trans_content"], "图")
+        plain_request.assert_not_awaited()
+        terms_request.assert_awaited_once()
+
 
 class TranslatorRetryRequestTests(unittest.IsolatedAsyncioTestCase):
     async def test_plain_retranslation_prompt_does_not_include_glossary(self):
@@ -147,6 +173,32 @@ class TranslatorRetryRequestTests(unittest.IsolatedAsyncioTestCase):
             trans_mode="terms",
         )
         agent.term_dict = {"Graph": "图"}
+        session = _SuccessfulSession()
+
+        await agent._request_llm_for_retrans_error_parts(
+            "Retry system prompt.",
+            part={"content": "Graph", "trans_content": "图"},
+            error_message="Brackets error",
+            fail_part="1",
+            type="sec",
+            session=session,
+        )
+
+        system_content = session.payload["messages"][0]["content"]
+        self.assertIn("<Glossary>", system_content)
+        self.assertIn("'Graph': '图'", system_content)
+
+    async def test_plain_project_terms_retranslation_prompt_includes_glossary(self):
+        agent = TranslatorAgent(
+            config={
+                "source_language": "en",
+                "target_language": "ch",
+                "llm_config": {"api_key": "test-key", "base_url": "https://example.test"},
+            },
+            trans_mode="plain",
+        )
+        agent.term_dict = {"Graph": "图"}
+        agent._project_terms_loaded = True
         session = _SuccessfulSession()
 
         await agent._request_llm_for_retrans_error_parts(
