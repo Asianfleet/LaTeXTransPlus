@@ -1,8 +1,13 @@
+import os
+import tempfile
 import unittest
+from unittest.mock import AsyncMock, Mock, patch
 
+from src.agents import coordinator_agent
 from src.agents.coordinator_agent import (
     build_review_required_result,
     build_workflow_result,
+    CoordinatorAgent,
     filter_retryable_reports,
     format_translation_result_message,
     merge_validation_reports,
@@ -152,6 +157,134 @@ class CoordinatorMessageTests(unittest.TestCase):
         self.assertEqual(result["status"], "needs_term_review")
         self.assertIn("project_terms.csv", result["project_terms_path"])
         self.assertIn("project_terms_decisions.json", result["project_terms_decisions_path"])
+
+    def test_workflow_pauses_after_terminology_review_and_skips_translation(self):
+        events = []
+
+        parser = Mock()
+        parser.execute.side_effect = lambda: events.append("parser")
+        terminology = Mock()
+        terminology.execute.side_effect = lambda: events.append("terminology") or {
+            "project_terms_path": r"outputs\ch_paper\project_terms.csv",
+            "project_terms_decisions_path": r"outputs\ch_paper\project_terms_decisions.json",
+        }
+        translator = Mock()
+        translator.execute = AsyncMock(side_effect=lambda *args, **kwargs: events.append("translator"))
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = os.path.join(tmpdir, "paper")
+            output_dir = os.path.join(tmpdir, "outputs")
+            config = {
+                "target_language": "ch",
+                "terminology": {
+                    "enabled": True,
+                    "review_before_translate": True,
+                },
+            }
+            agent = CoordinatorAgent(config=config, project_dir=project_dir, output_dir=output_dir)
+            try:
+                with patch.object(coordinator_agent, "ParserAgent", return_value=parser), \
+                        patch.object(coordinator_agent, "TerminologyAgent", return_value=terminology), \
+                        patch.object(coordinator_agent, "TranslatorAgent", return_value=translator), \
+                        patch("builtins.print"):
+                    result = agent.workflow_latextrans()
+            finally:
+                if not agent.loop.is_closed():
+                    agent.loop.close()
+
+        self.assertEqual(events, ["parser", "terminology"])
+        self.assertEqual(result["status"], "needs_term_review")
+        translator.execute.assert_not_called()
+
+    def test_workflow_skips_terminology_when_helper_disables_scan(self):
+        events = []
+
+        parser = Mock()
+        parser.execute.side_effect = lambda: events.append("parser")
+        terminology = Mock()
+        terminology.execute.side_effect = lambda: events.append("terminology")
+        translator = Mock()
+        translator.execute = AsyncMock(side_effect=lambda *args, **kwargs: events.append("translator"))
+        validator = Mock()
+        validator.execute.return_value = []
+        generator = Mock()
+        generator.execute.return_value = r"build\paper.pdf"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = os.path.join(tmpdir, "paper")
+            output_dir = os.path.join(tmpdir, "outputs")
+            config = {
+                "target_language": "ch",
+                "terminology": {
+                    "enabled": False,
+                    "review_before_translate": True,
+                },
+            }
+            agent = CoordinatorAgent(config=config, project_dir=project_dir, output_dir=output_dir)
+            try:
+                with patch.object(coordinator_agent, "ParserAgent", return_value=parser), \
+                        patch.object(coordinator_agent, "TerminologyAgent", return_value=terminology), \
+                        patch.object(coordinator_agent, "TranslatorAgent", return_value=translator), \
+                        patch.object(coordinator_agent, "ValidatorAgent", return_value=validator), \
+                        patch.object(coordinator_agent, "GeneratorAgent", return_value=generator), \
+                        patch.object(coordinator_agent, "shutil") as shutil_mock, \
+                        patch("builtins.print"):
+                    result = agent.workflow_latextrans()
+            finally:
+                if not agent.loop.is_closed():
+                    agent.loop.close()
+
+        self.assertEqual(events, ["parser", "translator"])
+        terminology.execute.assert_not_called()
+        translator.execute.assert_awaited_once()
+        shutil_mock.move.assert_called_once()
+        self.assertTrue(result["ok"])
+
+    def test_workflow_uses_should_run_terminology_scan_gate(self):
+        events = []
+
+        parser = Mock()
+        parser.execute.side_effect = lambda: events.append("parser")
+        terminology = Mock()
+        terminology.execute.side_effect = lambda: events.append("terminology") or {
+            "project_terms_path": r"outputs\ch_paper\project_terms.csv",
+            "project_terms_decisions_path": r"outputs\ch_paper\project_terms_decisions.json",
+        }
+        translator = Mock()
+        translator.execute = AsyncMock(side_effect=lambda *args, **kwargs: events.append("translator"))
+        validator = Mock()
+        validator.execute.return_value = []
+        generator = Mock()
+        generator.execute.return_value = r"build\paper.pdf"
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            project_dir = os.path.join(tmpdir, "paper")
+            output_dir = os.path.join(tmpdir, "outputs")
+            config = {
+                "target_language": "ch",
+                "terminology": {
+                    "enabled": True,
+                    "review_before_translate": True,
+                },
+            }
+            agent = CoordinatorAgent(config=config, project_dir=project_dir, output_dir=output_dir)
+            try:
+                with patch.object(coordinator_agent, "should_run_terminology_scan", return_value=False), \
+                        patch.object(coordinator_agent, "ParserAgent", return_value=parser), \
+                        patch.object(coordinator_agent, "TerminologyAgent", return_value=terminology), \
+                        patch.object(coordinator_agent, "TranslatorAgent", return_value=translator), \
+                        patch.object(coordinator_agent, "ValidatorAgent", return_value=validator), \
+                        patch.object(coordinator_agent, "GeneratorAgent", return_value=generator), \
+                        patch.object(coordinator_agent, "shutil"), \
+                        patch("builtins.print"):
+                    result = agent.workflow_latextrans()
+            finally:
+                if not agent.loop.is_closed():
+                    agent.loop.close()
+
+        self.assertEqual(events, ["parser", "translator"])
+        terminology.execute.assert_not_called()
+        self.assertTrue(result["ok"])
 
 
 if __name__ == "__main__":

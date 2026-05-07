@@ -187,7 +187,7 @@ class CoordinatorAgent:
         parser_agent.execute()  
 
         terminology_config = TerminologyConfig.from_config(self.config or {})
-        if terminology_config.enabled:
+        if should_run_terminology_scan(self.config or {}):
             terminology_agent = TerminologyAgent(
                 config=self.config,
                 project_dir=self.project_dir,
