@@ -2,14 +2,14 @@
 
 ## 背景
 
-`docs/term-scan.md` 记录了当前术语一致性问题：同一篇论文中，`power sampling` 可能被译成“幂采样”“功率采样”“幂抽样”等不同说法。现有术语逻辑主要内嵌在 `TranslatorAgent`：
+`docs/term-scan.md` 记录了当前术语一致性问题：同一篇论文中，源语术语可能在目标语里被翻译成多种说法。例如在 `source_language=en`、`target_language=ch` 时，`power sampling` 可能被译成“幂采样”“功率采样”“幂抽样”。现有术语逻辑主要内嵌在 `TranslatorAgent`：
 
 - 启动翻译时读取 `user_term`、arXiv category 词表或 `terms/default.csv`。
 - `terms` 模式会把整个 `term_dict` 注入 prompt。
 - `update_term` 的动态术语更新发生在翻译后，不能在首次翻译前锁定论文核心术语。
 - 现有 validator 只检查 LaTeX 命令、placeholder 和括号结构，不检查术语一致性。
 
-本设计按第一版最小闭环实现：翻译前生成论文级术语表，翻译后用户可修改术语表，然后通过显式命令全量重译。暂不加入术语 validator 和局部重译。
+本设计按第一版最小闭环实现：翻译前根据当前 `source_language` 和 `target_language` 生成论文级术语表，翻译后用户可修改术语表，然后通过显式命令全量重译。暂不加入术语 validator 和局部重译。
 
 ## 目标
 
@@ -44,7 +44,7 @@ max_llm_candidates = 30
 
 - `enabled`：是否在首次翻译前生成论文级术语表。
 - `review_before_translate`：是否生成 `project_terms.csv` 后暂停 workflow，等待用户审核。
-- `max_llm_candidates`：最多让 LLM 为多少个未知候选术语生成中文译名。
+- `max_llm_candidates`：最多让 LLM 为多少个未知候选术语生成目标语译名。
 
 默认行为是 `enabled=true` 且 `review_before_translate=false`，即生成术语表后直接继续首次翻译。
 
@@ -58,7 +58,7 @@ latextrans --project D:\paper --retranslate-with-terms
 
 该参数语义：
 
-- 根据 `--project`、`output_dir` 和 `target_language` 找到对应输出目录，例如 `outputs/ch_paper`。
+- 根据 `--project`、`output_dir` 和 `target_language` 找到对应输出目录，例如 `outputs/<target_language>_paper`。
 - 要求输出目录中已存在 `sections_map.json`、`captions_map.json`、`envs_map.json` 和 `project_terms.csv`。
 - 不重新解析原始 LaTeX 项目。
 - 使用当前 `project_terms.csv` 全量重新翻译所有可翻译 part。
@@ -71,8 +71,10 @@ latextrans --project D:\paper --retranslate-with-terms
 
 第一版只生成 CSV：
 
+以下示例只展示 `source_language=en`、`target_language=ch` 的内容形态；其他语言对仍使用同样的两列表头和“源语术语 -> 目标语译名”语义。
+
 ```csv
-English Term,Chinese Translation
+Source Term,Target Translation
 power sampling,幂采样
 power distribution,幂分布
 distribution sharpening,分布锐化
@@ -84,8 +86,9 @@ distribution sharpening,分布锐化
 - 没有 header 的两列 CSV 也兼容。
 - 空行跳过。
 - 非两列行记录 warning 并跳过，不中断流程。
-- 英文术语按 case-insensitive 去重。
+- 源语术语去重必须基于语言安全的归一化：有大小写的语言可以做 case-insensitive 去重；没有大小写或大小写折叠可能改变语义的语言保持精确文本去重。
 - 高优先级来源已写入的术语不能被低优先级来源覆盖。
+- CSV 两列语义固定为 `source_language` 术语和 `target_language` 译名，不得在代码里写死 English/Chinese。
 
 ## 术语优先级
 
@@ -100,6 +103,7 @@ user_term > project_terms.csv > arXiv category 词表 > terms/default.csv > plac
 - `user_term` 仍是全局最高优先级。
 - `project_terms.csv` 是论文级术语表，优先级高于 category 和 default。
 - category 词表和 default 词表只补充缺失术语。
+- 现有 `terms/*.csv` 和 `terms/default.csv` 是历史 English-to-Chinese 资源，只能在 `source_language=en` 且 `target_language=ch` 时默认加载。其他语言对不能默认加载这些词表，除非后续显式增加带语言对标识的词表机制。
 - placeholder 自保护项最后加入，确保 `<PLACEHOLDER_...>` 保持不变。
 
 ## TerminologyAgent
@@ -109,20 +113,21 @@ user_term > project_terms.csv > arXiv category 词表 > terms/default.csv > plac
 职责：
 
 - 读取 parser 生成的 `sections_map.json`、`captions_map.json` 和 `envs_map.json`。
-- 从标题、摘要、section heading、caption、section 开头段落和可翻译 environment 中收集英文文本。
-- 匹配既有词表中的英文术语。
-- 用轻量规则抽取 2-5 个词的英文短语候选。
-- 对未命中既有词表的候选，最多选取 `max_llm_candidates` 个让 LLM 生成建议中文译名。
+- 从标题、摘要、section heading、caption、section 开头段落和可翻译 environment 中收集源语文本。
+- 匹配适用于当前语言对的既有词表中的源语术语。
+- 按当前 `source_language` 选择候选抽取策略。
+- 对未命中既有词表的候选，最多选取 `max_llm_candidates` 个让 LLM 生成建议目标语译名。
 - 写出 `project_terms.csv`。
 
 候选抽取第一版保持保守：
 
-- 优先 multi-word term，不锁定单个多义词，例如不生成 `power -> 幂`。
-- 优先包含领域词的短语，例如 `sampling`、`distribution`、`model`、`algorithm`、`likelihood`、`reward`、`verifier`。
-- 过滤明显泛化短语，例如 `this paper`、`our method`、`the result`。
-- 专名、模型名、数据集名和 benchmark 可保留英文作为译名。
+- 对 `source_language=en`，可以使用英文 2-5 词短语规则，优先 multi-word term，不锁定单个多义词，例如不生成 `power -> 幂`。
+- 英文源语下可优先包含领域词的短语，例如 `sampling`、`distribution`、`model`、`algorithm`、`likelihood`、`reward`、`verifier`。
+- 英文源语下过滤明显泛化短语，例如 `this paper`、`our method`、`the result`。
+- 对非英文源语，不套用英文 noun phrase 或空格分词规则；第一版使用适用词表匹配和 LLM 基于上下文提名候选术语。
+- 专名、模型名、数据集名和 benchmark 可保留源语原文作为目标语译名。
 
-LLM 失败时不阻塞首次翻译：已命中既有词表的术语仍写入；未知候选可跳过或保留英文译名。
+LLM 失败时不阻塞首次翻译：已命中既有词表的术语仍写入；未知候选可跳过或保留源语原文作为译名。
 
 ## 首次翻译数据流
 
@@ -156,7 +161,7 @@ resolve project + output/ch_project
 - `project_terms.csv` 不存在：`--retranslate-with-terms` 失败，提示先运行首次翻译或补充术语表。
 - parser map 不存在：失败，提示该输出目录不可复用。
 - CSV 行格式错误：记录 warning，跳过该行。
-- LLM 术语生成失败：保留既有词表命中的术语；未知候选跳过或译名保留英文。
+- LLM 术语生成失败：保留既有词表命中的术语；未知候选跳过或译名保留源语原文。
 - `review_before_translate=true`：workflow 返回暂停状态，不标记为普通翻译成功。
 - 全量重译仍沿用现有 validator retry 与 PDF 生成策略。
 
@@ -168,16 +173,20 @@ resolve project + output/ch_project
    - 能从 section/caption/env 中抽取候选术语。
    - 能合并既有词表命中。
    - LLM 失败时不阻塞术语表生成。
+   - 非英文源语不会走英文短语抽取规则。
 
 2. CSV 读写单测
    - 支持 header 与无 header。
    - 空行跳过。
    - 非两列行 warning 后跳过。
-   - case-insensitive 去重保持高优先级。
+   - 有大小写语言的 case-insensitive 去重保持高优先级。
+   - CSV header 和内部字段使用 `Source Term` / `Target Translation`，不写死 English/Chinese。
 
 3. `TranslatorAgent.build_term_dict()` 单测
    - 验证 `user_term > project_terms.csv > category > default`。
    - 验证 placeholder 自保护项仍存在。
+   - 验证 `terms/default.csv` 和 category 词表只在 English-to-Chinese 语言对默认加载。
+   - 验证非 English-to-Chinese 语言对仍可加载 `user_term` 与 `project_terms.csv`。
 
 4. `CoordinatorAgent` 单测
    - 首次流程会在 parser 后调用 `TerminologyAgent`。
@@ -195,7 +204,7 @@ resolve project + output/ch_project
 
 - 旧配置缺少 `[terminology]` 时使用默认开启术语表生成的行为。
 - 用户仍可用 `user_term` 覆盖论文级术语。
-- 现有 `terms/*.csv` 文件格式不变。
+- 现有 `terms/*.csv` 文件格式不变，但它们被视为 English-to-Chinese 默认词表，不对其他语言对自动生效。
 - 现有 validator report 格式不变。
 - 第一版不改变用户可配置的 `mode` 取值，但只要 `project_terms.csv` 存在，`TranslatorAgent` 就必须把它并入术语词表并在 prompt 中启用术语约束。这样可以避免生成了论文级术语表却没有实际影响翻译。
 
@@ -205,3 +214,4 @@ resolve project + output/ch_project
 - CSV 只有两列，无法表达 forbidden targets 和 confidence，后续如果引入术语 validator 需要扩展格式或增加 JSON sidecar。
 - 全量重译成本高，但符合第一版边界；后续可基于术语命中范围做局部重译。
 - 规则抽取可能产生噪声术语，因此第一版应保守过滤，并允许用户通过 CSV 修改。
+- 多语言术语抽取质量取决于语言对。第一版明确避免把英文规则套到所有源语；非英文源语主要依赖适用词表和 LLM 候选提名。
