@@ -103,6 +103,13 @@ class TranslatorRetryPromptTests(unittest.TestCase):
         self.assertIn(r"Preserve command `\textit`: source count=2, translation count=1.", prompt)
         self.assertIn("Source occurrences:", prompt)
 
+    def test_project_terms_enable_terms_prompt_for_plain_mode(self):
+        agent = TranslatorAgent(config={"llm_config": {}}, trans_mode="plain")
+        agent.term_dict = {"Graph": "图"}
+        agent._project_terms_loaded = True
+
+        self.assertTrue(agent._should_use_terms_prompt())
+
 
 class TranslatorRetryRequestTests(unittest.IsolatedAsyncioTestCase):
     async def test_plain_retranslation_prompt_does_not_include_glossary(self):

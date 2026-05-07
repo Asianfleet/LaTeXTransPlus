@@ -83,6 +83,53 @@ class MultilingualTerminologyTests(unittest.TestCase):
 
         self.assertEqual(agent.term_dict, {"Graph": "グラフ"})
 
+    def test_project_terms_are_loaded_for_non_english_chinese_pair(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            (output_dir / "project_terms.csv").write_text(
+                "Source Term,Target Translation\nGraphmodell,グラフモデル\n",
+                encoding="utf-8",
+            )
+            agent = TranslatorAgent(
+                config={
+                    "source_language": "de",
+                    "target_language": "jp",
+                    "llm_config": {},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+
+            agent.build_term_dict()
+
+        self.assertEqual(agent.term_dict, {"Graphmodell": "グラフモデル"})
+
+    def test_user_terms_override_project_terms(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "output"
+            output_dir.mkdir()
+            user_terms = Path(tmp_dir) / "user_terms.csv"
+            user_terms.write_text("Graph,用户图\n", encoding="utf-8")
+            (output_dir / "project_terms.csv").write_text(
+                "Source Term,Target Translation\nGraph,项目图\nTree,树\n",
+                encoding="utf-8",
+            )
+            agent = TranslatorAgent(
+                config={
+                    "source_language": "en",
+                    "target_language": "ch",
+                    "user_term": str(user_terms),
+                    "llm_config": {},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+
+            agent.build_term_dict()
+
+        self.assertEqual(agent.term_dict["Graph"], "用户图")
+        self.assertEqual(agent.term_dict["Tree"], "树")
+
 
 class MultilingualTerminologyRequestTests(unittest.IsolatedAsyncioTestCase):
     async def test_terminology_request_uses_configured_language_labels(self):

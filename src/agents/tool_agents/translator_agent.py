@@ -14,6 +14,7 @@ import requests
 import time
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from src.terminology import load_term_csv, project_terms_path, merge_term_pairs
 from src.utils.progress import st
 
 base_dir = os.getcwd()
@@ -68,6 +69,7 @@ class TranslatorAgent(BaseToolAgent):
         self.retrying = False
         # self.term_dict = config.get("term_dict", {})  # Dictionary for terminology translation
         self.term_dict = {}
+        self._project_terms_loaded = False
         self.summary = ''
         self.prev_text = ''
         self.prev_transed_text = ''
@@ -423,7 +425,7 @@ class TranslatorAgent(BaseToolAgent):
                 session=session
             )
 
-        elif self.trans_mode == "terms":
+        elif self._should_use_terms_prompt():
             """
             Combined with terminology translation
             """
@@ -484,7 +486,7 @@ class TranslatorAgent(BaseToolAgent):
                                                         session=session
                                                         )
             
-        elif self.trans_mode == "terms":
+        elif self._should_use_terms_prompt():
             if not self.term_dict:
                 transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
                                                         caption["content"], 
@@ -540,7 +542,7 @@ class TranslatorAgent(BaseToolAgent):
                                                             )                
             else:
                 transed_env["trans_content"] = env["content"]
-        elif self.trans_mode == "terms":
+        elif self._should_use_terms_prompt():
             if not self.term_dict:
                 if env["need_trans"]:
                     transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,
@@ -686,7 +688,7 @@ class TranslatorAgent(BaseToolAgent):
 
         user_prompt = self._build_retranslation_user_prompt(part, error_message)
         system_content = str(system_prompt)
-        if self.trans_mode == "terms":
+        if self._should_use_terms_prompt():
             system_content = (
                 f"{system_content}\n"
                 "When translating, you must strictly use the following glossary for substitution. "
@@ -1037,40 +1039,61 @@ class TranslatorAgent(BaseToolAgent):
         return "\n".join(merged_content)
 
     def build_term_dict(self):
+        source_language = self.config.get("source_language", "en")
+        user_terms = {}
+        project_terms = {}
+        default_terms = {}
+
         if self.user_term:
-            df = pd.read_csv(self.user_term, header=None, names=['Source Term', 'Target Translation'])
-            self.term_dict.update(zip(df['Source Term'], df['Target Translation']))
-        elif not self._uses_default_english_chinese_terms():
-            return
-        else:
-            arxiv_id = os.path.basename(self.project_dir)
+            user_result = load_term_csv(Path(self.user_term), source_language=source_language)
+            for warning in user_result.warnings:
+                print(f"Warning: {warning}")
+            user_terms = user_result.terms
+
+        if self.output_dir:
+            terms_path = project_terms_path(Path(self.output_dir))
+            if terms_path.exists():
+                project_result = load_term_csv(terms_path, source_language=source_language)
+                for warning in project_result.warnings:
+                    print(f"Warning: {warning}")
+                project_terms = project_result.terms
+                self._project_terms_loaded = True
+
+        if self._uses_default_english_chinese_terms():
+            arxiv_id = os.path.basename(self.project_dir or "")
             category_map = self.category or {}
             if category_map.get(arxiv_id):
                 term_dict_loaded = False
                 for category in category_map[arxiv_id]:
-                    file_path = os.path.join('terms', f'{category}.csv')
+                    file_path = os.path.join("terms", f"{category}.csv")
                     try:
-                        df = pd.read_csv(file_path, header=None, names=['Source Term', 'Target Translation'])
-                        self.term_dict.update(zip(df['Source Term'], df['Target Translation']))
+                        df = pd.read_csv(file_path, header=None, names=["Source Term", "Target Translation"])
+                        default_terms.update(zip(df["Source Term"], df["Target Translation"]))
                         term_dict_loaded = True
-
                     except FileNotFoundError:
                         continue
-
                 if not term_dict_loaded:
-                    try:
-                        df = pd.read_csv('terms/default.csv', header=None,
-                                         names=['Source Term', 'Target Translation'])
-                        self.term_dict.update(zip(df['Source Term'], df['Target Translation']))
-                    except FileNotFoundError as e:
-                        print(f"Error: Default terminology file not found: {e}")
+                    default_terms.update(self._load_default_terms_file())
             else:
-                try:
-                    df = pd.read_csv('terms/default.csv', header=None,
-                                     names=['Source Term', 'Target Translation'])
-                    self.term_dict.update(zip(df['Source Term'], df['Target Translation']))
-                except FileNotFoundError as e:
-                    print(f"Error: Default terminology file not found: {e}")
+                default_terms.update(self._load_default_terms_file())
+
+        self.term_dict.update(merge_term_pairs(
+            user_terms.items(),
+            project_terms.items(),
+            default_terms.items(),
+            source_language=source_language,
+        ))
+
+    def _load_default_terms_file(self) -> Dict[str, str]:
+        try:
+            df = pd.read_csv("terms/default.csv", header=None, names=["Source Term", "Target Translation"])
+            return dict(zip(df["Source Term"], df["Target Translation"]))
+        except FileNotFoundError as e:
+            print(f"Error: Default terminology file not found: {e}")
+            return {}
+
+    def _should_use_terms_prompt(self) -> bool:
+        return self.trans_mode == "terms" or self._project_terms_loaded
 
     def add_placeholder(self):
 
