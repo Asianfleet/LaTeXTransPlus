@@ -42,6 +42,24 @@ class TerminologyConfigTests(unittest.TestCase):
                 "terminology": {"max_llm_candidates": -1}
             })
 
+    def test_bool_max_llm_candidates_raises(self):
+        with self.assertRaisesRegex(ValueError, "max_llm_candidates"):
+            TerminologyConfig.from_config({
+                "terminology": {"max_llm_candidates": True}
+            })
+
+    def test_non_bool_enabled_raises(self):
+        with self.assertRaisesRegex(ValueError, "enabled"):
+            TerminologyConfig.from_config({
+                "terminology": {"enabled": "true"}
+            })
+
+    def test_non_bool_review_before_translate_raises(self):
+        with self.assertRaisesRegex(ValueError, "review_before_translate"):
+            TerminologyConfig.from_config({
+                "terminology": {"review_before_translate": "false"}
+            })
+
 
 class TermCsvTests(unittest.TestCase):
     def test_load_term_csv_with_header_and_bad_rows(self):
@@ -66,6 +84,35 @@ class TermCsvTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp_dir:
             term_path = Path(tmp_dir) / PROJECT_TERMS_FILENAME
             term_path.write_text("Graph,グラフ\n", encoding="utf-8")
+
+            result = load_term_csv(term_path, source_language="en")
+
+        self.assertEqual(result.terms, {"Graph": "グラフ"})
+
+    def test_load_term_csv_rejects_extra_columns(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            term_path = Path(tmp_dir) / PROJECT_TERMS_FILENAME
+            term_path.write_text(
+                "Source Term,Target Translation\n"
+                "Graph,图,extra\n"
+                "Model,模型\n",
+                encoding="utf-8",
+            )
+
+            result = load_term_csv(term_path, source_language="en")
+
+        self.assertEqual(result.terms, {"Model": "模型"})
+        self.assertEqual(len(result.warnings), 1)
+        self.assertIn("Graph,图,extra", result.warnings[0])
+
+    def test_load_term_csv_header_allows_bom_and_spaces(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            term_path = Path(tmp_dir) / PROJECT_TERMS_FILENAME
+            term_path.write_text(
+                "\ufeff Source Term , Target Translation \n"
+                "Graph,グラフ\n",
+                encoding="utf-8",
+            )
 
             result = load_term_csv(term_path, source_language="en")
 
@@ -122,6 +169,27 @@ class RetranslationInputTests(unittest.TestCase):
                 (output_dir / name).write_text("[]", encoding="utf-8")
 
             with self.assertRaisesRegex(FileNotFoundError, "project_terms.csv"):
+                require_retranslation_inputs(output_dir)
+
+    def test_require_retranslation_inputs_raises_when_input_is_directory(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            for name in [
+                "sections_map.json",
+                "captions_map.json",
+                "envs_map.json",
+                PROJECT_TERMS_FILENAME,
+            ]:
+                (output_dir / name).mkdir()
+
+            with self.assertRaises(FileNotFoundError):
+                require_retranslation_inputs(output_dir)
+
+    def test_require_retranslation_inputs_raises_when_output_dir_missing(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir) / "missing"
+
+            with self.assertRaises(FileNotFoundError):
                 require_retranslation_inputs(output_dir)
 
     def test_project_terms_path_uses_output_dir(self):

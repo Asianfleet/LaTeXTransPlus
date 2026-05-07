@@ -21,13 +21,24 @@ class TerminologyConfig:
     @classmethod
     def from_config(cls, config: dict) -> "TerminologyConfig":
         terminology = config.get("terminology") or {}
+        enabled = terminology.get("enabled", True)
+        review_before_translate = terminology.get("review_before_translate", False)
         max_llm_candidates = terminology.get("max_llm_candidates", 30)
-        if not isinstance(max_llm_candidates, int) or max_llm_candidates < 0:
+
+        if not isinstance(enabled, bool):
+            raise ValueError("terminology.enabled must be a bool")
+        if not isinstance(review_before_translate, bool):
+            raise ValueError("terminology.review_before_translate must be a bool")
+        if (
+            isinstance(max_llm_candidates, bool)
+            or not isinstance(max_llm_candidates, int)
+            or max_llm_candidates < 0
+        ):
             raise ValueError("terminology.max_llm_candidates must be a non-negative int")
 
         return cls(
-            enabled=terminology.get("enabled", True),
-            review_before_translate=terminology.get("review_before_translate", False),
+            enabled=enabled,
+            review_before_translate=review_before_translate,
             max_llm_candidates=max_llm_candidates,
         )
 
@@ -69,13 +80,13 @@ def load_term_csv(path: Path, *, source_language: str) -> TermCsvLoadResult:
         reader = csv.reader(file)
         rows = list(reader)
 
-    if rows and tuple(rows[0][:2]) == TERM_CSV_HEADER:
+    if rows and _normalize_header_row(rows[0]) == TERM_CSV_HEADER:
         rows = rows[1:]
 
     for row in rows:
         if not row or all(not value.strip() for value in row):
             continue
-        if len(row) < 2:
+        if len(row) != 2:
             warnings.append(f"Skipping bad term CSV row: {','.join(row)}")
             continue
 
@@ -92,6 +103,10 @@ def load_term_csv(path: Path, *, source_language: str) -> TermCsvLoadResult:
         terms[source] = target
 
     return TermCsvLoadResult(terms=terms, warnings=warnings)
+
+
+def _normalize_header_row(row: list[str]) -> tuple[str, ...]:
+    return tuple(value.strip().removeprefix("\ufeff").strip() for value in row)
 
 
 def merge_term_pairs(
@@ -133,7 +148,7 @@ def require_retranslation_inputs(output_dir: Path) -> RetranslationInputs:
         inputs.envs_path,
         inputs.project_terms_path,
     ]:
-        if not path.exists():
+        if not path.is_file():
             raise FileNotFoundError(path)
 
     return inputs
