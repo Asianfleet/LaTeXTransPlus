@@ -54,6 +54,8 @@ class RetranslationInputs:
     sections_path: Path
     captions_path: Path
     envs_path: Path
+    inputs_path: Path
+    newcommands_path: Path
     project_terms_path: Path
 
 
@@ -139,6 +141,8 @@ def require_retranslation_inputs(output_dir: Path) -> RetranslationInputs:
         sections_path=output_dir / "sections_map.json",
         captions_path=output_dir / "captions_map.json",
         envs_path=output_dir / "envs_map.json",
+        inputs_path=output_dir / "inputs_map.json",
+        newcommands_path=output_dir / "newcommands_map.json",
         project_terms_path=project_terms_path(output_dir),
     )
 
@@ -146,6 +150,8 @@ def require_retranslation_inputs(output_dir: Path) -> RetranslationInputs:
         inputs.sections_path,
         inputs.captions_path,
         inputs.envs_path,
+        inputs.inputs_path,
+        inputs.newcommands_path,
         inputs.project_terms_path,
     ]:
         if not path.is_file():

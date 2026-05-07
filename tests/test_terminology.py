@@ -153,6 +153,8 @@ class RetranslationInputTests(unittest.TestCase):
                 "sections_map.json",
                 "captions_map.json",
                 "envs_map.json",
+                "inputs_map.json",
+                "newcommands_map.json",
                 PROJECT_TERMS_FILENAME,
             ]:
                 (output_dir / name).write_text("[]" if name.endswith(".json") else "Graph,图\n", encoding="utf-8")
@@ -161,14 +163,52 @@ class RetranslationInputTests(unittest.TestCase):
 
         self.assertEqual(result.project_terms_path.name, PROJECT_TERMS_FILENAME)
         self.assertTrue(result.sections_path.name.endswith("sections_map.json"))
+        self.assertEqual(result.inputs_path.name, "inputs_map.json")
+        self.assertEqual(result.newcommands_path.name, "newcommands_map.json")
 
     def test_require_retranslation_inputs_raises_for_missing_project_terms(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir)
-            for name in ["sections_map.json", "captions_map.json", "envs_map.json"]:
+            for name in [
+                "sections_map.json",
+                "captions_map.json",
+                "envs_map.json",
+                "inputs_map.json",
+                "newcommands_map.json",
+            ]:
                 (output_dir / name).write_text("[]", encoding="utf-8")
 
             with self.assertRaisesRegex(FileNotFoundError, "project_terms.csv"):
+                require_retranslation_inputs(output_dir)
+
+    def test_require_retranslation_inputs_raises_for_missing_inputs_map(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            for name in [
+                "sections_map.json",
+                "captions_map.json",
+                "envs_map.json",
+                "newcommands_map.json",
+                PROJECT_TERMS_FILENAME,
+            ]:
+                (output_dir / name).write_text("[]" if name.endswith(".json") else "Graph,图\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(FileNotFoundError, "inputs_map.json"):
+                require_retranslation_inputs(output_dir)
+
+    def test_require_retranslation_inputs_raises_for_missing_newcommands_map(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            for name in [
+                "sections_map.json",
+                "captions_map.json",
+                "envs_map.json",
+                "inputs_map.json",
+                PROJECT_TERMS_FILENAME,
+            ]:
+                (output_dir / name).write_text("[]" if name.endswith(".json") else "Graph,图\n", encoding="utf-8")
+
+            with self.assertRaisesRegex(FileNotFoundError, "newcommands_map.json"):
                 require_retranslation_inputs(output_dir)
 
     def test_require_retranslation_inputs_raises_when_input_is_directory(self):
@@ -178,6 +218,8 @@ class RetranslationInputTests(unittest.TestCase):
                 "sections_map.json",
                 "captions_map.json",
                 "envs_map.json",
+                "inputs_map.json",
+                "newcommands_map.json",
                 PROJECT_TERMS_FILENAME,
             ]:
                 (output_dir / name).mkdir()

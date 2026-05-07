@@ -251,6 +251,14 @@ class CoordinatorMessageTests(unittest.TestCase):
                 ], ensure_ascii=False),
                 encoding="utf-8",
             )
+            (transed_dir / "inputs_map.json").write_text(
+                json.dumps([], ensure_ascii=False),
+                encoding="utf-8",
+            )
+            (transed_dir / "newcommands_map.json").write_text(
+                json.dumps([], ensure_ascii=False),
+                encoding="utf-8",
+            )
             (transed_dir / "project_terms.csv").write_text(
                 "Source Term,Target Translation\nGraph,图\n",
                 encoding="utf-8",
