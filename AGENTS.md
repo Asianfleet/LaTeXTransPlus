@@ -23,13 +23,13 @@ Tests currently use the standard `unittest` framework. Add tests under `tests/` 
 
 ## Project Lessons
 
-- 这个项目有两条配置加载路径，`main.py` 和 `src/runtime.py` 都会加载配置；类似配置语义变更必须抽出公共 helper，否则 CLI 入口和 runtime helper 很容易行为不一致。
-- 去除旧版兼容时要彻底清理，不仅要改配置示例或入口参数，还要检查并删除底层 helper、别名映射、回退分支和旧测试中的残留兼容逻辑，避免文档与真实运行时语义再次漂移。
-- 后续开发不要再默认局限于英译中；涉及翻译方向、prompt、术语表、语言配置或测试时，都要按多语言支持审视。若用户只提到一种情况（例如只说“英译中”），先停下来提醒用户这可能影响多语言能力，并确认是否要只针对该语言对处理。
+- This project has two configuration loading paths: both `main.py` and `src/runtime.py` load configuration. Changes to configuration semantics must extract shared helpers; otherwise, the CLI entry point and runtime helper can easily drift into inconsistent behavior.
+- When removing legacy compatibility, clean it up thoroughly. Do not only update configuration examples or entry-point parameters; also inspect and remove leftover compatibility logic in low-level helpers, alias mappings, fallback branches, and old tests to keep documentation and runtime behavior from drifting again.
+- Future development should not assume English-to-Chinese translation by default. Any work involving translation direction, prompts, glossaries, language configuration, or tests should be reviewed for multilingual support. If the user mentions only one case, such as "English-to-Chinese", pause first to note that it may affect multilingual capability and confirm whether the change should target only that language pair.
 
 ## Commit & Pull Request Guidelines
 
-Recent commits use short messages such as `chore: 忽略生成文件` and `Update README`. Prefer concise, imperative messages; use a scoped conventional prefix when helpful, for example `fix(config): resolve API key from env`. Pull requests should describe the workflow affected, list verification commands, and note configuration changes.
+Recent commits use short messages such as `chore: ignore generated files` and `Update README`. Prefer concise, imperative messages; use a scoped conventional prefix when helpful, for example `fix(config): resolve API key from env`. Pull requests should describe the workflow affected, list verification commands, and note configuration changes.
 
 ## Security & Configuration Tips
 
