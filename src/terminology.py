@@ -9,6 +9,7 @@ from typing import Iterable
 PROJECT_TERMS_FILENAME = "project_terms.csv"
 PROJECT_TERMS_DECISIONS_FILENAME = "project_terms_decisions.json"
 TERM_CSV_HEADER = ("Source Term", "Target Translation")
+NORMALIZED_TERM_CSV_HEADER = tuple(value.casefold() for value in TERM_CSV_HEADER)
 CASEFOLD_LANGUAGES = {"en", "de", "fr", "es", "it", "pt", "ru"}
 
 
@@ -19,7 +20,8 @@ class TerminologyConfig:
     max_llm_candidates: int = 30
 
     @classmethod
-    def from_config(cls, config: dict) -> "TerminologyConfig":
+    def from_config(cls, config: dict | None) -> "TerminologyConfig":
+        config = config or {}
         terminology = config.get("terminology") or {}
         enabled = terminology.get("enabled", True)
         review_before_translate = terminology.get("review_before_translate", False)
@@ -67,8 +69,8 @@ def project_terms_decisions_path(output_dir: Path) -> Path:
     return output_dir / PROJECT_TERMS_DECISIONS_FILENAME
 
 
-def casefold_language(term: str, source_language: str) -> str:
-    if source_language.lower() in CASEFOLD_LANGUAGES:
+def casefold_language(term: str, source_language: str | None) -> str:
+    if source_language and source_language.lower() in CASEFOLD_LANGUAGES:
         return term.casefold()
     return term
 
@@ -82,7 +84,7 @@ def load_term_csv(path: Path, *, source_language: str) -> TermCsvLoadResult:
         reader = csv.reader(file)
         rows = list(reader)
 
-    if rows and _normalize_header_row(rows[0]) == TERM_CSV_HEADER:
+    if rows and _normalize_header_row(rows[0]) == NORMALIZED_TERM_CSV_HEADER:
         rows = rows[1:]
 
     for row in rows:
@@ -108,7 +110,7 @@ def load_term_csv(path: Path, *, source_language: str) -> TermCsvLoadResult:
 
 
 def _normalize_header_row(row: list[str]) -> tuple[str, ...]:
-    return tuple(value.strip().removeprefix("\ufeff").strip() for value in row)
+    return tuple(value.strip().removeprefix("\ufeff").strip().casefold() for value in row)
 
 
 def merge_term_pairs(
@@ -119,6 +121,10 @@ def merge_term_pairs(
 
     for term_source in term_sources:
         for source, target in term_source:
+            source = source.strip()
+            target = target.strip()
+            if not source or not target:
+                continue
             normalized = casefold_language(source, source_language)
             if normalized in seen:
                 continue

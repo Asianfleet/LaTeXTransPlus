@@ -23,6 +23,13 @@ class TerminologyConfigTests(unittest.TestCase):
         self.assertFalse(config.review_before_translate)
         self.assertEqual(config.max_llm_candidates, 30)
 
+    def test_none_config_uses_defaults(self):
+        config = TerminologyConfig.from_config(None)
+
+        self.assertTrue(config.enabled)
+        self.assertFalse(config.review_before_translate)
+        self.assertEqual(config.max_llm_candidates, 30)
+
     def test_config_values_can_be_overridden(self):
         config = TerminologyConfig.from_config({
             "terminology": {
@@ -118,11 +125,28 @@ class TermCsvTests(unittest.TestCase):
 
         self.assertEqual(result.terms, {"Graph": "グラフ"})
 
+    def test_load_term_csv_header_is_case_insensitive_with_bom_and_spaces(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            term_path = Path(tmp_dir) / PROJECT_TERMS_FILENAME
+            term_path.write_text(
+                "\ufeff source term , target translation \n"
+                "Graph,グラフ\n",
+                encoding="utf-8",
+            )
+
+            result = load_term_csv(term_path, source_language="en")
+
+        self.assertEqual(result.terms, {"Graph": "グラフ"})
+        self.assertEqual(result.warnings, [])
+
     def test_casefold_language_for_latin_but_not_cjk(self):
         self.assertEqual(casefold_language("Graph", "en"), "graph")
         self.assertEqual(casefold_language("Graph", "de"), "graph")
         self.assertEqual(casefold_language("グラフ", "jp"), "グラフ")
         self.assertEqual(casefold_language("图模型", "ch"), "图模型")
+
+    def test_casefold_language_without_source_language_leaves_term_unchanged(self):
+        self.assertEqual(casefold_language("Graph", None), "Graph")
 
     def test_merge_term_pairs_preserves_higher_priority(self):
         merged = merge_term_pairs(
@@ -133,6 +157,14 @@ class TermCsvTests(unittest.TestCase):
         )
 
         self.assertEqual(merged, {"Graph": "用户图", "Tree": "树"})
+
+    def test_merge_term_pairs_skips_empty_source_or_target(self):
+        merged = merge_term_pairs(
+            [("", "空源"), ("Graph", ""), ("Model", "模型")],
+            source_language="en",
+        )
+
+        self.assertEqual(merged, {"Model": "模型"})
 
     def test_write_project_terms_csv_uses_source_target_header(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -181,7 +213,7 @@ class RetranslationInputTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "project_terms.csv"):
                 require_retranslation_inputs(output_dir)
 
-    def test_require_retranslation_inputs_raises_for_missing_inputs_map(self):
+    def test_require_retranslation_inputs_raises_for_missing_inputs_map_for_full_retranslation(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir)
             for name in [
@@ -196,7 +228,7 @@ class RetranslationInputTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "inputs_map.json"):
                 require_retranslation_inputs(output_dir)
 
-    def test_require_retranslation_inputs_raises_for_missing_newcommands_map(self):
+    def test_require_retranslation_inputs_raises_for_missing_newcommands_map_for_full_retranslation(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             output_dir = Path(tmp_dir)
             for name in [

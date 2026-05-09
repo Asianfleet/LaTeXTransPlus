@@ -1,8 +1,9 @@
 import os
 import tarfile
 import zipfile
+from contextlib import nullcontext
 from pathlib import Path
-from typing import Any, Callable, Dict, Iterable, List, Optional, Sequence
+from typing import Any, Callable, ContextManager, Dict, Iterable, List, Optional, Sequence
 
 import toml
 
@@ -18,6 +19,7 @@ from src.formats.latex.utils import (
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ProjectEventCallback = Callable[[Dict[str, Any]], None]
+ProjectContextCallback = Callable[[int, int, str], ContextManager[None]]
 
 
 def resolve_path(path_value: str) -> Path:
@@ -248,90 +250,93 @@ def run_projects(
     projects: Sequence[str],
     output_dir: str,
     event_callback: Optional[ProjectEventCallback] = None,
+    project_context: Optional[ProjectContextCallback] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
     completed_projects: List[Dict[str, Any]] = []
     failed_projects: List[Dict[str, Any]] = []
     total_projects = len(projects)
     for idx, project_dir in enumerate(projects, start=1):
-        project_name = os.path.basename(project_dir)
-        print(f"[{idx}/{total_projects}] Processing {project_name}")
-        if event_callback:
-            event_callback(
-                {
-                    "type": "project_start",
-                    "index": idx,
-                    "total": total_projects,
-                    "project_name": project_name,
-                    "project_dir": project_dir,
-                }
-            )
-
-        try:
-            latex_trans = CoordinatorAgent(
-                config=config,
-                project_dir=project_dir,
-                output_dir=output_dir,
-            )
-            if config.get("retranslate_with_terms", False):
-                workflow_result = latex_trans.workflow_latextrans_with_existing_terms()
-            else:
-                workflow_result = latex_trans.workflow_latextrans()
-            project_result = classify_project_result(
-                index=idx,
-                total=total_projects,
-                project_name=project_name,
-                project_dir=project_dir,
-                workflow_result=workflow_result,
-            )
-        except Exception as e:
-            print(f"Error processing project {project_name}: {e}")
-            failed_projects.append(
-                {
-                    "type": "failed",
-                    "ok": False,
-                    "index": idx,
-                    "total": total_projects,
-                    "project_name": project_name,
-                    "project_dir": project_dir,
-                    "error": str(e),
-                }
-            )
+        context = project_context(idx, total_projects, project_dir) if project_context else nullcontext()
+        with context:
+            project_name = os.path.basename(project_dir)
+            print(f"[{idx}/{total_projects}] Processing {project_name}")
             if event_callback:
                 event_callback(
                     {
-                        "type": "project_error",
+                        "type": "project_start",
+                        "index": idx,
+                        "total": total_projects,
+                        "project_name": project_name,
+                        "project_dir": project_dir,
+                    }
+                )
+
+            try:
+                latex_trans = CoordinatorAgent(
+                    config=config,
+                    project_dir=project_dir,
+                    output_dir=output_dir,
+                )
+                if config.get("retranslate_with_terms", False):
+                    workflow_result = latex_trans.workflow_latextrans_with_existing_terms()
+                else:
+                    workflow_result = latex_trans.workflow_latextrans()
+                project_result = classify_project_result(
+                    index=idx,
+                    total=total_projects,
+                    project_name=project_name,
+                    project_dir=project_dir,
+                    workflow_result=workflow_result,
+                )
+            except Exception as e:
+                print(f"Error processing project {project_name}: {e}")
+                failed_projects.append(
+                    {
+                        "type": "failed",
+                        "ok": False,
                         "index": idx,
                         "total": total_projects,
                         "project_name": project_name,
                         "project_dir": project_dir,
                         "error": str(e),
                     }
-            )
-            continue
+                )
+                if event_callback:
+                    event_callback(
+                        {
+                            "type": "project_error",
+                            "index": idx,
+                            "total": total_projects,
+                            "project_name": project_name,
+                            "project_dir": project_dir,
+                            "error": str(e),
+                        }
+                    )
+                continue
 
-        if project_result["ok"]:
-            completed_projects.append(project_result)
-            event_type = "project_complete"
-        else:
-            failed_projects.append(project_result)
-            event_type = "project_error"
+            if project_result["ok"]:
+                completed_projects.append(project_result)
+                event_type = "project_complete"
+            else:
+                failed_projects.append(project_result)
+                event_type = "project_error"
 
-        if event_callback:
-            event_payload = {
-                "type": event_type,
-                "index": idx,
-                "total": total_projects,
-                "project_name": project_name,
-                "project_dir": project_dir,
-                "pdf_path": project_result.get("pdf_path"),
-                "errors_report_path": project_result.get("errors_report_path"),
-                "validation_summary": project_result.get("validation_summary"),
-                "error": project_result.get("error"),
-            }
-            for key in ("status", "project_terms_path", "project_terms_decisions_path"):
-                if key in project_result:
-                    event_payload[key] = project_result[key]
-            event_callback(event_payload)
+            if event_callback:
+                event_payload = {
+                    "type": event_type,
+                    "index": idx,
+                    "total": total_projects,
+                    "project_name": project_name,
+                    "project_dir": project_dir,
+                    "pdf_path": project_result.get("pdf_path"),
+                    "errors_report_path": project_result.get("errors_report_path"),
+                    "validation_summary": project_result.get("validation_summary"),
+                    "error": project_result.get("error"),
+                }
+                for key in ("status", "project_terms_path", "project_terms_decisions_path"):
+                    if key in project_result:
+                        event_payload[key] = project_result[key]
+                event_callback(event_payload)
     return {
         "completed_projects": completed_projects,
         "failed_projects": failed_projects,
