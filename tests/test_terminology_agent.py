@@ -86,6 +86,57 @@ class TerminologyAgentContextTests(unittest.TestCase):
         self.assertIn("power distribution", candidates)
         self.assertNotIn("this paper", candidates)
 
+    def test_english_candidate_extraction_rejects_context_fragments(self):
+        agent = TerminologyAgent(
+            config={"source_language": "en", "target_language": "ch", "llm_config": {}},
+            project_dir="paper",
+            output_dir="unused",
+        )
+        records = [
+            {
+                "part": "sec",
+                "id": "1",
+                "text": (
+                    "Our sampling algorithm uses power sampling. "
+                    "Algorithm ref describes the method. "
+                    "That power sampling works while low-temperature sampling does not. "
+                    "The model we evaluate can sample from the target distribution. "
+                    "Distribution p and distribution over tokens are notation fragments. "
+                    "The base model Qwen Math 7B is a model name, not a glossary term. "
+                    "Distribution cit is a citation artifact. "
+                    "The algorithm achieves gains but high likelihood is not enough. "
+                    "During sampling the model responds directly until it stops. "
+                    "Low-temperature sampling upweights tokens."
+                ),
+            }
+        ]
+
+        candidates = agent._extract_rule_candidates(records)
+
+        self.assertIn("power sampling", candidates)
+        self.assertIn("sampling algorithm", candidates)
+        self.assertIn("target distribution", candidates)
+        self.assertNotIn("our sampling", candidates)
+        self.assertNotIn("our sampling algorithm", candidates)
+        self.assertNotIn("algorithm ref", candidates)
+        self.assertNotIn("that power sampling", candidates)
+        self.assertNotIn("while low-temperature sampling", candidates)
+        self.assertNotIn("model we", candidates)
+        self.assertNotIn("sampling does", candidates)
+        self.assertNotIn("distribution p", candidates)
+        self.assertNotIn("distribution over", candidates)
+        self.assertNotIn("model qwen", candidates)
+        self.assertNotIn("model name", candidates)
+        self.assertNotIn("distribution cit", candidates)
+        self.assertNotIn("algorithm achieves", candidates)
+        self.assertNotIn("but high likelihood", candidates)
+        self.assertNotIn("during sampling", candidates)
+        self.assertNotIn("sampling directly", candidates)
+        self.assertNotIn("model responds", candidates)
+        self.assertNotIn("model until", candidates)
+        self.assertNotIn("sampling upweights", candidates)
+        self.assertNotIn("sampling upweights tokens", candidates)
+
     def test_non_english_candidate_extraction_does_not_use_english_rules(self):
         agent = TerminologyAgent(
             config={"source_language": "de", "target_language": "jp", "llm_config": {}},
@@ -179,6 +230,45 @@ class TerminologyAgentExecuteTests(unittest.TestCase):
         self.assertEqual(decisions["decisions"][0]["candidate_translations"], ["幂采样", "功率采样"])
         self.assertEqual(decisions["decisions"][0]["selected_translation"], "幂采样")
         self.assertIn("power distribution", decisions["decisions"][0]["reason"])
+
+    def test_execute_ignores_invalid_llm_confirmed_terms(self):
+        class InvalidDecisionTerminologyAgent(TerminologyAgent):
+            def _request_llm_for_term_decisions(self, candidates, paper_context, term_contexts, known_terms):
+                return [
+                    {
+                        "source_term": "power sampling",
+                        "candidate_translations": ["幂采样"],
+                        "selected_translation": "幂采样",
+                        "reason": "Valid domain term.",
+                    },
+                    {
+                        "source_term": "our sampling",
+                        "candidate_translations": ["本文采样"],
+                        "selected_translation": "本文采样",
+                        "reason": "Invalid context fragment.",
+                    },
+                ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            self._write_maps(output_dir)
+            agent = InvalidDecisionTerminologyAgent(
+                config={
+                    "source_language": "en",
+                    "target_language": "ch",
+                    "llm_config": {},
+                    "terminology": {"max_llm_candidates": 10},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+
+            agent.execute()
+
+            terms_content = (output_dir / PROJECT_TERMS_FILENAME).read_text(encoding="utf-8")
+
+        self.assertIn("power sampling,幂采样", terms_content)
+        self.assertNotIn("our sampling,本文采样", terms_content)
 
     def test_llm_failure_records_failure_and_does_not_write_unconfirmed_candidate(self):
         class FailingTerminologyAgent(TerminologyAgent):

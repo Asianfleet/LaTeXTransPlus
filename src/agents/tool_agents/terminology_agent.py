@@ -45,7 +45,9 @@ FUNCTION_WORDS = {
     "as",
     "at",
     "be",
+    "but",
     "by",
+    "during",
     "for",
     "from",
     "in",
@@ -54,9 +56,107 @@ FUNCTION_WORDS = {
     "of",
     "on",
     "or",
+    "over",
     "the",
     "to",
     "with",
+}
+CONTEXT_WORDS = {
+    "all",
+    "achieve",
+    "achieved",
+    "achieves",
+    "also",
+    "another",
+    "any",
+    "can",
+    "cannot",
+    "could",
+    "did",
+    "do",
+    "does",
+    "due",
+    "each",
+    "either",
+    "evaluate",
+    "following",
+    "gains",
+    "given",
+    "has",
+    "have",
+    "having",
+    "may",
+    "might",
+    "must",
+    "not",
+    "our",
+    "ours",
+    "respond",
+    "responds",
+    "sample",
+    "shall",
+    "should",
+    "show",
+    "shows",
+    "shown",
+    "such",
+    "than",
+    "that",
+    "these",
+    "this",
+    "those",
+    "thus",
+    "until",
+    "upweight",
+    "upweighted",
+    "upweights",
+    "use",
+    "used",
+    "uses",
+    "using",
+    "we",
+    "when",
+    "where",
+    "which",
+    "while",
+    "who",
+    "whose",
+    "will",
+    "work",
+    "works",
+    "would",
+}
+GENERIC_WORDS = {
+    "approach",
+    "example",
+    "method",
+    "name",
+    "paper",
+    "result",
+    "results",
+    "task",
+    "tasks",
+}
+LATEX_ARTIFACT_WORDS = {
+    "alg",
+    "algorithmref",
+    "cit",
+    "cite",
+    "eq",
+    "fig",
+    "figure",
+    "ref",
+    "sec",
+    "section",
+    "tab",
+    "table",
+}
+NOTATION_WORDS = set("abcdefghijklmnopqrstuvwxyz")
+PROPER_NAME_WORDS = {
+    "llama",
+    "math",
+    "mistral",
+    "qwen",
 }
 
 
@@ -100,7 +200,7 @@ class TerminologyAgent(BaseToolAgent):
                 confirmed_terms = {
                     decision["source_term"]: decision["selected_translation"]
                     for decision in decisions
-                    if decision.get("source_term") and decision.get("selected_translation")
+                    if self._is_confirmed_term_decision_valid(decision, candidates)
                 }
                 for decision in decisions:
                     decision.setdefault("decision_source", "llm")
@@ -245,21 +345,22 @@ class TerminologyAgent(BaseToolAgent):
         first_seen: dict[str, int] = {}
         seen_index = 0
         for record in records:
-            tokens = [token.casefold() for token in re.findall(r"[A-Za-z][A-Za-z-]*", record.get("text", ""))]
-            for size in range(2, 6):
-                for start in range(0, len(tokens) - size + 1):
-                    phrase_tokens = tokens[start : start + size]
-                    if phrase_tokens[0] in FUNCTION_WORDS or phrase_tokens[-1] in FUNCTION_WORDS:
-                        continue
-                    phrase = " ".join(phrase_tokens)
-                    if phrase in STOP_PHRASES:
-                        continue
-                    if not any(token in DOMAIN_WORDS for token in phrase_tokens):
-                        continue
-                    counts[phrase] += 1
-                    if phrase not in first_seen:
-                        first_seen[phrase] = seen_index
-                        seen_index += 1
+            sentences = re.split(r"[.!?;:\n]+", record.get("text", ""))
+            for sentence in sentences:
+                tokens = [
+                    token.casefold()
+                    for token in re.findall(r"[A-Za-z][A-Za-z-]*[A-Za-z]?", sentence)
+                ]
+                for size in range(2, 6):
+                    for start in range(0, len(tokens) - size + 1):
+                        phrase_tokens = tokens[start : start + size]
+                        if not self._is_rule_candidate_valid(phrase_tokens):
+                            continue
+                        phrase = " ".join(phrase_tokens)
+                        counts[phrase] += 1
+                        if phrase not in first_seen:
+                            first_seen[phrase] = seen_index
+                            seen_index += 1
 
         return [
             phrase
@@ -268,6 +369,51 @@ class TerminologyAgent(BaseToolAgent):
                 key=lambda item: (-item[1], first_seen[item[0]], item[0]),
             )
         ]
+
+    def _is_rule_candidate_valid(self, phrase_tokens: list[str]) -> bool:
+        if len(phrase_tokens) < 2:
+            return False
+
+        phrase = " ".join(phrase_tokens)
+        if phrase in STOP_PHRASES:
+            return False
+        if not any(token in DOMAIN_WORDS for token in phrase_tokens):
+            return False
+        if any(token in LATEX_ARTIFACT_WORDS for token in phrase_tokens):
+            return False
+        if any(token in CONTEXT_WORDS for token in phrase_tokens):
+            return False
+        if any(token in GENERIC_WORDS for token in phrase_tokens):
+            return False
+        if any(token in NOTATION_WORDS for token in phrase_tokens):
+            return False
+        if any(token in PROPER_NAME_WORDS for token in phrase_tokens):
+            return False
+        if any(token.endswith("-") for token in phrase_tokens):
+            return False
+        if len(set(phrase_tokens)) != len(phrase_tokens):
+            return False
+        if phrase_tokens[0] in FUNCTION_WORDS or phrase_tokens[-1] in FUNCTION_WORDS:
+            return False
+        if any(token in FUNCTION_WORDS for token in phrase_tokens):
+            return False
+        return True
+
+    def _is_confirmed_term_decision_valid(
+        self,
+        decision: dict[str, Any],
+        candidates: list[str],
+    ) -> bool:
+        source_term = str(decision.get("source_term") or "").strip()
+        selected_translation = str(decision.get("selected_translation") or "").strip()
+        if not source_term or not selected_translation:
+            return False
+        if source_term.casefold() not in {candidate.casefold() for candidate in candidates}:
+            return False
+        if str(self.source_language).lower() != "en":
+            return True
+        tokens = [token.casefold() for token in re.findall(r"[A-Za-z][A-Za-z-]*", source_term)]
+        return self._is_rule_candidate_valid(tokens)
 
     def _build_term_contexts(
         self,
