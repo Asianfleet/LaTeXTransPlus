@@ -26,6 +26,7 @@ Tests currently use the standard `unittest` framework. Add tests under `tests/` 
 - This project has two configuration loading paths: both `main.py` and `src/runtime.py` load configuration. Changes to configuration semantics must extract shared helpers; otherwise, the CLI entry point and runtime helper can easily drift into inconsistent behavior.
 - When removing legacy compatibility, clean it up thoroughly. Do not only update configuration examples or entry-point parameters; also inspect and remove leftover compatibility logic in low-level helpers, alias mappings, fallback branches, and old tests to keep documentation and runtime behavior from drifting again.
 - Future development should not assume English-to-Chinese translation by default. Any work involving translation direction, prompts, glossaries, language configuration, or tests should be reviewed for multilingual support. If the user mentions only one case, such as "English-to-Chinese", pause first to note that it may affect multilingual capability and confirm whether the change should target only that language pair.
+- New tool agents should log their `execute()` flow through `BaseToolAgent.log`, including start, key processing milestones, failure branches, and successful output paths, so workflow logs remain consistent across agents.
 
 ## Commit & Pull Request Guidelines
 

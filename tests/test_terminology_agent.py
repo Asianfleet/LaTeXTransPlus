@@ -231,6 +231,34 @@ class TerminologyAgentExecuteTests(unittest.TestCase):
         self.assertEqual(decisions["decisions"][0]["selected_translation"], "幂采样")
         self.assertIn("power distribution", decisions["decisions"][0]["reason"])
 
+    def test_execute_logs_start_and_success(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            self._write_maps(output_dir)
+            agent = _FakeLlmTerminologyAgent(
+                config={
+                    "source_language": "en",
+                    "target_language": "ch",
+                    "llm_config": {},
+                    "terminology": {"max_llm_candidates": 10},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+            log_messages = []
+            agent.log = lambda message, level="info": log_messages.append((level, message))
+
+            agent.execute()
+
+        self.assertIn(("info", "Starting terminology generation for project: paper."), log_messages)
+        self.assertTrue(
+            any(
+                level == "info"
+                and "Successfully generated project terminology for paper" in message
+                for level, message in log_messages
+            )
+        )
+
     def test_execute_ignores_invalid_llm_confirmed_terms(self):
         class InvalidDecisionTerminologyAgent(TerminologyAgent):
             def _request_llm_for_term_decisions(self, candidates, paper_context, term_contexts, known_terms):

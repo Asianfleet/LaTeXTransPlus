@@ -176,6 +176,9 @@ class TerminologyAgent(BaseToolAgent):
         self.api_key = llm_config.get("api_key")
 
     def execute(self) -> dict[str, Any]:
+        project_name = self.project_dir.name
+        self.log(f"Starting terminology generation for project: {project_name}.")
+
         sections = self.read_file(self.output_dir / "sections_map.json", "json")
         captions = self.read_file(self.output_dir / "captions_map.json", "json")
         envs = self.read_file(self.output_dir / "envs_map.json", "json")
@@ -186,11 +189,15 @@ class TerminologyAgent(BaseToolAgent):
         candidates = self._extract_rule_candidates(records)
         candidates = candidates[: self.terminology_config.max_llm_candidates]
         term_contexts = self._build_term_contexts(candidates, records)
+        self.log(
+            f"Collected {len(records)} text records and {len(candidates)} terminology candidates."
+        )
 
         decisions: list[dict[str, Any]] = []
         confirmed_terms: dict[str, str] = {}
         if candidates:
             try:
+                self.log("Requesting terminology decisions from LLM.")
                 decisions = self._request_llm_for_term_decisions(
                     candidates,
                     paper_context,
@@ -204,7 +211,12 @@ class TerminologyAgent(BaseToolAgent):
                 }
                 for decision in decisions:
                     decision.setdefault("decision_source", "llm")
+                self.log(f"Confirmed {len(confirmed_terms)} project terminology entries.")
             except Exception as exc:
+                self.log(
+                    f"Terminology LLM decision failed; writing failure decisions: {exc}",
+                    level="warning",
+                )
                 decisions = [
                     {
                         "source_term": candidate,
@@ -224,6 +236,10 @@ class TerminologyAgent(BaseToolAgent):
         decisions_path = project_terms_decisions_path(self.output_dir)
         write_project_terms_csv(terms_path, merged_terms)
         self._write_decision_log(decisions_path, paper_context, decisions)
+        self.log(
+            f"Successfully generated project terminology for {project_name}: "
+            f"{len(merged_terms)} terms. Terms: {terms_path}. Decisions: {decisions_path}."
+        )
 
         return {
             "ok": True,
