@@ -10,6 +10,11 @@ update_term = "False"
 mode = "plain"
 user_term = ""
 
+[terminology]
+enabled = true
+review_before_translate = false
+max_llm_candidates = 30
+
 [llm_config]
 model = ""
 api_key_env = ""

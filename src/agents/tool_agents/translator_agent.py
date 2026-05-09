@@ -14,6 +14,7 @@ import requests
 import time
 import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from src.terminology import load_term_csv, project_terms_path, merge_term_pairs
 from src.utils.progress import st
 
 base_dir = os.getcwd()
@@ -22,7 +23,6 @@ sys.path.append(base_dir)
 
 TRANSLATION_MODE_ALIASES = {
     "plain": "plain",
-    "retry": "retry",
     "terms": "terms",
 }
 
@@ -33,7 +33,7 @@ def normalize_translation_mode(mode: Any) -> str:
     normalized = mode.strip().lower() if isinstance(mode, str) else mode
     if normalized in TRANSLATION_MODE_ALIASES:
         return TRANSLATION_MODE_ALIASES[normalized]
-    valid_modes = ", ".join(sorted({"plain", "retry", "terms"}))
+    valid_modes = ", ".join(sorted(TRANSLATION_MODE_ALIASES))
     raise ValueError(f"Invalid translation mode: {mode!r}. Expected one of: {valid_modes}.")
 
 
@@ -66,8 +66,10 @@ class TranslatorAgent(BaseToolAgent):
         self.have_fail_parts = False
         self.errors_report = errors_report if errors_report is not None else []
         self.trans_mode = normalize_translation_mode(trans_mode)
+        self.retrying = False
         # self.term_dict = config.get("term_dict", {})  # Dictionary for terminology translation
         self.term_dict = {}
+        self._project_terms_loaded = False
         self.summary = ''
         self.prev_text = ''
         self.prev_transed_text = ''
@@ -90,7 +92,7 @@ class TranslatorAgent(BaseToolAgent):
         captions = self.read_file(Path(self.output_dir, "captions_map.json"), "json")
         envs = self.read_file(Path(self.output_dir, "envs_map.json"), "json")
 
-        if self.trans_mode in {"plain", "terms"}:
+        if not self.retrying:
             self.log(f"Starting translation for project: {os.path.basename(self.project_dir)}.")
 
             sys.stderr = open(os.devnull, 'w')
@@ -147,7 +149,7 @@ class TranslatorAgent(BaseToolAgent):
                 sys.stderr = sys.__stderr__
                 self.log("Successfully translated sections.")
 
-        elif self.trans_mode == "retry":
+        else:
 
             sys.stderr = open(os.devnull, "w")
             status_text = st.empty()
@@ -184,6 +186,9 @@ class TranslatorAgent(BaseToolAgent):
             time.sleep(3)
             sys.stderr = sys.__stderr__
             self.log("Successfully retranslated error parts.")
+
+    def enable_retranslation(self) -> None:
+        self.retrying = True
 
     async def translate(self,
                         section: Dict[str, Any],
@@ -402,25 +407,16 @@ class TranslatorAgent(BaseToolAgent):
         
         transed_section = section.copy()
         section_num = section["section"]
-        if self.trans_mode == "plain":
-            
-            transed_section["trans_content"] = await self._request_llm_for_trans(
-                pm.section_system_prompt,
-                section["content"],
+        if self.retrying:
+            transed_section["trans_content"] = await self._request_llm_for_retrans_error_parts(
+                pm.retrans_error_parts_system_prompt,
+                part=transed_section,
+                error_message=error_message,
                 fail_part=section_num,
                 type="sec",
-                session=session
+                session=session,
             )
-        elif self.trans_mode == "retry":
-            transed_section["trans_content"] = await self._request_llm_for_retrans_error_parts(
-            pm.retrans_error_parts_system_prompt,
-            part=transed_section,
-            error_message=error_message,
-            fail_part=section_num,
-            type="sec",
-            session=session)
-
-        elif self.trans_mode == "terms":
+        elif self._should_use_terms_prompt():
             """
             Combined with terminology translation
             """
@@ -440,7 +436,7 @@ class TranslatorAgent(BaseToolAgent):
                                                             type="sec",
                                                             session=session
                                                             )
-                
+
             try:
                 if self.update_term == True:
                     src_text = self._extract_text_from_tex(transed_section["content"])
@@ -456,6 +452,15 @@ class TranslatorAgent(BaseToolAgent):
             except Exception as e:
                 return transed_section
 
+        elif self.trans_mode == "plain":
+            transed_section["trans_content"] = await self._request_llm_for_trans(
+                pm.section_system_prompt,
+                section["content"],
+                fail_part=section_num,
+                type="sec",
+                session=session
+            )
+
         return transed_section
 
     async def _translate_caption(self, caption: Dict[str, Any], session: aiohttp.ClientSession, error_message=None) -> Dict[str, Any]:
@@ -464,24 +469,16 @@ class TranslatorAgent(BaseToolAgent):
         """
         transed_caption = caption.copy()
         placeholder = caption["placeholder"]
-        if self.trans_mode == "plain":
-            transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
-                                                        caption["content"],
-                                                        fail_part=placeholder,
-                                                        type="cap",
-                                                        session=session
-                                                        )
-        elif self.trans_mode == "retry":
-            # Keep current retranslating path for captions.
-            print("translate_caption_mode_1")
-            transed_caption["trans_content"] = await self._request_llm_for_retrans_error_parts(pm.retrans_error_parts_system_prompt,
-                                                                                         part=transed_caption,
-                                                                                         error_message=error_message,
-                                                                                         fail_part=placeholder,
-                                                                                         type="cap",
-                                                                                         session=session)
-            
-        elif self.trans_mode == "terms":
+        if self.retrying:
+            transed_caption["trans_content"] = await self._request_llm_for_retrans_error_parts(
+                pm.retrans_error_parts_system_prompt,
+                part=transed_caption,
+                error_message=error_message,
+                fail_part=placeholder,
+                type="cap",
+                session=session,
+            )
+        elif self._should_use_terms_prompt():
             if not self.term_dict:
                 transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
                                                         caption["content"], 
@@ -510,6 +507,14 @@ class TranslatorAgent(BaseToolAgent):
             except Exception as e:
                 return transed_caption
 
+        elif self.trans_mode == "plain":
+            transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
+                                                        caption["content"],
+                                                        fail_part=placeholder,
+                                                        type="cap",
+                                                        session=session
+                                                        )
+
         return transed_caption
 
     async def _translate_env(self, env: Dict[str, Any], session: aiohttp.ClientSession, error_message=None) -> Dict[str, Any]:
@@ -518,24 +523,16 @@ class TranslatorAgent(BaseToolAgent):
         """
         transed_env = env.copy()
         placeholder = env["placeholder"]
-        if self.trans_mode == "plain":
-            if env["need_trans"]:
-                transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,
-                                                            env["content"], 
-                                                            fail_part=placeholder,
-                                                            type="env",
-                                                            session=session
-                                                            )                
-            else:
-                transed_env["trans_content"] = env["content"]
-        elif self.trans_mode == "retry":
-                transed_env["trans_content"] = await self._request_llm_for_retrans_error_parts(pm.retrans_error_parts_system_prompt,
-                                                                                         part=transed_env,
-                                                                                         error_message=error_message,
-                                                                                         fail_part=placeholder,
-                                                                                         type="env",
-                                                                                         session = session)
-        elif self.trans_mode == "terms":
+        if self.retrying:
+            transed_env["trans_content"] = await self._request_llm_for_retrans_error_parts(
+                pm.retrans_error_parts_system_prompt,
+                part=transed_env,
+                error_message=error_message,
+                fail_part=placeholder,
+                type="env",
+                session=session,
+            )
+        elif self._should_use_terms_prompt():
             if not self.term_dict:
                 if env["need_trans"]:
                     transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,
@@ -572,6 +569,16 @@ class TranslatorAgent(BaseToolAgent):
                 except Exception as e:
                     return transed_env
 
+        elif self.trans_mode == "plain":
+            if env["need_trans"]:
+                transed_env["trans_content"] = await self._request_llm_for_trans(pm.env_system_prompt,
+                                                            env["content"],
+                                                            fail_part=placeholder,
+                                                            type="env",
+                                                            session=session
+                                                            )
+            else:
+                transed_env["trans_content"] = env["content"]
 
         return transed_env
 
@@ -680,13 +687,22 @@ class TranslatorAgent(BaseToolAgent):
                                                    session: aiohttp.ClientSession) -> str:
 
         user_prompt = self._build_retranslation_user_prompt(part, error_message)
-        # print(user_prompt,'\n')
+        system_content = str(system_prompt)
+        if self._should_use_terms_prompt():
+            system_content = (
+                f"{system_content}\n"
+                "When translating, you must strictly use the following glossary for substitution. "
+                "This is the highest priority rule to ensure the consistency of terms throughout the text.\n"
+                f"<Glossary>:\n{self.term_dict}\n"
+                "Now, please translate the following new paragraph. Maintain the terminology from the glossary provided."
+            )
+
         payload = {
             "model": f"{self.model}",
             "messages": [
                 {
                     "role": "system",
-                    "content": f"{system_prompt}\nWhen translating, you must strictly use the following glossary for substitution. This is the highest priority rule to ensure the consistency of terms throughout the text.\n<Glossary>:\n{self.term_dict}\nNow, please translate the following new paragraph. Maintain the terminology from the glossary provided."
+                    "content": system_content
                 },
                 {
                     "role": "user",
@@ -710,7 +726,7 @@ class TranslatorAgent(BaseToolAgent):
                     result = await response.json()
                     return result["choices"][0]["message"]["content"].strip()
 
-            except requests.exceptions.RequestException as e:
+            except (aiohttp.ClientError, asyncio.TimeoutError) as e:
                 # print(f"Warning: request {attempt} failed for {fail_part}: {e}")
                 if attempt < 3:
                     await asyncio.sleep(5)
@@ -788,6 +804,8 @@ class TranslatorAgent(BaseToolAgent):
 
     async def _request_llm_for_extract_terms(self, system_prompt, src, tgt,
                                        session: aiohttp.ClientSession) -> str:
+        source_label = self._source_language_label()
+        target_label = self._target_language_label()
 
         payload = {
             "model": f"{self.model}",
@@ -798,7 +816,7 @@ class TranslatorAgent(BaseToolAgent):
                 },
                 {
                     "role": "user", 
-                    "content": f"<en source>\n{src}\n<zh translation>\n{tgt}"
+                    "content": f"<{source_label} source>\n{src}\n<{target_label} translation>\n{tgt}"
                 }
             ],
             "temperature": 0.7,
@@ -905,6 +923,18 @@ class TranslatorAgent(BaseToolAgent):
                     print("Warning: failed to refine summary, set N/A.")
                     return "N/A"
 
+    def _source_language_label(self) -> str:
+        return pm.language_label(self.config.get("source_language", "en"))
+
+    def _target_language_label(self) -> str:
+        return pm.language_label(self.config.get("target_language", "ch"))
+
+    def _uses_default_english_chinese_terms(self) -> bool:
+        return (
+            self._source_language_label().lower() == "english"
+            and self._target_language_label().lower() == "chinese"
+        )
+
     def _updated_term_dict(self, text: str) -> None:
         """
         Updates the term dictionary with new terms.
@@ -1009,37 +1039,72 @@ class TranslatorAgent(BaseToolAgent):
         return "\n".join(merged_content)
 
     def build_term_dict(self):
-        if self.user_term:
-            df = pd.read_csv(self.user_term, header=None, names=['English Term', 'Chinese Translation'])
-            self.term_dict.update(zip(df['English Term'], df['Chinese Translation']))
-        else:
-            arxiv_id = os.path.basename(self.project_dir)
-            if self.category.get(arxiv_id):
-                term_dict_loaded = False
-                for category in self.category[arxiv_id]:
-                    file_path = os.path.join('terms', f'{category}.csv')
-                    try:
-                        df = pd.read_csv(file_path, header=None, names=['English Term', 'Chinese Translation'])
-                        self.term_dict.update(zip(df['English Term'], df['Chinese Translation']))
-                        term_dict_loaded = True
+        placeholder_terms = {
+            key: value
+            for key, value in self.term_dict.items()
+            if self._is_placeholder_term(key, value)
+        }
+        self.term_dict = dict(placeholder_terms)
+        self._project_terms_loaded = False
 
+        source_language = self.config.get("source_language", "en")
+        user_terms = {}
+        project_terms = {}
+        default_terms = {}
+
+        if self.user_term:
+            user_result = load_term_csv(Path(self.user_term), source_language=source_language)
+            for warning in user_result.warnings:
+                print(f"Warning: {warning}")
+            user_terms = user_result.terms
+
+        if self.output_dir:
+            terms_path = project_terms_path(Path(self.output_dir))
+            if terms_path.exists():
+                project_result = load_term_csv(terms_path, source_language=source_language)
+                for warning in project_result.warnings:
+                    print(f"Warning: {warning}")
+                project_terms = project_result.terms
+                self._project_terms_loaded = bool(project_terms)
+
+        if self._uses_default_english_chinese_terms():
+            arxiv_id = os.path.basename(self.project_dir or "")
+            category_map = self.category or {}
+            if category_map.get(arxiv_id):
+                term_dict_loaded = False
+                for category in category_map[arxiv_id]:
+                    file_path = os.path.join("terms", f"{category}.csv")
+                    try:
+                        df = pd.read_csv(file_path, header=None, names=["Source Term", "Target Translation"])
+                        default_terms.update(zip(df["Source Term"], df["Target Translation"]))
+                        term_dict_loaded = True
                     except FileNotFoundError:
                         continue
-
                 if not term_dict_loaded:
-                    try:
-                        df = pd.read_csv('terms/default.csv', header=None,
-                                         names=['English Term', 'Chinese Translation'])
-                        self.term_dict.update(zip(df['English Term'], df['Chinese Translation']))
-                    except FileNotFoundError as e:
-                        print(f"Error: Default terminology file not found: {e}")
+                    default_terms.update(self._load_default_terms_file())
             else:
-                try:
-                    df = pd.read_csv('terms/default.csv', header=None,
-                                     names=['English Term', 'Chinese Translation'])
-                    self.term_dict.update(zip(df['English Term'], df['Chinese Translation']))
-                except FileNotFoundError as e:
-                    print(f"Error: Default terminology file not found: {e}")
+                default_terms.update(self._load_default_terms_file())
+
+        self.term_dict.update(merge_term_pairs(
+            user_terms.items(),
+            project_terms.items(),
+            default_terms.items(),
+            source_language=source_language,
+        ))
+
+    def _load_default_terms_file(self) -> Dict[str, str]:
+        try:
+            df = pd.read_csv("terms/default.csv", header=None, names=["Source Term", "Target Translation"])
+            return dict(zip(df["Source Term"], df["Target Translation"]))
+        except FileNotFoundError as e:
+            print(f"Error: Default terminology file not found: {e}")
+            return {}
+
+    def _should_use_terms_prompt(self) -> bool:
+        return self.trans_mode == "terms" or self._project_terms_loaded
+
+    def _is_placeholder_term(self, key: str, value: str) -> bool:
+        return key == value and bool(re.fullmatch(r"<PLACEHOLDER_[^>]+>", key))
 
     def add_placeholder(self):
 
