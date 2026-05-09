@@ -1,5 +1,6 @@
 import os
 import shutil
+import json
 from typing import Any, Dict, List, Optional
 from pathlib import Path
 import sys
@@ -15,6 +16,9 @@ from .tool_agents.generator_agent import GeneratorAgent
 from .tool_agents.validator_agent import ValidatorAgent
 from src.validation_policy import ValidationPolicy
 import gc
+
+
+INITIAL_ERRORS_REPORT_FILENAME = "initial_errors_report.json"
 
 
 def filter_retryable_reports(reports: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -65,6 +69,19 @@ def should_generate_pdf_after_validation(
     generate_pdf_on_error: bool,
 ) -> bool:
     return validation_summary.get("errors", 0) == 0 or generate_pdf_on_error
+
+
+def save_initial_validation_report(
+    output_dir: Path,
+    errors_report: List[Dict[str, Any]],
+) -> Path:
+    report_path = Path(output_dir) / INITIAL_ERRORS_REPORT_FILENAME
+    report_path.parent.mkdir(parents=True, exist_ok=True)
+    report_path.write_text(
+        json.dumps(errors_report, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+    return report_path
 
 
 def build_workflow_result(
@@ -171,6 +188,7 @@ class CoordinatorAgent:
                                             project_dir=self.project_dir,
                                             output_dir=transed_project_dir)
         errors_report = validator_agent.execute()
+        save_initial_validation_report(Path(transed_project_dir), errors_report)
         retryable_reports = filter_retryable_reports(errors_report)
         max_retries = self.validation_policy.max_attempts()
         retry_count = 0

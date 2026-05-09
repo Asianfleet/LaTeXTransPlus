@@ -1,10 +1,15 @@
 import unittest
+import json
+import tempfile
+from pathlib import Path
 
 from src.agents.coordinator_agent import (
+    INITIAL_ERRORS_REPORT_FILENAME,
     build_workflow_result,
     filter_retryable_reports,
     format_translation_result_message,
     merge_validation_reports,
+    save_initial_validation_report,
     should_generate_pdf_after_validation,
     summarize_validation_reports,
 )
@@ -133,6 +138,20 @@ class CoordinatorMessageTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertIsNone(result["pdf_path"])
+
+    def test_save_initial_validation_report_preserves_first_report_snapshot(self):
+        initial_report = [{"part": "sec", "num_or_ph": "1", "severity": "error"}]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            save_initial_validation_report(output_dir, initial_report)
+            (output_dir / "errors_report.json").write_text("[]", encoding="utf-8")
+
+            saved = json.loads(
+                (output_dir / INITIAL_ERRORS_REPORT_FILENAME).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(saved, initial_report)
 
 
 if __name__ == "__main__":
