@@ -544,31 +544,45 @@ def get_captionof_pattern():
     """, regex.VERBOSE | regex.DOTALL)
     return pattern
 
-def add_ctex_package(latex_code):
+LANGUAGE_PACKAGE_BY_TARGET = {
+    "ch": "\\usepackage[UTF8]{ctex}",
+    "cn": "\\usepackage[UTF8]{ctex}",
+    "zh": "\\usepackage[UTF8]{ctex}",
+    "ja": "\\usepackage{luatexja}",
+    "jp": "\\usepackage{luatexja}",
+    "ko": "\\usepackage{kotex}",
+}
 
-    if "\\usepackage[UTF8]{ctex}" not in latex_code:
-        ctex_package = "\\usepackage[UTF8]{ctex}"
-        documentclass = r'documentclass'
-        documentclass_pattern = get_command_pattern(documentclass)
-        # documentclass_pattern = regex.compile(command, regex.DOTALL)
-        match = documentclass_pattern.search(latex_code)
-        if match:
-            position = match.end()
-            latex_code = latex_code[:position] + "\n" + ctex_package + "\n" + latex_code[position:]
-    return latex_code
+
+def normalize_target_language(target_language):
+    if target_language is None:
+        return ""
+    return str(target_language).strip().lower()
+
+
+def add_package_after_documentclass(latex_code, package_line):
+    if not package_line or package_line in latex_code:
+        return latex_code
+
+    documentclass_pattern = get_command_pattern(r"documentclass")
+    match = documentclass_pattern.search(latex_code)
+    if not match:
+        return latex_code
+
+    position = match.end()
+    return latex_code[:position] + "\n" + package_line + "\n" + latex_code[position:]
+
+
+def add_language_support_package(latex_code, target_language):
+    package_line = LANGUAGE_PACKAGE_BY_TARGET.get(normalize_target_language(target_language))
+    return add_package_after_documentclass(latex_code, package_line)
+
+
+def add_ctex_package(latex_code):
+    return add_package_after_documentclass(latex_code, "\\usepackage[UTF8]{ctex}")
 
 def add_ja_package(latex_code):
-
-    if "\\usepackage{luatex-ja}" not in latex_code:
-        ctex_package = "\\usepackage{luatexja}"
-        documentclass = r'documentclass'
-        documentclass_pattern = get_command_pattern(documentclass)
-        # documentclass_pattern = regex.compile(command, regex.DOTALL)
-        match = documentclass_pattern.search(latex_code)
-        if match:
-            position = match.end()
-            latex_code = latex_code[:position] + "\n" + ctex_package + "\n" + latex_code[position:]
-    return latex_code
+    return add_package_after_documentclass(latex_code, "\\usepackage{luatexja}")
 
 def find_main_tex_file(dir): 
     """
