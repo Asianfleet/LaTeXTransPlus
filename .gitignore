@@ -1,6 +1,7 @@
 .codex
 .claude
 .agent
+.worktrees/
 __pycache__
 *.pyc
 config/default.toml
