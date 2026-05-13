@@ -80,6 +80,7 @@ def init_prompts(source_lang: str, target_lang: str):
     ### Chinese typography spacing
     - When translating into Chinese, insert a normal ASCII space between Chinese characters and inline Latin letters, English acronyms, model names, code-like tokens, and Arabic-number tokens. Examples: `来自 Common Crawl 的 120B 数学相关 token`; `RLVR 使 LLMs 能够`; `MATH 上`; `64 个样本`.
     - Apply the same spacing at LaTeX text-command boundaries when the command contributes inline Latin text. Example: `pass@\textit{k}（大 \textit{k} 值）`.
+    - Treat inline LaTeX commands, references, and citations as standalone inline tokens at Chinese text boundaries. Put a normal ASCII space between the command and adjacent Chinese text. Example: `在 \cref{alg:inplaceTTT-cp} 中`; not `在\cref{alg:inplaceTTT-cp}中`.
     - Keep existing LaTeX syntax unchanged. Do not insert spaces inside LaTeX command names, control sequences, labels, citation keys, URLs, file paths, placeholders, or math environments. Examples: keep `\textit`, `\cite{...}`, `<PLACEHOLDER_ENV_0>`, and `$k=1$` structurally unchanged.
     - Use spaces only for readable text boundaries; do not rewrite `~`, escaped spaces, or protected LaTeX spacing commands unless they already appear in the source.
     """,
@@ -87,6 +88,7 @@ def init_prompts(source_lang: str, target_lang: str):
     ### Japanese typography spacing
     - When translating into Japanese, keep boundaries clear between Japanese text (Kanji, Hiragana, Katakana) and inline Latin letters, English acronyms, model names, code-like tokens, and Arabic-number tokens. Use a normal ASCII space in LaTeX source as the practical spacing marker. Examples: `GPT-4 は`, `LLM の性能`, `MATH で`, `64 サンプル`.
     - Apply the same spacing at LaTeX text-command boundaries when the command contributes inline Latin text. Example: `\textit{k} の値`.
+    - Treat inline LaTeX commands, references, and citations as standalone inline tokens at Japanese text boundaries. Put a normal ASCII space between the command and adjacent Japanese text. Example: `\cref{alg:inplaceTTT-cp} で`; not `\cref{alg:inplaceTTT-cp}で`.
     - Keep existing LaTeX syntax unchanged. Do not insert spaces inside LaTeX command names, control sequences, labels, citation keys, URLs, file paths, placeholders, or math environments. Examples: keep `\textit`, `\cite{...}`, `<PLACEHOLDER_ENV_0>`, and `$k=1$` structurally unchanged.
     - Use spaces only for readable text boundaries; do not rewrite `~`, escaped spaces, or protected LaTeX spacing commands unless they already appear in the source.
     """,
@@ -94,6 +96,7 @@ def init_prompts(source_lang: str, target_lang: str):
     ### Korean typography spacing
     - When translating into Korean, preserve normal Korean word spacing. Keep Latin terms, English acronyms, model names, code-like tokens, and Arabic-number tokens readable when they appear as independent words. Examples: `LLM 학습`, `MATH 벤치마크`, `64 개 샘플`.
     - Do not split Korean postpositions attached to Latin terms or numbers when Korean usage naturally attaches them. Examples: keep `GPT-4를`, `LLM은`, and `64개를` when the postposition or counter is attached intentionally.
+    - Treat inline LaTeX commands, references, and citations as standalone inline tokens at Korean text boundaries. Put a normal ASCII space between the command and adjacent Korean text, including postpositions attached to the reference. Example: `\cref{alg:inplaceTTT-cp} 에서`; not `\cref{alg:inplaceTTT-cp}에서`.
     - Keep existing LaTeX syntax unchanged. Do not insert spaces inside LaTeX command names, control sequences, labels, citation keys, URLs, file paths, placeholders, or math environments. Examples: keep `\textit`, `\cite{...}`, `<PLACEHOLDER_ENV_0>`, and `$k=1$` structurally unchanged.
     - Use spaces only for readable text boundaries; do not rewrite `~`, escaped spaces, or protected LaTeX spacing commands unless they already appear in the source.
     """,
@@ -101,6 +104,7 @@ def init_prompts(source_lang: str, target_lang: str):
     ### Arabic mixed-script spacing
     - When translating into Arabic, preserve natural word spaces around inline Latin letters, English acronyms, model names, code-like tokens, and Arabic-number tokens when they appear as independent words in Arabic text.
     - Do not reorder mixed Arabic/Latin text. Preserve RTL reading order, punctuation placement, and the original order of LaTeX commands, references, placeholders, URLs, and math expressions.
+    - Treat inline LaTeX commands, references, and citations as standalone inline tokens at Arabic text boundaries. Put a normal ASCII space between the command and adjacent Arabic text while preserving RTL reading order. Example: `في \cref{alg:inplaceTTT-cp} نعرض`; not `في\cref{alg:inplaceTTT-cp}نعرض`.
     - Keep existing LaTeX syntax unchanged. Do not insert spaces inside LaTeX command names, control sequences, labels, citation keys, URLs, file paths, placeholders, or math environments. Examples: keep `\textit`, `\cite{...}`, `<PLACEHOLDER_ENV_0>`, and `$k=1$` structurally unchanged.
     - Use spaces only for readable text boundaries; do not rewrite `~`, escaped spaces, or protected LaTeX spacing commands unless they already appear in the source.
     """,

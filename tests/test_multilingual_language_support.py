@@ -51,6 +51,37 @@ class MultilingualPromptTests(unittest.TestCase):
         self.assertIn(r"pass@\textit{k}（大 \textit{k} 值）", prompt)
         self.assertIn("Do not insert spaces inside LaTeX command names", prompt)
 
+    def test_multilingual_prompts_space_inline_latex_commands_from_text(self):
+        cases = [
+            ("ch", r"在 \cref{alg:inplaceTTT-cp} 中", r"not `在\cref{alg:inplaceTTT-cp}中`"),
+            ("ja", r"\cref{alg:inplaceTTT-cp} で", r"not `\cref{alg:inplaceTTT-cp}で`"),
+            ("ko", r"\cref{alg:inplaceTTT-cp} 에서", r"not `\cref{alg:inplaceTTT-cp}에서`"),
+            ("ar", r"في \cref{alg:inplaceTTT-cp} نعرض", r"not `في\cref{alg:inplaceTTT-cp}نعرض`"),
+        ]
+
+        for target_lang, positive, negative in cases:
+            pm.init_prompts("en", target_lang)
+            prompts = [
+                pm.caption_system_prompt,
+                pm.section_system_prompt,
+                pm.env_system_prompt,
+                pm.caption_system_prompt_with_dict,
+                pm.section_system_prompt_with_dict,
+                pm.env_system_prompt_with_dict,
+                pm.retrans_error_parts_system_prompt,
+                pm.section_system_prompt_with_sum,
+                pm.caption_system_prompt_with_sum,
+                pm.env_system_prompt_with_sum,
+                pm.section_system_prompt_with_terms_sum,
+                pm.section_system_prompt_with_prev,
+                pm.section_system_prompt_with_terms_prev,
+            ]
+
+            for prompt in prompts:
+                with self.subTest(target_lang=target_lang, prompt=prompt[:60]):
+                    self.assertIn(positive, prompt)
+                    self.assertIn(negative, prompt)
+
     def test_non_chinese_prompts_do_not_include_chinese_spacing_rules(self):
         pm.init_prompts("en", "ja")
 
