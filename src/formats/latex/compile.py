@@ -2,6 +2,7 @@ from typing import List, Dict, Any
 import re
 import os
 import subprocess
+from pathlib import Path
 from .utils import *
 
 
@@ -10,6 +11,7 @@ LATEX_HARD_ERROR_PATTERNS = [
     re.compile(r"Undefined control sequence\.", re.IGNORECASE),
     re.compile(r"Emergency stop\.", re.IGNORECASE),
     re.compile(r"Fatal error occurred", re.IGNORECASE),
+    re.compile(r"can't write on file", re.IGNORECASE),
 ]
 
 
@@ -33,6 +35,7 @@ class LaTexCompiler:
             print(f"Start compiling with {engine}...⏳")
             compile_out_dir = os.path.join(self.output_latex_dir, f"build_{engine}")
             os.makedirs(compile_out_dir, exist_ok=True)
+            self._prepare_include_output_dirs(tex_file_to_compile, compile_out_dir)
             self._compile_with_engine(engine, tex_file_to_compile, compile_out_dir)
             pdf_files = [
                 os.path.join(compile_out_dir, file)
@@ -83,6 +86,22 @@ class LaTexCompiler:
             os.remove(self._success_marker_path())
         except FileNotFoundError:
             pass
+
+    def _prepare_include_output_dirs(self, tex_file: str, out_dir: str) -> None:
+        try:
+            with open(tex_file, "r", encoding="utf-8", errors="ignore") as f:
+                latex_code = remove_comments(f.read())
+        except OSError:
+            return
+
+        for match in re.finditer(r"\\include\s*\{([^{}]+)\}", latex_code):
+            include_path = Path(match.group(1))
+            parent = include_path.parent
+            if str(parent) in ("", "."):
+                continue
+            if include_path.is_absolute() or ".." in parent.parts:
+                continue
+            os.makedirs(os.path.join(out_dir, *parent.parts), exist_ok=True)
 
     def _compile_with_engine(self, engine: str, tex_file: str, out_dir: str):
         if engine == "pdflatex":

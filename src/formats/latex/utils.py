@@ -591,16 +591,42 @@ def contains_cjkutf8_environment(latex_code):
     )
 
 
+def has_global_cjkutf8_document_environment(latex_code):
+    document_match = re.search(r"\\begin\s*\{\s*document\s*\}", latex_code)
+    if not document_match:
+        return False
+
+    end_document_match = re.search(r"\\end\s*\{\s*document\s*\}", latex_code[document_match.end():])
+    if not end_document_match:
+        return False
+
+    body = latex_code[document_match.end():document_match.end() + end_document_match.start()]
+    body = body.strip()
+    if not re.match(r"\\begin\{CJK\*?\}\s*\{UTF8\}\s*\{[^{}]+\}", body):
+        return False
+
+    return bool(re.search(r"\\end\{CJK\*?\}\s*$", body))
+
+
 def normalize_cjkutf8_environment_spacing(latex_code):
     latex_code = re.sub(r"\\begin\{CJK\*\}", r"\\begin{CJK}", latex_code)
     latex_code = re.sub(r"\\end\{CJK\*\}", r"\\end{CJK}", latex_code)
     return latex_code
 
 
+def remove_local_cjkutf8_wrappers(latex_code):
+    latex_code = re.sub(r"^[ \t]*\\usepackage(?:\[[^\]]*\])?\{CJKutf8\}[^\n]*(?:\n|$)", "", latex_code, flags=re.MULTILINE)
+    latex_code = re.sub(r"\\begin\{CJK\*?\}\s*\{UTF8\}\s*\{[^{}]+\}", "", latex_code)
+    latex_code = re.sub(r"\\end\{CJK\*?\}", "", latex_code)
+    return latex_code
+
+
 def add_language_support_package(latex_code, target_language):
     normalized = normalize_target_language(target_language)
-    if normalized in {"ch", "cn", "zh"} and contains_cjkutf8_environment(latex_code):
+    if normalized in {"ch", "cn", "zh"} and has_global_cjkutf8_document_environment(latex_code):
         return normalize_cjkutf8_environment_spacing(latex_code)
+    if normalized in {"ch", "cn", "zh"}:
+        latex_code = remove_local_cjkutf8_wrappers(latex_code)
 
     package_line = LANGUAGE_PACKAGE_BY_TARGET.get(normalized)
     return add_package_after_documentclass(latex_code, package_line)
@@ -676,9 +702,17 @@ def escape_unescaped_percent_signs(latex_code):
     def is_protected(index):
         return any(start <= index < end for start, end in protected_ranges)
 
+    def follows_latex_linebreak(index):
+        return index >= 2 and latex_code[index - 2:index] == r"\\"
+
     result = []
     for index, char in enumerate(latex_code):
-        if char == "%" and not _is_escaped_at(latex_code, index) and not is_protected(index):
+        if (
+            char == "%"
+            and not _is_escaped_at(latex_code, index)
+            and not is_protected(index)
+            and not follows_latex_linebreak(index)
+        ):
             result.append(r"\%")
         else:
             result.append(char)

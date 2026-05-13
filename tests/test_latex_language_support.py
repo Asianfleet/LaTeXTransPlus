@@ -102,6 +102,32 @@ class LatexLanguagePackageTests(unittest.TestCase):
         self.assertNotIn("\\begin{CJK*}", result)
         self.assertNotIn("\\end{CJK*}", result)
 
+    def test_chinese_target_inserts_ctex_when_cjkutf8_is_only_used_locally(self):
+        tex = (
+            "\\documentclass{article}\n"
+            "\\usepackage{CJKutf8}\n"
+            "\\title{中文标题}\n"
+            "\\begin{document}\n"
+            "\\maketitle\n"
+            "正文中文\n"
+            "\\begin{table}\n"
+            "\\begin{CJK}{UTF8}{gbsn}局部中文示例\\end{CJK}\n"
+            "\\end{table}\n"
+            "\\end{document}\n"
+        )
+
+        result = add_language_support_package(tex, "ch")
+
+        self.assertIn("\\usepackage[UTF8]{ctex}", result)
+        self.assertNotIn("\\usepackage{CJKutf8}", result)
+        self.assertNotIn("\\begin{CJK}", result)
+        self.assertNotIn("\\end{CJK}", result)
+        self.assertIn("局部中文示例", result)
+        self.assertLess(
+            result.index("\\usepackage[UTF8]{ctex}"),
+            result.index("\\begin{document}"),
+        )
+
 
 class LatexPercentEscapingTests(unittest.TestCase):
     def test_escape_unescaped_percent_signs_in_translated_text(self):
@@ -113,6 +139,18 @@ class LatexPercentEscapingTests(unittest.TestCase):
         self.assertIn(r"36.2\% \citep{MATH}", result)
         self.assertIn(r"\%", result)
         self.assertIn(r"\url{https://example.test/a%20b}", result)
+
+    def test_escape_unescaped_percent_signs_preserves_table_row_comments(self):
+        text = (
+            r"{\textbf{Human Prompt:}} 邹凯是谁？\\%" "\n"
+            r"{\textbf{Better Response:}} 得分为 64.2%\\%"
+        )
+
+        result = escape_unescaped_percent_signs(text)
+
+        self.assertIn(r"邹凯是谁？\\%", result)
+        self.assertIn(r"64.2\%\\%", result)
+        self.assertNotIn(r"邹凯是谁？\\\%", result)
 
 
 class LatexConstructorLanguageSupportTests(unittest.TestCase):
@@ -316,6 +354,58 @@ class LatexCompilerLanguageTests(unittest.TestCase):
                 compiler.compile()
 
             self.assertFalse((project_dir / "success.txt").exists())
+
+    def test_compile_treats_aux_write_failure_as_hard_error(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text(
+                "\\documentclass{article}\n\\begin{document}\n\\include{outline/Appendix}\n\\end{document}\n",
+                encoding="utf-8",
+            )
+
+            def fake_compile(tex_file, out_dir, engine):
+                out_path = Path(out_dir)
+                (out_path / "main.pdf").write_bytes(b"%PDF")
+                (out_path / "main.log").write_text(
+                    "I can't write on file `outline/Appendix.aux'.\n",
+                    encoding="utf-8",
+                )
+
+            compiler = LaTexCompiler(str(project_dir), target_language="ch")
+
+            with patch.object(compiler, "_compile_with_pdflatex", side_effect=fake_compile), \
+                    patch.object(compiler, "_compile_with_xelatex", side_effect=fake_compile), \
+                    patch("builtins.print"):
+                pdf_path = compiler.compile()
+
+        self.assertIsNone(pdf_path)
+
+    def test_compile_creates_include_output_directories_before_latexmk(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text(
+                "\\documentclass{article}\n\\begin{document}\n\\include{outline/Appendix}\n\\end{document}\n",
+                encoding="utf-8",
+            )
+
+            checked_dirs = []
+
+            def fake_compile(tex_file, out_dir, engine):
+                checked_dirs.append((Path(out_dir) / "outline").is_dir())
+                (Path(out_dir) / "main.pdf").write_bytes(b"%PDF")
+                (Path(out_dir) / "main.log").write_text(
+                    "Output written on main.pdf.\n",
+                    encoding="utf-8",
+                )
+
+            compiler = LaTexCompiler(str(project_dir), target_language="ch")
+
+            with patch.object(compiler, "_compile_with_pdflatex", side_effect=fake_compile), \
+                    patch.object(compiler, "_compile_with_xelatex", side_effect=fake_compile), \
+                    patch("builtins.print"):
+                compiler.compile()
+
+        self.assertEqual(checked_dirs, [True])
 
 class GeneratorAgentLanguagePropagationTests(unittest.TestCase):
     def test_generator_passes_target_language_to_constructor_and_compiler(self):
