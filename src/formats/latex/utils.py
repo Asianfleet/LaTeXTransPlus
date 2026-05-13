@@ -591,10 +591,16 @@ def contains_cjkutf8_environment(latex_code):
     )
 
 
+def normalize_cjkutf8_environment_spacing(latex_code):
+    latex_code = re.sub(r"\\begin\{CJK\*\}", r"\\begin{CJK}", latex_code)
+    latex_code = re.sub(r"\\end\{CJK\*\}", r"\\end{CJK}", latex_code)
+    return latex_code
+
+
 def add_language_support_package(latex_code, target_language):
     normalized = normalize_target_language(target_language)
     if normalized in {"ch", "cn", "zh"} and contains_cjkutf8_environment(latex_code):
-        return latex_code
+        return normalize_cjkutf8_environment_spacing(latex_code)
 
     package_line = LANGUAGE_PACKAGE_BY_TARGET.get(normalized)
     return add_package_after_documentclass(latex_code, package_line)
