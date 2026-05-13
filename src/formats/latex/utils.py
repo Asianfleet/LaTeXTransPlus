@@ -334,10 +334,60 @@ def process_newcommands(latex_code):
     return latex_code
 
 def replace_href(latex_code):
-    href_pattern = regex.compile(r"\\href\{[^{}]*\}\{(.*?)\}")
-    
-    latex_code = href_pattern.sub(r"\1", latex_code)
-    return latex_code
+    result = []
+    pos = 0
+    pattern = re.compile(r"\\href\b")
+
+    def find_matching_brace(open_pos):
+        depth = 0
+        current = open_pos
+        while current < len(latex_code):
+            char = latex_code[current]
+            if char == "\\":
+                current += 2
+                continue
+            if char == "{":
+                depth += 1
+            elif char == "}":
+                depth -= 1
+                if depth == 0:
+                    return current
+            current += 1
+        return None
+
+    def read_braced_argument(start_pos):
+        while start_pos < len(latex_code) and latex_code[start_pos].isspace():
+            start_pos += 1
+        if start_pos >= len(latex_code) or latex_code[start_pos] != "{":
+            return None
+        close_pos = find_matching_brace(start_pos)
+        if close_pos is None:
+            return None
+        return latex_code[start_pos + 1:close_pos], close_pos + 1
+
+    while True:
+        match = pattern.search(latex_code, pos)
+        if not match:
+            result.append(latex_code[pos:])
+            break
+
+        result.append(latex_code[pos:match.start()])
+        first_arg = read_braced_argument(match.end())
+        if first_arg is None:
+            result.append(match.group(0))
+            pos = match.end()
+            continue
+
+        second_arg = read_braced_argument(first_arg[1])
+        if second_arg is None:
+            result.append(latex_code[match.start():first_arg[1]])
+            pos = first_arg[1]
+            continue
+
+        result.append(second_arg[0])
+        pos = second_arg[1]
+
+    return "".join(result)
 
 def replace_includegraphics(latex_code):
     includegraphics_pattern = regex.compile(r"\\includegraphics(?:\[[^\]]*\])?\{[^\}]*\}", regex.DOTALL)
