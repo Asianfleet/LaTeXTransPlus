@@ -554,9 +554,9 @@ LANGUAGE_PACKAGE_BY_TARGET = {
 }
 
 ENGINE_ORDER_BY_TARGET = {
-    "ch": ["xelatex", "pdflatex"],
-    "cn": ["xelatex", "pdflatex"],
-    "zh": ["xelatex", "pdflatex"],
+    "ch": ["pdflatex", "xelatex"],
+    "cn": ["pdflatex", "xelatex"],
+    "zh": ["pdflatex", "xelatex"],
     "ja": ["lualatex", "xelatex"],
     "jp": ["lualatex", "xelatex"],
     "ko": ["xelatex", "pdflatex"],

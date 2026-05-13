@@ -139,8 +139,8 @@ class LatexConstructorLanguageSupportTests(unittest.TestCase):
 
 class LatexCompilerLanguageTests(unittest.TestCase):
     def test_engine_order_for_supported_languages(self):
-        self.assertEqual(latex_engine_order_for_language("ch"), ["xelatex", "pdflatex"])
-        self.assertEqual(latex_engine_order_for_language("zh"), ["xelatex", "pdflatex"])
+        self.assertEqual(latex_engine_order_for_language("ch"), ["pdflatex", "xelatex"])
+        self.assertEqual(latex_engine_order_for_language("zh"), ["pdflatex", "xelatex"])
         self.assertEqual(latex_engine_order_for_language("ja"), ["lualatex", "xelatex"])
         self.assertEqual(latex_engine_order_for_language("jp"), ["lualatex", "xelatex"])
         self.assertEqual(latex_engine_order_for_language("ko"), ["xelatex", "pdflatex"])
