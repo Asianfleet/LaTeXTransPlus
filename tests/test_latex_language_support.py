@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from src.agents.tool_agents.generator_agent import GeneratorAgent
 from src.formats.latex.compile import LaTexCompiler
 from src.formats.latex.reconstruct import LatexConstructor
 from src.formats.latex.utils import add_language_support_package, latex_engine_order_for_language
@@ -171,6 +172,62 @@ class LatexCompilerLanguageTests(unittest.TestCase):
             [("lualatex", "build_lualatex"), ("xelatex", "build_xelatex")],
         )
         self.assertTrue(pdf_path.endswith("main.pdf"))
+
+
+class GeneratorAgentLanguagePropagationTests(unittest.TestCase):
+    def test_generator_passes_target_language_to_constructor_and_compiler(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            source_dir = root / "paper"
+            source_dir.mkdir()
+            (source_dir / "main.tex").write_text(
+                "\\documentclass{article}\n\\begin{document}\nOriginal\n\\end{document}\n",
+                encoding="utf-8",
+            )
+
+            output_dir = root / "output"
+            output_dir.mkdir()
+            for filename, data in {
+                "sections_map.json": [{"trans_content": "\\documentclass{article}\n\\begin{document}\n本文\n\\end{document}"}],
+                "captions_map.json": [],
+                "envs_map.json": [],
+                "newcommands_map.json": [],
+                "inputs_map.json": [],
+            }.items():
+                (output_dir / filename).write_text(json.dumps(data), encoding="utf-8")
+
+            constructor_languages = []
+            compiler_languages = []
+
+            class FakeConstructor:
+                def __init__(self, **kwargs):
+                    constructor_languages.append(kwargs["target_language"])
+
+                def construct(self):
+                    return None
+
+            class FakeCompiler:
+                def __init__(self, output_latex_dir, target_language):
+                    compiler_languages.append(target_language)
+
+                def compile(self):
+                    return str(root / "paper.pdf")
+
+            with patch("src.formats.latex.reconstruct.LatexConstructor", FakeConstructor), \
+                    patch("src.formats.latex.compile.LaTexCompiler", FakeCompiler), \
+                    patch("src.agents.tool_agents.generator_agent.st"), \
+                    patch("time.sleep"), \
+                    patch("builtins.print"):
+                agent = GeneratorAgent(
+                    config={"target_language": "ja"},
+                    project_dir=str(source_dir),
+                    output_dir=str(output_dir),
+                )
+                result = agent.execute()
+
+        self.assertEqual(result, str(root / "paper.pdf"))
+        self.assertEqual(constructor_languages, ["ja"])
+        self.assertEqual(compiler_languages, ["ja"])
 
 
 if __name__ == "__main__":
