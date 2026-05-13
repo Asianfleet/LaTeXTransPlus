@@ -553,6 +553,16 @@ LANGUAGE_PACKAGE_BY_TARGET = {
     "ko": "\\usepackage{kotex}",
 }
 
+ENGINE_ORDER_BY_TARGET = {
+    "ch": ["xelatex", "pdflatex"],
+    "cn": ["xelatex", "pdflatex"],
+    "zh": ["xelatex", "pdflatex"],
+    "ja": ["lualatex", "xelatex"],
+    "jp": ["lualatex", "xelatex"],
+    "ko": ["xelatex", "pdflatex"],
+    "fr": ["pdflatex", "xelatex"],
+}
+
 
 def normalize_target_language(target_language):
     if target_language is None:
@@ -576,6 +586,13 @@ def add_package_after_documentclass(latex_code, package_line):
 def add_language_support_package(latex_code, target_language):
     package_line = LANGUAGE_PACKAGE_BY_TARGET.get(normalize_target_language(target_language))
     return add_package_after_documentclass(latex_code, package_line)
+
+
+def latex_engine_order_for_language(target_language):
+    return ENGINE_ORDER_BY_TARGET.get(
+        normalize_target_language(target_language),
+        ["pdflatex", "xelatex"],
+    )
 
 
 def add_ctex_package(latex_code):

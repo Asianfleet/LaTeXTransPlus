@@ -5,42 +5,55 @@ import subprocess
 from .utils import *
 
 class LaTexCompiler:
-    def __init__(self, output_latex_dir: str):
+    def __init__(self, output_latex_dir: str, target_language: str = "ch"):
         self.output_latex_dir = output_latex_dir
+        self.target_language = target_language
 
     def compile(self):
         """
-        Compile the LaTeX document .
+        Compile the LaTeX document.
         """
         tex_file_to_compile = find_main_tex_file(self.output_latex_dir)
         if not tex_file_to_compile:
             print("⚠️ Warning: There is no main tex file to compile in this directory.")
             return None
-        print("Start compiling with pdflatex...⏳")
-        compile_out_dir_pdflatex = os.path.join(self.output_latex_dir, "build_pdflatex")
-        self._compile_with_pdflatex(tex_file_to_compile, compile_out_dir_pdflatex, engine="pdflatex")
-        pdf_files = [os.path.join(compile_out_dir_pdflatex, file) for file in os.listdir(compile_out_dir_pdflatex) if file.lower().endswith('.pdf')]
-        if pdf_files:
 
-            print(f"✅  Successfully generated PDF file !") 
-            return pdf_files[0]
-        else:
-            print(f"⚠️  Failed to generate PDF with pdflatex. 🔁Retrying with xelatex...⏳") 
-            compile_out_dir_xelatex = os.path.join(self.output_latex_dir, "build_xelatex")
-            self._compile_with_xelatex(tex_file_to_compile, compile_out_dir_xelatex, engine="xelatex")
-            pdf_files = [os.path.join(compile_out_dir_xelatex, file) for file in os.listdir(compile_out_dir_xelatex) if file.lower().endswith('.pdf')]
+        attempted_log_files = []
+        for engine in latex_engine_order_for_language(self.target_language):
+            print(f"Start compiling with {engine}...⏳")
+            compile_out_dir = os.path.join(self.output_latex_dir, f"build_{engine}")
+            os.makedirs(compile_out_dir, exist_ok=True)
+            self._compile_with_engine(engine, tex_file_to_compile, compile_out_dir)
+            pdf_files = [
+                os.path.join(compile_out_dir, file)
+                for file in os.listdir(compile_out_dir)
+                if file.lower().endswith(".pdf")
+            ]
             if pdf_files:
-                print(f"✅  Successfully generated PDF file !") 
+                print("✅  Successfully generated PDF file !")
                 return pdf_files[0]
-            else:
-                print(f"⚠️  Failed to generate PDF with xelatex. Please check the log.")
-                log_files_xelatex = [os.path.join(compile_out_dir_xelatex, file) for file in os.listdir(compile_out_dir_xelatex) if file.lower().endswith('.log')]
-                log_files_pdflatex = [os.path.join(compile_out_dir_pdflatex, file) for file in os.listdir(compile_out_dir_pdflatex) if file.lower().endswith('.log')]
-                if log_files_xelatex and log_files_pdflatex:
-                    print(f"📄 Log files for pdflatex: {log_files_pdflatex}")
-                    print(f"📄 Log files for xelatex: {log_files_xelatex}")
-                return None
-    
+
+            print(f"⚠️  Failed to generate PDF with {engine}.")
+            attempted_log_files.extend(
+                os.path.join(compile_out_dir, file)
+                for file in os.listdir(compile_out_dir)
+                if file.lower().endswith(".log")
+            )
+
+        if attempted_log_files:
+            print(f"📄 Log files: {attempted_log_files}")
+        print("⚠️  Failed to generate PDF with all configured engines. Please check the log.")
+        return None
+
+    def _compile_with_engine(self, engine: str, tex_file: str, out_dir: str):
+        if engine == "pdflatex":
+            self._compile_with_pdflatex(tex_file, out_dir, engine=engine)
+        elif engine == "xelatex":
+            self._compile_with_xelatex(tex_file, out_dir, engine=engine)
+        elif engine == "lualatex":
+            self._compile_with_lualatex(tex_file, out_dir, engine=engine)
+        else:
+            raise ValueError(f"Unsupported LaTeX engine: {engine}")
 
     def compile_ja(self):
         """
