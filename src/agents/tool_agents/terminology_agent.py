@@ -67,10 +67,18 @@ CONTEXT_WORDS = {
     "achieved",
     "achieves",
     "also",
+    "already",
     "another",
     "any",
+    "answer",
+    "answered",
+    "answering",
+    "answers",
     "can",
     "cannot",
+    "change",
+    "changes",
+    "changing",
     "could",
     "did",
     "do",
@@ -79,18 +87,33 @@ CONTEXT_WORDS = {
     "each",
     "either",
     "evaluate",
+    "exceed",
+    "exceeds",
+    "exist",
+    "existed",
+    "existing",
+    "exists",
     "following",
     "gains",
     "given",
     "has",
     "have",
     "having",
+    "improve",
+    "improved",
+    "improves",
+    "improving",
+    "it",
+    "its",
     "may",
     "might",
+    "more",
     "must",
     "not",
     "our",
     "ours",
+    "question",
+    "questions",
     "respond",
     "responds",
     "sample",
@@ -106,6 +129,7 @@ CONTEXT_WORDS = {
     "this",
     "those",
     "thus",
+    "too",
     "until",
     "upweight",
     "upweighted",
@@ -125,6 +149,75 @@ CONTEXT_WORDS = {
     "work",
     "works",
     "would",
+}
+NON_NOUN_PHRASE_WORDS = {
+    "about",
+    "above",
+    "across",
+    "after",
+    "against",
+    "along",
+    "among",
+    "around",
+    "before",
+    "below",
+    "between",
+    "beyond",
+    "directly",
+    "down",
+    "efficiently",
+    "especially",
+    "inside",
+    "near",
+    "outside",
+    "through",
+    "toward",
+    "towards",
+    "under",
+    "within",
+    "without",
+}
+NOUN_PHRASE_END_WORDS = {
+    "ability",
+    "abilities",
+    "algorithm",
+    "algorithms",
+    "analysis",
+    "baseline",
+    "benchmarks",
+    "boundary",
+    "capabilities",
+    "capability",
+    "capacity",
+    "coverage",
+    "data",
+    "distribution",
+    "efficiency",
+    "entropy",
+    "evaluation",
+    "exploration",
+    "gap",
+    "likelihood",
+    "mechanism",
+    "metric",
+    "model",
+    "models",
+    "objective",
+    "optimization",
+    "policy",
+    "prior",
+    "process",
+    "reward",
+    "rewards",
+    "sampling",
+    "sampler",
+    "score",
+    "scores",
+    "signal",
+    "size",
+    "sizes",
+    "training",
+    "verifier",
 }
 GENERIC_WORDS = {
     "approach",
@@ -184,7 +277,11 @@ class TerminologyAgent(BaseToolAgent):
         envs = self.read_file(self.output_dir / "envs_map.json", "json")
 
         records = self._collect_text_records(sections, captions, envs)
-        paper_context = self._extract_paper_context(sections=sections, captions=captions)
+        paper_context = self._extract_paper_context(
+            sections=sections,
+            captions=captions,
+            envs=envs,
+        )
         known_terms: dict[str, str] = {}
         candidates = self._extract_rule_candidates(records)
         candidates = candidates[: self.terminology_config.max_llm_candidates]
@@ -210,6 +307,7 @@ class TerminologyAgent(BaseToolAgent):
                     if self._is_confirmed_term_decision_valid(decision, candidates)
                 }
                 for decision in decisions:
+                    decision.setdefault("accepted", True)
                     decision.setdefault("decision_source", "llm")
                 self.log(f"Confirmed {len(confirmed_terms)} project terminology entries.")
             except Exception as exc:
@@ -220,6 +318,7 @@ class TerminologyAgent(BaseToolAgent):
                 decisions = [
                     {
                         "source_term": candidate,
+                        "accepted": False,
                         "candidate_translations": [],
                         "selected_translation": "",
                         "decision_source": "llm_failed",
@@ -290,6 +389,7 @@ class TerminologyAgent(BaseToolAgent):
         *,
         sections: list[dict[str, Any]],
         captions: list[dict[str, Any]],
+        envs: list[dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         title = ""
         keywords: list[str] = []
@@ -303,7 +403,17 @@ class TerminologyAgent(BaseToolAgent):
                 keywords = [item.strip() for item in keyword_text.split(",") if item.strip()]
 
         abstract = ""
+        for env in envs or []:
+            env_name = str(env.get("env_name", "")).lower()
+            if "abstract" not in env_name:
+                continue
+            abstract = self._extract_abstract_text(env.get("content", ""))
+            if abstract:
+                break
+
         for section in sections:
+            if abstract:
+                break
             content = section.get("content", "")
             section_id = str(section.get("section", ""))
             if section_id != "0" and "abstract" not in content.lower():
@@ -361,7 +471,7 @@ class TerminologyAgent(BaseToolAgent):
         first_seen: dict[str, int] = {}
         seen_index = 0
         for record in records:
-            sentences = re.split(r"[.!?;:\n]+", record.get("text", ""))
+            sentences = re.split(r"[.!?;:,\n]+", record.get("text", ""))
             for sentence in sentences:
                 tokens = [
                     token.casefold()
@@ -399,6 +509,8 @@ class TerminologyAgent(BaseToolAgent):
             return False
         if any(token in CONTEXT_WORDS for token in phrase_tokens):
             return False
+        if any(token in NON_NOUN_PHRASE_WORDS for token in phrase_tokens):
+            return False
         if any(token in GENERIC_WORDS for token in phrase_tokens):
             return False
         if any(token in NOTATION_WORDS for token in phrase_tokens):
@@ -413,6 +525,8 @@ class TerminologyAgent(BaseToolAgent):
             return False
         if any(token in FUNCTION_WORDS for token in phrase_tokens):
             return False
+        if phrase_tokens[-1] not in NOUN_PHRASE_END_WORDS:
+            return False
         return True
 
     def _is_confirmed_term_decision_valid(
@@ -422,6 +536,8 @@ class TerminologyAgent(BaseToolAgent):
     ) -> bool:
         source_term = str(decision.get("source_term") or "").strip()
         selected_translation = str(decision.get("selected_translation") or "").strip()
+        if decision.get("accepted") is False:
+            return False
         if not source_term or not selected_translation:
             return False
         if source_term.casefold() not in {candidate.casefold() for candidate in candidates}:
@@ -466,6 +582,9 @@ class TerminologyAgent(BaseToolAgent):
         system_prompt = (
             "You are an academic terminology reviewer. Select concise, consistent "
             f"{target_label} translations for {source_label} source terms. "
+            "Set accepted=false for candidates that are verb phrases, sentence fragments, "
+            "generic wording, notation artifacts, or context-only fragments; rejected "
+            "items must have an empty selected_translation. "
             "Return only JSON with a top-level decisions array."
         )
         user_payload = {
@@ -479,6 +598,7 @@ class TerminologyAgent(BaseToolAgent):
                 "decisions": [
                     {
                         "source_term": "string",
+                        "accepted": True,
                         "candidate_translations": ["string"],
                         "selected_translation": "string",
                         "reason": "string",

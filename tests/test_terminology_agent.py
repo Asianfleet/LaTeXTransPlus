@@ -137,6 +137,109 @@ class TerminologyAgentContextTests(unittest.TestCase):
         self.assertNotIn("sampling upweights", candidates)
         self.assertNotIn("sampling upweights tokens", candidates)
 
+    def test_english_candidate_extraction_rejects_non_term_fragments_from_rlvr_paper(self):
+        agent = TerminologyAgent(
+            config={"source_language": "en", "target_language": "ch", "llm_config": {}},
+            project_dir="paper",
+            output_dir="unused",
+        )
+        records = [
+            {
+                "part": "sec",
+                "id": "1",
+                "text": (
+                    "The base model answered 25 such questions. "
+                    "The RL-trained model answered questions too. "
+                    "The base model solves it when k is large. "
+                    "The current RLVR model already exists in its base model. "
+                    "RLVR mainly sharpens the distribution within the base model's prior. "
+                    "We define the sampling efficiency gap SE metric. "
+                    "RLVR improves sampling efficiency through sampling distribution changes. "
+                    "The pretrained base model is compared with the RLVR model."
+                ),
+            }
+        ]
+
+        candidates = agent._extract_rule_candidates(records)
+
+        self.assertIn("base model", candidates)
+        self.assertIn("sampling efficiency", candidates)
+        self.assertIn("sampling distribution", candidates)
+        self.assertIn("pretrained base model", candidates)
+        self.assertNotIn("model answered", candidates)
+        self.assertNotIn("rl-trained model answered", candidates)
+        self.assertNotIn("model answered questions", candidates)
+        self.assertNotIn("model solves", candidates)
+        self.assertNotIn("model solves it", candidates)
+        self.assertNotIn("model already", candidates)
+        self.assertNotIn("distribution within", candidates)
+        self.assertNotIn("sampling efficiency gap se", candidates)
+
+    def test_english_candidate_extraction_does_not_cross_clause_boundaries(self):
+        agent = TerminologyAgent(
+            config={"source_language": "en", "target_language": "ch", "llm_config": {}},
+            project_dir="paper",
+            output_dir="unused",
+        )
+        records = [
+            {
+                "part": "sec",
+                "id": "1",
+                "text": (
+                    "We conduct experiments covering multiple LLM families, "
+                    "model sizes, and RLVR algorithms to compare base models."
+                ),
+            }
+        ]
+
+        candidates = agent._extract_rule_candidates(records)
+
+        self.assertIn("model sizes", candidates)
+        self.assertNotIn("families model", candidates)
+        self.assertNotIn("llm families model", candidates)
+        self.assertNotIn("multiple llm families model", candidates)
+        self.assertNotIn("covering multiple llm families model", candidates)
+
+    def test_extracts_abstract_from_custom_abstract_environment_record(self):
+        agent = TerminologyAgent(
+            config={
+                "source_language": "en",
+                "target_language": "ch",
+                "category": {"paper": ["cs.AI"]},
+                "llm_config": {},
+            },
+            project_dir="paper",
+            output_dir="unused",
+        )
+        sections = [
+            {
+                "section": "0",
+                "content": r"\begin{document}\usepackage{booktabs}<PLACEHOLDER_ENV_1>",
+                "trans_content": "",
+            },
+        ]
+        captions = [
+            {
+                "placeholder": "<PLACEHOLDER_CAP_1>",
+                "cap_type": "icmltitle",
+                "content": r"\icmltitle{Reasoning by Sampling}",
+                "trans_content": "",
+            },
+        ]
+        envs = [
+            {
+                "placeholder": "<PLACEHOLDER_ENV_1>",
+                "env_name": "leapabstract",
+                "content": r"\begin{leapabstract}RLVR improves sampling efficiency.\end{leapabstract}",
+                "need_trans": True,
+            },
+        ]
+
+        context = agent._extract_paper_context(sections=sections, captions=captions, envs=envs)
+
+        self.assertIn("RLVR improves sampling efficiency", context["abstract"])
+        self.assertNotIn("booktabs leapabstract", context["abstract"])
+
     def test_non_english_candidate_extraction_does_not_use_english_rules(self):
         agent = TerminologyAgent(
             config={"source_language": "de", "target_language": "jp", "llm_config": {}},
@@ -265,6 +368,7 @@ class TerminologyAgentExecuteTests(unittest.TestCase):
                 return [
                     {
                         "source_term": "power sampling",
+                        "accepted": True,
                         "candidate_translations": ["幂采样"],
                         "selected_translation": "幂采样",
                         "reason": "Valid domain term.",
@@ -297,6 +401,55 @@ class TerminologyAgentExecuteTests(unittest.TestCase):
 
         self.assertIn("power sampling,幂采样", terms_content)
         self.assertNotIn("our sampling,本文采样", terms_content)
+
+    def test_execute_excludes_rejected_llm_decisions(self):
+        class RejectedDecisionTerminologyAgent(TerminologyAgent):
+            def _request_llm_for_term_decisions(self, candidates, paper_context, term_contexts, known_terms):
+                return [
+                    {
+                        "source_term": "power sampling",
+                        "accepted": True,
+                        "candidate_translations": ["幂采样"],
+                        "selected_translation": "幂采样",
+                        "reason": "Valid domain term.",
+                    },
+                    {
+                        "source_term": "power distribution",
+                        "accepted": False,
+                        "candidate_translations": [],
+                        "selected_translation": "",
+                        "reason": "Rejected by reviewer.",
+                    },
+                ]
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            self._write_maps(output_dir)
+            agent = RejectedDecisionTerminologyAgent(
+                config={
+                    "source_language": "en",
+                    "target_language": "ch",
+                    "llm_config": {},
+                    "terminology": {"max_llm_candidates": 10},
+                },
+                project_dir="paper",
+                output_dir=str(output_dir),
+            )
+
+            agent.execute()
+
+            terms_content = (output_dir / PROJECT_TERMS_FILENAME).read_text(encoding="utf-8")
+            decisions = json.loads((output_dir / PROJECT_TERMS_DECISIONS_FILENAME).read_text(encoding="utf-8"))
+
+        self.assertIn("power sampling,幂采样", terms_content)
+        self.assertNotIn("power distribution", terms_content)
+        rejected = next(
+            decision
+            for decision in decisions["decisions"]
+            if decision["source_term"] == "power distribution"
+        )
+        self.assertIs(rejected["accepted"], False)
+        self.assertEqual(rejected["selected_translation"], "")
 
     def test_llm_failure_records_failure_and_does_not_write_unconfirmed_candidate(self):
         class FailingTerminologyAgent(TerminologyAgent):
