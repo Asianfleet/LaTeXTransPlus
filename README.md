@@ -41,6 +41,8 @@ The current implementation coordinates a parser, terminology generator, translat
 - Can pause after terminology generation for manual review, then retranslate with the reviewed terms.
 - Validates translated parts for LaTeX command mismatches, placeholder mismatches, and bracket mismatches.
 - Retranslates retryable validation failures according to configurable retry policy.
+- Adds language-aware LaTeX support for common CJK targets and chooses a suitable compilation engine order for the target language.
+- Keeps mixed-script academic text more readable for Chinese, Japanese, Korean, and Arabic targets.
 - Writes per-project logs and validation reports under `outputs/`.
 
 # 🛠️ Installation
@@ -64,6 +66,8 @@ latextrans
 To generate PDF output, install [MiKTeX](https://miktex.org/download) or [TeX Live](https://www.tug.org/texlive/).
 
 For MiKTeX, enable package installation on the fly. On Windows, Strawberry Perl may also be required by parts of the LaTeX toolchain.
+
+LaTeXTrans+ compiles translated projects with `latexmk` and may use `pdflatex`, `xelatex`, or `lualatex` depending on the target language. Make sure the required engine and language packages are available in your TeX distribution. Chinese output uses `ctex` when needed, Japanese output uses `luatexja`, and Korean output uses `kotex`.
 
 ## Optional Conda Environment
 
@@ -97,6 +101,8 @@ user_term = ""
 ```
 
 `source_language` and `target_language` accept short language codes used by the prompt layer, such as `en`, `ch`, `zh`, `ja`, `jp`, `de`, `fr`, `es`, `ko`, `ru`, `pt`, `it`, and `ar`. The default is English to Chinese.
+
+For PDF generation, LaTeXTrans+ has built-in package and engine handling for Chinese (`ch`/`zh`/`cn`), Japanese (`ja`/`jp`), and Korean (`ko`) targets. Other target languages can still be translated, but successful PDF compilation depends on the original LaTeX project and the packages available in your TeX environment.
 
 `mode` currently accepts:
 
@@ -183,6 +189,12 @@ Versioned arXiv IDs are supported:
 
 ```bash
 latextrans --arxiv 2508.18791v2
+```
+
+You can also pass arXiv `abs`, `pdf`, or `e-print` URLs; LaTeXTrans+ extracts the ID automatically:
+
+```bash
+latextrans --arxiv https://arxiv.org/abs/2508.18791
 ```
 
 ## Batch Translate arXiv IDs
@@ -279,8 +291,11 @@ Typical generated files include:
 - `errors_report.json`: latest validation result after retries.
 - `<project_name>/`: reconstructed translated LaTeX project.
 - `<target_language>_<project_name>.pdf`: compiled translated PDF, when compilation succeeds.
+- `build_pdflatex/`, `build_xelatex/`, or `build_lualatex/`: LaTeX build logs and intermediate compilation files.
 
 If validation errors remain, PDF generation depends on `validation.retry.generate_pdf_on_error`. If `validation.retry.fail_on_error = true`, remaining validation errors cause the CLI to exit with failure status even if a PDF is generated.
+
+If a compiler produces a PDF but its `.log` contains hard LaTeX errors, LaTeXTrans+ treats that compilation attempt as failed and tries the next configured engine when available. Check the build log directories for details when no final PDF is produced.
 
 # 🖼️ Translation Examples
 
