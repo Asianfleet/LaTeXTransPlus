@@ -594,31 +594,186 @@ def get_captionof_pattern():
     """, regex.VERBOSE | regex.DOTALL)
     return pattern
 
-def add_ctex_package(latex_code):
+LANGUAGE_PACKAGE_BY_TARGET = {
+    "ch": "\\usepackage[UTF8]{ctex}",
+    "cn": "\\usepackage[UTF8]{ctex}",
+    "zh": "\\usepackage[UTF8]{ctex}",
+    "ja": "\\usepackage{luatexja}",
+    "jp": "\\usepackage{luatexja}",
+    "ko": "\\usepackage{kotex}",
+}
 
-    if "\\usepackage[UTF8]{ctex}" not in latex_code:
-        ctex_package = "\\usepackage[UTF8]{ctex}"
-        documentclass = r'documentclass'
-        documentclass_pattern = get_command_pattern(documentclass)
-        # documentclass_pattern = regex.compile(command, regex.DOTALL)
-        match = documentclass_pattern.search(latex_code)
-        if match:
-            position = match.end()
-            latex_code = latex_code[:position] + "\n" + ctex_package + "\n" + latex_code[position:]
+ENGINE_ORDER_BY_TARGET = {
+    "ch": ["pdflatex", "xelatex"],
+    "cn": ["pdflatex", "xelatex"],
+    "zh": ["pdflatex", "xelatex"],
+    "ja": ["lualatex", "xelatex"],
+    "jp": ["lualatex", "xelatex"],
+    "ko": ["xelatex", "pdflatex"],
+    "fr": ["pdflatex", "xelatex"],
+}
+
+
+def normalize_target_language(target_language):
+    if target_language is None:
+        return ""
+    return str(target_language).strip().lower()
+
+
+def add_package_after_documentclass(latex_code, package_line):
+    if not package_line or package_line in latex_code:
+        return latex_code
+
+    documentclass_pattern = get_command_pattern(r"documentclass")
+    match = documentclass_pattern.search(latex_code)
+    if not match:
+        return latex_code
+
+    position = match.end()
+    return latex_code[:position] + "\n" + package_line + "\n" + latex_code[position:]
+
+
+def contains_cjkutf8_environment(latex_code):
+    return bool(
+        re.search(r"\\usepackage(?:\[[^\]]*\])?\{CJKutf8\}", latex_code)
+        or re.search(r"\\begin\{CJK\*?\}", latex_code)
+        or re.search(r"\\end\{CJK\*?\}", latex_code)
+    )
+
+
+def has_global_cjkutf8_document_environment(latex_code):
+    document_match = re.search(r"\\begin\s*\{\s*document\s*\}", latex_code)
+    if not document_match:
+        return False
+
+    end_document_match = re.search(r"\\end\s*\{\s*document\s*\}", latex_code[document_match.end():])
+    if not end_document_match:
+        return False
+
+    body = latex_code[document_match.end():document_match.end() + end_document_match.start()]
+    body = body.strip()
+    if not re.match(r"\\begin\{CJK\*?\}\s*\{UTF8\}\s*\{[^{}]+\}", body):
+        return False
+
+    return bool(re.search(r"\\end\{CJK\*?\}\s*$", body))
+
+
+def normalize_cjkutf8_environment_spacing(latex_code):
+    latex_code = re.sub(r"\\begin\{CJK\*\}", r"\\begin{CJK}", latex_code)
+    latex_code = re.sub(r"\\end\{CJK\*\}", r"\\end{CJK}", latex_code)
     return latex_code
+
+
+def remove_local_cjkutf8_wrappers(latex_code):
+    latex_code = re.sub(r"^[ \t]*\\usepackage(?:\[[^\]]*\])?\{CJKutf8\}[^\n]*(?:\n|$)", "", latex_code, flags=re.MULTILINE)
+    latex_code = re.sub(r"\\begin\{CJK\*?\}\s*\{UTF8\}\s*\{[^{}]+\}", "", latex_code)
+    latex_code = re.sub(r"\\end\{CJK\*?\}", "", latex_code)
+    return latex_code
+
+
+def add_language_support_package(latex_code, target_language):
+    normalized = normalize_target_language(target_language)
+    if normalized in {"ch", "cn", "zh"} and has_global_cjkutf8_document_environment(latex_code):
+        return normalize_cjkutf8_environment_spacing(latex_code)
+    if normalized in {"ch", "cn", "zh"}:
+        latex_code = remove_local_cjkutf8_wrappers(latex_code)
+
+    package_line = LANGUAGE_PACKAGE_BY_TARGET.get(normalized)
+    return add_package_after_documentclass(latex_code, package_line)
+
+
+def latex_engine_order_for_language(target_language):
+    return ENGINE_ORDER_BY_TARGET.get(
+        normalize_target_language(target_language),
+        ["pdflatex", "xelatex"],
+    )
+
+
+def _is_escaped_at(text, index):
+    backslashes = 0
+    pos = index - 1
+    while pos >= 0 and text[pos] == "\\":
+        backslashes += 1
+        pos -= 1
+    return backslashes % 2 == 1
+
+
+def _find_matching_brace(text, open_index):
+    depth = 0
+    pos = open_index
+    while pos < len(text):
+        char = text[pos]
+        if char == "\\":
+            pos += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return pos
+        pos += 1
+    return None
+
+
+def _protected_percent_ranges(text):
+    ranges = []
+    protected_arg_counts = {
+        "url": 1,
+        "nolinkurl": 1,
+        "path": 1,
+        "href": 1,
+    }
+    for command, arg_count in protected_arg_counts.items():
+        pattern = re.compile(rf"\\{command}\b")
+        for match in pattern.finditer(text):
+            pos = match.end()
+            args_found = 0
+            while args_found < arg_count:
+                while pos < len(text) and text[pos].isspace():
+                    pos += 1
+                if pos >= len(text) or text[pos] != "{":
+                    break
+                close_pos = _find_matching_brace(text, pos)
+                if close_pos is None:
+                    break
+                ranges.append((pos + 1, close_pos))
+                pos = close_pos + 1
+                args_found += 1
+    return ranges
+
+
+def escape_unescaped_percent_signs(latex_code):
+    if "%" not in latex_code:
+        return latex_code
+
+    protected_ranges = _protected_percent_ranges(latex_code)
+
+    def is_protected(index):
+        return any(start <= index < end for start, end in protected_ranges)
+
+    def follows_latex_linebreak(index):
+        return index >= 2 and latex_code[index - 2:index] == r"\\"
+
+    result = []
+    for index, char in enumerate(latex_code):
+        if (
+            char == "%"
+            and not _is_escaped_at(latex_code, index)
+            and not is_protected(index)
+            and not follows_latex_linebreak(index)
+        ):
+            result.append(r"\%")
+        else:
+            result.append(char)
+    return "".join(result)
+
+
+def add_ctex_package(latex_code):
+    return add_package_after_documentclass(latex_code, "\\usepackage[UTF8]{ctex}")
 
 def add_ja_package(latex_code):
-
-    if "\\usepackage{luatex-ja}" not in latex_code:
-        ctex_package = "\\usepackage{luatexja}"
-        documentclass = r'documentclass'
-        documentclass_pattern = get_command_pattern(documentclass)
-        # documentclass_pattern = regex.compile(command, regex.DOTALL)
-        match = documentclass_pattern.search(latex_code)
-        if match:
-            position = match.end()
-            latex_code = latex_code[:position] + "\n" + ctex_package + "\n" + latex_code[position:]
-    return latex_code
+    return add_package_after_documentclass(latex_code, "\\usepackage{luatexja}")
 
 def find_main_tex_file(dir): 
     """

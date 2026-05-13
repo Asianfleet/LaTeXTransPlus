@@ -136,6 +136,24 @@ class TranslatorRetryPromptTests(unittest.TestCase):
         plain_request.assert_not_awaited()
         terms_request.assert_awaited_once()
 
+    def test_plain_section_escapes_unescaped_percent_signs(self):
+        agent = TranslatorAgent(config={"llm_config": {}}, trans_mode="plain")
+
+        with patch.object(
+            agent,
+            "_request_llm_for_trans",
+            new_callable=AsyncMock,
+            return_value=r"准确率为 64.2% \citep{MATH}",
+        ):
+            result = asyncio.run(
+                agent._translate_section(
+                    {"section": "1", "content": r"Accuracy is 64.2\% \citep{MATH}."},
+                    session=None,
+                )
+            )
+
+        self.assertEqual(result["trans_content"], r"准确率为 64.2\% \citep{MATH}")
+
 
 class TranslatorRetryRequestTests(unittest.IsolatedAsyncioTestCase):
     async def test_plain_retranslation_prompt_does_not_include_glossary(self):

@@ -72,6 +72,7 @@ def init_prompts(source_lang: str, target_lang: str):
     - Do not normalize equivalent-looking style commands during translation. For example, keep `{{\\bf ...}}` as `{{\\bf ...}}`; do not rewrite it as `\\textbf{{...}}`.
     - Keep optional arguments such as `\\item[...]`, figure/table options, and package options structurally unchanged. Translate only natural language text inside them when it is clearly human-readable.
     - Keep the number of formatting commands such as `\\textit`, `\\textbf`, `\\emph`, and legacy declarations such as `\\bf` aligned with the source.
+    - In LaTeX text, percent signs that mean percentages must be escaped as `\\%`. Never output a bare `%` in translated prose, because it starts a LaTeX comment and can hide following commands such as citations.
     - When correcting a retry error, prioritize the concrete validator report over fluency changes.
     """
 

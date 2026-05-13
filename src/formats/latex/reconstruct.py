@@ -10,7 +10,8 @@ class LatexConstructor:
                  envs: List[Dict[str, Any]],
                  inputs: List[Dict[str, Any]],
                  newcommands: List[Dict[str, Any]],
-                 output_latex_dir: str
+                 output_latex_dir: str,
+                 target_language: str = "ch"
                  ):
         self.sections = sections
         self.captions = captions
@@ -18,6 +19,7 @@ class LatexConstructor:
         self.inputs = inputs
         self.newcommands = newcommands
         self.output_latex_dir = output_latex_dir
+        self.target_language = target_language
 
     def construct(self):
         """
@@ -130,8 +132,7 @@ class LatexConstructor:
             print(f"⚠️ Warning: Residual placeholders found and removed: {residual_matches}")
             tex = re.sub(r"<PLACEHOLDER_[^>]*>", "", tex)
 
-        tex = add_ctex_package(tex) # zh
-        # tex = add_ja_package(tex)  # ja
+        tex = add_language_support_package(tex, self.target_language)
 
         main_file_path = find_main_tex_file(self.output_latex_dir)
         if os.path.exists(main_file_path):
