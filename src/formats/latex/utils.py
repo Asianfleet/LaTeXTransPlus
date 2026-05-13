@@ -338,29 +338,12 @@ def replace_href(latex_code):
     pos = 0
     pattern = re.compile(r"\\href\b")
 
-    def find_matching_brace(open_pos):
-        depth = 0
-        current = open_pos
-        while current < len(latex_code):
-            char = latex_code[current]
-            if char == "\\":
-                current += 2
-                continue
-            if char == "{":
-                depth += 1
-            elif char == "}":
-                depth -= 1
-                if depth == 0:
-                    return current
-            current += 1
-        return None
-
     def read_braced_argument(start_pos):
         while start_pos < len(latex_code) and latex_code[start_pos].isspace():
             start_pos += 1
         if start_pos >= len(latex_code) or latex_code[start_pos] != "{":
             return None
-        close_pos = find_matching_brace(start_pos)
+        close_pos = _find_matching_brace(latex_code, start_pos)
         if close_pos is None:
             return None
         return latex_code[start_pos + 1:close_pos], close_pos + 1
