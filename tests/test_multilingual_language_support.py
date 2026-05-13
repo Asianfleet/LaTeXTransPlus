@@ -40,6 +40,64 @@ class MultilingualPromptTests(unittest.TestCase):
 
         self.assertIn("from German to Japanese", pm.section_system_prompt)
 
+    def test_chinese_prompts_include_cjk_latin_spacing_rules(self):
+        pm.init_prompts("en", "ch")
+
+        prompt = pm.section_system_prompt
+
+        self.assertIn("Chinese typography spacing", prompt)
+        self.assertIn("Common Crawl 的 120B 数学相关 token", prompt)
+        self.assertIn("RLVR 使 LLMs", prompt)
+        self.assertIn(r"pass@\textit{k}（大 \textit{k} 值）", prompt)
+        self.assertIn("Do not insert spaces inside LaTeX command names", prompt)
+
+    def test_non_chinese_prompts_do_not_include_chinese_spacing_rules(self):
+        pm.init_prompts("en", "ja")
+
+        self.assertNotIn("Chinese typography spacing", pm.section_system_prompt)
+
+    def test_japanese_prompts_include_japanese_latin_spacing_rules(self):
+        pm.init_prompts("en", "ja")
+
+        prompt = pm.section_system_prompt
+
+        self.assertIn("Japanese typography spacing", prompt)
+        self.assertIn("GPT-4 は", prompt)
+        self.assertIn("LLM の性能", prompt)
+        self.assertIn(r"\textit{k} の値", prompt)
+        self.assertIn("Do not insert spaces inside LaTeX command names", prompt)
+
+    def test_korean_prompts_include_korean_latin_spacing_rules(self):
+        pm.init_prompts("en", "ko")
+
+        prompt = pm.section_system_prompt
+
+        self.assertIn("Korean typography spacing", prompt)
+        self.assertIn("LLM 학습", prompt)
+        self.assertIn("GPT-4를", prompt)
+        self.assertIn("Do not split Korean postpositions attached to Latin terms", prompt)
+        self.assertIn("Do not insert spaces inside LaTeX command names", prompt)
+
+    def test_arabic_prompts_include_mixed_script_spacing_rules(self):
+        pm.init_prompts("en", "ar")
+
+        prompt = pm.section_system_prompt
+
+        self.assertIn("Arabic mixed-script spacing", prompt)
+        self.assertIn("RTL", prompt)
+        self.assertIn("Do not reorder mixed Arabic/Latin text", prompt)
+        self.assertIn("Do not insert spaces inside LaTeX command names", prompt)
+
+    def test_latin_script_prompts_do_not_include_special_typography_rules(self):
+        pm.init_prompts("en", "fr")
+
+        prompt = pm.section_system_prompt
+
+        self.assertNotIn("Chinese typography spacing", prompt)
+        self.assertNotIn("Japanese typography spacing", prompt)
+        self.assertNotIn("Korean typography spacing", prompt)
+        self.assertNotIn("Arabic mixed-script spacing", prompt)
+
     def test_terminology_prompt_is_not_hardcoded_to_english_chinese(self):
         pm.init_prompts("de", "jp")
 

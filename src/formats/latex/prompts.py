@@ -75,11 +75,44 @@ def init_prompts(source_lang: str, target_lang: str):
     - When correcting a retry error, prioritize the concrete validator report over fluency changes.
     """
 
+    typography_spacing_rules_by_language = {
+        "chinese": r"""
+    ### Chinese typography spacing
+    - When translating into Chinese, insert a normal ASCII space between Chinese characters and inline Latin letters, English acronyms, model names, code-like tokens, and Arabic-number tokens. Examples: `来自 Common Crawl 的 120B 数学相关 token`; `RLVR 使 LLMs 能够`; `MATH 上`; `64 个样本`.
+    - Apply the same spacing at LaTeX text-command boundaries when the command contributes inline Latin text. Example: `pass@\textit{k}（大 \textit{k} 值）`.
+    - Keep existing LaTeX syntax unchanged. Do not insert spaces inside LaTeX command names, control sequences, labels, citation keys, URLs, file paths, placeholders, or math environments. Examples: keep `\textit`, `\cite{...}`, `<PLACEHOLDER_ENV_0>`, and `$k=1$` structurally unchanged.
+    - Use spaces only for readable text boundaries; do not rewrite `~`, escaped spaces, or protected LaTeX spacing commands unless they already appear in the source.
+    """,
+        "japanese": r"""
+    ### Japanese typography spacing
+    - When translating into Japanese, keep boundaries clear between Japanese text (Kanji, Hiragana, Katakana) and inline Latin letters, English acronyms, model names, code-like tokens, and Arabic-number tokens. Use a normal ASCII space in LaTeX source as the practical spacing marker. Examples: `GPT-4 は`, `LLM の性能`, `MATH で`, `64 サンプル`.
+    - Apply the same spacing at LaTeX text-command boundaries when the command contributes inline Latin text. Example: `\textit{k} の値`.
+    - Keep existing LaTeX syntax unchanged. Do not insert spaces inside LaTeX command names, control sequences, labels, citation keys, URLs, file paths, placeholders, or math environments. Examples: keep `\textit`, `\cite{...}`, `<PLACEHOLDER_ENV_0>`, and `$k=1$` structurally unchanged.
+    - Use spaces only for readable text boundaries; do not rewrite `~`, escaped spaces, or protected LaTeX spacing commands unless they already appear in the source.
+    """,
+        "korean": r"""
+    ### Korean typography spacing
+    - When translating into Korean, preserve normal Korean word spacing. Keep Latin terms, English acronyms, model names, code-like tokens, and Arabic-number tokens readable when they appear as independent words. Examples: `LLM 학습`, `MATH 벤치마크`, `64 개 샘플`.
+    - Do not split Korean postpositions attached to Latin terms or numbers when Korean usage naturally attaches them. Examples: keep `GPT-4를`, `LLM은`, and `64개를` when the postposition or counter is attached intentionally.
+    - Keep existing LaTeX syntax unchanged. Do not insert spaces inside LaTeX command names, control sequences, labels, citation keys, URLs, file paths, placeholders, or math environments. Examples: keep `\textit`, `\cite{...}`, `<PLACEHOLDER_ENV_0>`, and `$k=1$` structurally unchanged.
+    - Use spaces only for readable text boundaries; do not rewrite `~`, escaped spaces, or protected LaTeX spacing commands unless they already appear in the source.
+    """,
+        "arabic": r"""
+    ### Arabic mixed-script spacing
+    - When translating into Arabic, preserve natural word spaces around inline Latin letters, English acronyms, model names, code-like tokens, and Arabic-number tokens when they appear as independent words in Arabic text.
+    - Do not reorder mixed Arabic/Latin text. Preserve RTL reading order, punctuation placement, and the original order of LaTeX commands, references, placeholders, URLs, and math expressions.
+    - Keep existing LaTeX syntax unchanged. Do not insert spaces inside LaTeX command names, control sequences, labels, citation keys, URLs, file paths, placeholders, or math environments. Examples: keep `\textit`, `\cite{...}`, `<PLACEHOLDER_ENV_0>`, and `$k=1$` structurally unchanged.
+    - Use spaces only for readable text boundaries; do not rewrite `~`, escaped spaces, or protected LaTeX spacing commands unless they already appear in the source.
+    """,
+    }
+    typography_spacing_rules = typography_spacing_rules_by_language.get(target_lang.lower(), "")
+
 
     caption_system_prompt = fr"""
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate concise LaTeX texts provided by users, such as paper titles, figure titles, and table titles, from {source_lang} into {target_lang}, while strictly maintaining the integrity of LaTeX syntax.
     {latex_structure_guardrails}
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Do not translate or modify the following LaTeX elements:
@@ -99,6 +132,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate a long LaTeX text (including chapter titles and text) provided by users from {source_lang} to {target_lang}, while strictly maintaining the integrity of LaTeX syntax.
     {latex_structure_guardrails}
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Section headings (e.g. natural content enclosed in {{}} in section identifiers like \section{{}}, \subsection{{}} and \subsubsection{{}}) must also be translated, but their LaTeX syntax must remain unchanged.
@@ -120,6 +154,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate a long LaTeX text (including chapter titles and text) provided by users from {source_lang} to {target_lang}, while strictly maintaining the integrity of LaTeX syntax.
     {latex_structure_guardrails}
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Do not translate or modify the following LaTeX elements:
@@ -140,6 +175,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate concise LaTeX academic texts provided by users, such as paper titles, figure titles, and table titles, from {source_lang} into {target_lang}, while strictly maintaining the integrity of LaTeX syntax.
     {latex_structure_guardrails}
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Do not translate or modify the following LaTeX elements:
@@ -160,6 +196,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate a long LaTeX text (including chapter titles and text) provided by users from {source_lang} to {target_lang}, while strictly maintaining the integrity of LaTeX syntax.  
     {latex_structure_guardrails}
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Section headings (e.g. natural content enclosed in {{}} in section identifiers like \section{{}}, \subsection{{}} and \subsubsection{{}}) must also be translated, but their LaTeX syntax must remain unchanged.
@@ -180,6 +217,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate a long LaTeX text (including chapter titles and text) provided by users from {source_lang} to {target_lang}, while strictly maintaining the integrity of LaTeX syntax.
     {latex_structure_guardrails}
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Do not translate or modify the following LaTeX elements:
@@ -266,6 +304,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You are a professional academic translator and LaTeX translation corrector.  
     Your task is to revise and improve machine-translated LaTeX academic texts based on three components provided by the user: the original {source_lang} LaTeX source, the existing {target_lang} translation, and the error information describing the issue(s). Your revision must strictly preserve LaTeX syntax integrity and comply with the following rules.
     {latex_structure_guardrails}
+    {typography_spacing_rules}
     
     ---
     
@@ -397,6 +436,7 @@ def init_prompts(source_lang: str, target_lang: str):
     - Understand the background and flow of the document,
     - Resolve ambiguous pronouns and abstract expressions,
     - Maintain consistent terminology across sections.
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Section headings (e.g. natural content enclosed in {{}} in section identifiers like \section{{}}, \subsection{{}} and \subsubsection{{}}) must also be translated, but their LaTeX syntax must remain unchanged.
@@ -418,6 +458,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate concise LaTeX academic texts provided by users, such as paper titles, figure titles, and table titles, from {source_lang} into {target_lang}, while strictly maintaining the integrity of LaTeX syntax.
     You are also provided with a summary of the previous text. Use this summary to understand the overall context and main ideas, so you can make better translation decisions regarding ambiguous expressions, pronouns, or abstract concepts.Please strictly follow the following requirements when translating.
+    {typography_spacing_rules}
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Do not translate or modify the following LaTeX elements:
     Control commands: \label{{}}, \cite{{}}, \ref{{}}, \textbf{{}}, \emph{{}}, etc.
@@ -437,6 +478,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate a long LaTeX text (including chapter titles and text) provided by users from {source_lang} to {target_lang}, while strictly maintaining the integrity of LaTeX syntax.
     You are also provided with a summary of the previous text. Use this summary to understand the overall context and main ideas, so you can make better translation decisions regarding ambiguous expressions, pronouns, or abstract concepts.Please strictly follow the following requirements when translating.
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Do not translate or modify the following LaTeX elements:
@@ -464,6 +506,7 @@ def init_prompts(source_lang: str, target_lang: str):
     You **must use these resources** to ensure translation quality:
     - **Use the summary** to understand the document context, resolve ambiguous expressions, pronouns, or abstract references, and maintain coherence across sections.
     - **Strictly follow the term dictionary**. If an {source_lang} term in the source appears in the dictionary, you **must** use the corresponding {target_lang} translation from the dictionary without modification.
+    {typography_spacing_rules}
     
     Please strictly follow the translation requirements below:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
@@ -487,6 +530,7 @@ def init_prompts(source_lang: str, target_lang: str):
     section_system_prompt_with_prev = fr"""
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate a long LaTeX text (including chapter titles and text) provided by users from {source_lang} to {target_lang}, while strictly maintaining the integrity of LaTeX syntax.  
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Section headings (e.g. natural content enclosed in {{}} in section identifiers like \section{{}}, \subsection{{}} and \subsubsection{{}}) must also be translated, but their LaTeX syntax must remain unchanged.
@@ -509,6 +553,7 @@ def init_prompts(source_lang: str, target_lang: str):
     section_system_prompt_with_terms_prev = fr"""
     You are a professional academic translator specializing in LaTeX-based scientific writing. 
     Your task is to translate a long LaTeX text (including chapter titles and text) provided by users from {source_lang} to {target_lang}, while strictly maintaining the integrity of LaTeX syntax.  
+    {typography_spacing_rules}
     Please strictly follow the following requirements when translating:
     1.Only translate the natural language content while keeping all LaTeX commands, environments, references, mathematical expressions, and labels unchanged.
     2.Section headings (e.g. natural content enclosed in {{}} in section identifiers like \section{{}}, \subsection{{}} and \subsubsection{{}}) must also be translated, but their LaTeX syntax must remain unchanged.
