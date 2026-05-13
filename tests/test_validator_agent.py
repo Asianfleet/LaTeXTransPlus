@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from src.agents.tool_agents.validator_agent import ValidatorAgent
+from src.formats.latex.utils import escape_unescaped_percent_signs
 
 
 class ValidatorAgentTests(unittest.TestCase):
@@ -65,6 +66,17 @@ class ValidatorAgentTests(unittest.TestCase):
         self.assertFalse(report["retryable"])
         self.assertEqual(report["issues"][0]["severity"], "warning")
         self.assertFalse(report["issues"][0]["retryable"])
+
+    def test_validate_command_counts_citations_after_escaped_percentage(self):
+        part = {
+            "section": "1",
+            "content": r"Accuracy is 64.2\% on MATH \citep{MATH} and 36.2\% on Minerva \citep{minerva}.",
+            "trans_content": escape_unescaped_percent_signs(
+                r"准确率为 64.2% 在 MATH \citep{MATH}，36.2% 在 Minerva \citep{minerva}。"
+            ),
+        }
+
+        self.assertIsNone(self.validator._validate_command(part))
 
     def test_validate_placeholder_mismatch_is_error_retryable(self):
         part = {

@@ -583,8 +583,20 @@ def add_package_after_documentclass(latex_code, package_line):
     return latex_code[:position] + "\n" + package_line + "\n" + latex_code[position:]
 
 
+def contains_cjkutf8_environment(latex_code):
+    return bool(
+        re.search(r"\\usepackage(?:\[[^\]]*\])?\{CJKutf8\}", latex_code)
+        or re.search(r"\\begin\{CJK\*?\}", latex_code)
+        or re.search(r"\\end\{CJK\*?\}", latex_code)
+    )
+
+
 def add_language_support_package(latex_code, target_language):
-    package_line = LANGUAGE_PACKAGE_BY_TARGET.get(normalize_target_language(target_language))
+    normalized = normalize_target_language(target_language)
+    if normalized in {"ch", "cn", "zh"} and contains_cjkutf8_environment(latex_code):
+        return latex_code
+
+    package_line = LANGUAGE_PACKAGE_BY_TARGET.get(normalized)
     return add_package_after_documentclass(latex_code, package_line)
 
 
@@ -593,6 +605,78 @@ def latex_engine_order_for_language(target_language):
         normalize_target_language(target_language),
         ["pdflatex", "xelatex"],
     )
+
+
+def _is_escaped_at(text, index):
+    backslashes = 0
+    pos = index - 1
+    while pos >= 0 and text[pos] == "\\":
+        backslashes += 1
+        pos -= 1
+    return backslashes % 2 == 1
+
+
+def _find_matching_brace(text, open_index):
+    depth = 0
+    pos = open_index
+    while pos < len(text):
+        char = text[pos]
+        if char == "\\":
+            pos += 2
+            continue
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return pos
+        pos += 1
+    return None
+
+
+def _protected_percent_ranges(text):
+    ranges = []
+    protected_arg_counts = {
+        "url": 1,
+        "nolinkurl": 1,
+        "path": 1,
+        "href": 1,
+    }
+    for command, arg_count in protected_arg_counts.items():
+        pattern = re.compile(rf"\\{command}\b")
+        for match in pattern.finditer(text):
+            pos = match.end()
+            args_found = 0
+            while args_found < arg_count:
+                while pos < len(text) and text[pos].isspace():
+                    pos += 1
+                if pos >= len(text) or text[pos] != "{":
+                    break
+                close_pos = _find_matching_brace(text, pos)
+                if close_pos is None:
+                    break
+                ranges.append((pos + 1, close_pos))
+                pos = close_pos + 1
+                args_found += 1
+    return ranges
+
+
+def escape_unescaped_percent_signs(latex_code):
+    if "%" not in latex_code:
+        return latex_code
+
+    protected_ranges = _protected_percent_ranges(latex_code)
+
+    def is_protected(index):
+        return any(start <= index < end for start, end in protected_ranges)
+
+    result = []
+    for index, char in enumerate(latex_code):
+        if char == "%" and not _is_escaped_at(latex_code, index) and not is_protected(index):
+            result.append(r"\%")
+        else:
+            result.append(char)
+    return "".join(result)
 
 
 def add_ctex_package(latex_code):

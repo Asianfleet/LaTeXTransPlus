@@ -450,7 +450,7 @@ class TranslatorAgent(BaseToolAgent):
                     # self._updated_term_dict(term_text)
                     self._updated_term_dict_v2(term_text)
             except Exception as e:
-                return transed_section
+                pass
 
         elif self.trans_mode == "plain":
             transed_section["trans_content"] = await self._request_llm_for_trans(
@@ -461,6 +461,7 @@ class TranslatorAgent(BaseToolAgent):
                 session=session
             )
 
+        transed_section["trans_content"] = escape_unescaped_percent_signs(transed_section["trans_content"])
         return transed_section
 
     async def _translate_caption(self, caption: Dict[str, Any], session: aiohttp.ClientSession, error_message=None) -> Dict[str, Any]:
@@ -505,7 +506,7 @@ class TranslatorAgent(BaseToolAgent):
                     # self._updated_term_dict(term_text)
                     self._updated_term_dict_v2(term_text)
             except Exception as e:
-                return transed_caption
+                pass
 
         elif self.trans_mode == "plain":
             transed_caption["trans_content"] = await self._request_llm_for_trans(pm.caption_system_prompt,
@@ -515,6 +516,7 @@ class TranslatorAgent(BaseToolAgent):
                                                         session=session
                                                         )
 
+        transed_caption["trans_content"] = escape_unescaped_percent_signs(transed_caption["trans_content"])
         return transed_caption
 
     async def _translate_env(self, env: Dict[str, Any], session: aiohttp.ClientSession, error_message=None) -> Dict[str, Any]:
@@ -567,7 +569,7 @@ class TranslatorAgent(BaseToolAgent):
                             # self._updated_term_dict(term_text)
                         self._updated_term_dict_v2(text)
                 except Exception as e:
-                    return transed_env
+                    pass
 
         elif self.trans_mode == "plain":
             if env["need_trans"]:
@@ -580,6 +582,7 @@ class TranslatorAgent(BaseToolAgent):
             else:
                 transed_env["trans_content"] = env["content"]
 
+        transed_env["trans_content"] = escape_unescaped_percent_signs(transed_env["trans_content"])
         return transed_env
 
     async def _request_llm_for_trans(self,

@@ -7,7 +7,7 @@ from unittest.mock import patch
 from src.agents.tool_agents.generator_agent import GeneratorAgent
 from src.formats.latex.compile import LaTexCompiler
 from src.formats.latex.reconstruct import LatexConstructor
-from src.formats.latex.utils import add_language_support_package, latex_engine_order_for_language
+from src.formats.latex.utils import add_language_support_package, escape_unescaped_percent_signs, latex_engine_order_for_language
 
 
 BASE_TEX = "\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}\n"
@@ -61,6 +61,35 @@ class LatexLanguagePackageTests(unittest.TestCase):
         result = add_language_support_package(tex, "ja")
 
         self.assertEqual(result.count("\\usepackage{luatexja}"), 1)
+
+    def test_chinese_target_does_not_mix_ctex_with_existing_cjkutf8(self):
+        tex = (
+            "\\documentclass{article}\n"
+            "\\usepackage{CJKutf8}\n"
+            "\\begin{document}\n"
+            "\\begin{CJK*}{UTF8}{gbsn}\n"
+            "本文\n"
+            "\\end{CJK*}\n"
+            "\\end{document}\n"
+        )
+
+        result = add_language_support_package(tex, "ch")
+
+        self.assertNotIn("\\usepackage[UTF8]{ctex}", result)
+        self.assertIn("\\usepackage{CJKutf8}", result)
+        self.assertIn("\\begin{CJK*}{UTF8}{gbsn}", result)
+
+
+class LatexPercentEscapingTests(unittest.TestCase):
+    def test_escape_unescaped_percent_signs_in_translated_text(self):
+        text = r"准确率为 64.2%，且 pass rate 为 36.2% \citep{MATH}，保留 \% 和 \url{https://example.test/a%20b}。"
+
+        result = escape_unescaped_percent_signs(text)
+
+        self.assertIn(r"64.2\%", result)
+        self.assertIn(r"36.2\% \citep{MATH}", result)
+        self.assertIn(r"\%", result)
+        self.assertIn(r"\url{https://example.test/a%20b}", result)
 
 
 class LatexConstructorLanguageSupportTests(unittest.TestCase):
@@ -172,7 +201,6 @@ class LatexCompilerLanguageTests(unittest.TestCase):
             [("lualatex", "build_lualatex"), ("xelatex", "build_xelatex")],
         )
         self.assertTrue(pdf_path.endswith("main.pdf"))
-
 
 class GeneratorAgentLanguagePropagationTests(unittest.TestCase):
     def test_generator_passes_target_language_to_constructor_and_compiler(self):
