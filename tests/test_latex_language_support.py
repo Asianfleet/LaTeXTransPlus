@@ -2,9 +2,11 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from src.formats.latex.compile import LaTexCompiler
 from src.formats.latex.reconstruct import LatexConstructor
-from src.formats.latex.utils import add_language_support_package
+from src.formats.latex.utils import add_language_support_package, latex_engine_order_for_language
 
 
 BASE_TEX = "\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}\n"
@@ -103,6 +105,72 @@ class LatexConstructorLanguageSupportTests(unittest.TestCase):
         self.assertNotIn("\\usepackage[UTF8]{ctex}", result)
         self.assertNotIn("\\usepackage{luatexja}", result)
         self.assertNotIn("\\usepackage{kotex}", result)
+
+
+class LatexCompilerLanguageTests(unittest.TestCase):
+    def test_engine_order_for_supported_languages(self):
+        self.assertEqual(latex_engine_order_for_language("ch"), ["xelatex", "pdflatex"])
+        self.assertEqual(latex_engine_order_for_language("zh"), ["xelatex", "pdflatex"])
+        self.assertEqual(latex_engine_order_for_language("ja"), ["lualatex", "xelatex"])
+        self.assertEqual(latex_engine_order_for_language("jp"), ["lualatex", "xelatex"])
+        self.assertEqual(latex_engine_order_for_language("ko"), ["xelatex", "pdflatex"])
+        self.assertEqual(latex_engine_order_for_language("fr"), ["pdflatex", "xelatex"])
+        self.assertEqual(latex_engine_order_for_language("de"), ["pdflatex", "xelatex"])
+
+    def test_compile_uses_target_language_engine_order(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text(
+                "\\documentclass{article}\n\\begin{document}\n本文\n\\end{document}\n",
+                encoding="utf-8",
+            )
+
+            calls = []
+
+            def fake_compile(tex_file, out_dir, engine):
+                calls.append((engine, Path(out_dir).name))
+                if engine == "lualatex":
+                    (Path(out_dir) / "main.pdf").write_bytes(b"%PDF")
+
+            compiler = LaTexCompiler(str(project_dir), target_language="ja")
+
+            with patch.object(compiler, "_compile_with_lualatex", side_effect=fake_compile), \
+                    patch.object(compiler, "_compile_with_xelatex", side_effect=fake_compile), \
+                    patch.object(compiler, "_compile_with_pdflatex", side_effect=fake_compile), \
+                    patch("builtins.print"):
+                pdf_path = compiler.compile()
+
+        self.assertEqual(calls, [("lualatex", "build_lualatex")])
+        self.assertTrue(pdf_path.endswith("main.pdf"))
+
+    def test_compile_falls_back_to_next_language_engine(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text(
+                "\\documentclass{article}\n\\begin{document}\n本文\n\\end{document}\n",
+                encoding="utf-8",
+            )
+
+            calls = []
+
+            def fake_compile(tex_file, out_dir, engine):
+                calls.append((engine, Path(out_dir).name))
+                if engine == "xelatex":
+                    (Path(out_dir) / "main.pdf").write_bytes(b"%PDF")
+
+            compiler = LaTexCompiler(str(project_dir), target_language="ja")
+
+            with patch.object(compiler, "_compile_with_lualatex", side_effect=fake_compile), \
+                    patch.object(compiler, "_compile_with_xelatex", side_effect=fake_compile), \
+                    patch.object(compiler, "_compile_with_pdflatex", side_effect=fake_compile), \
+                    patch("builtins.print"):
+                pdf_path = compiler.compile()
+
+        self.assertEqual(
+            calls,
+            [("lualatex", "build_lualatex"), ("xelatex", "build_xelatex")],
+        )
+        self.assertTrue(pdf_path.endswith("main.pdf"))
 
 
 if __name__ == "__main__":
