@@ -297,7 +297,7 @@ If validation errors remain, PDF generation depends on `validation.retry.generat
 
 If a compiler produces a PDF but its `.log` contains hard LaTeX errors, LaTeXTransPlus treats that compilation attempt as failed and tries the next configured engine when available. Check the build log directories for details when no final PDF is produced.
 
-# 🖼️ Translation Examples
+<!-- # 🖼️ Translation Examples
 
 The following examples show original pages on the left and translated results on the right.
 
@@ -353,7 +353,7 @@ The following examples show original pages on the left and translated results on
   </tr>
 </table>
 
-See [`examples/`](examples/) for more sample assets and translated PDFs.
+See [`examples/`](examples/) for more sample assets and translated PDFs. -->
 
 # 🙏 Acknowledgments
 

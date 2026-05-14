@@ -297,7 +297,7 @@ outputs/<target_language>_<project_name>/
 
 如果某个编译器生成了 PDF，但对应 `.log` 中存在严重 LaTeX 错误，LaTeXTransPlus 会把该次编译视为失败，并在可用时尝试下一个编译引擎。未生成最终 PDF 时，请优先查看对应的 build 日志目录。
 
-# 🖼️ 翻译示例
+<!-- # 🖼️ 翻译示例
 
 以下示例左侧为原文页面，右侧为翻译结果。
 
@@ -351,9 +351,9 @@ outputs/<target_language>_<project_name>/
     <td><img src="examples/case5a-1-en.png" width="100%"></td>
     <td><img src="examples/case5b-1-jp.png" width="100%"></td>
   </tr>
-</table>
+</table> 
 
-更多示例资源和翻译 PDF 见 [`examples/`](examples/)。
+更多示例资源和翻译 PDF 见 [`examples/`](examples/)。 -->
 
 # 🙏 致谢
 
