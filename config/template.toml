@@ -1,4 +1,4 @@
-sys_name = "LaTeXTrans"
+sys_name = "LaTeXTransPlus"
 version = "0.1.0"
 target_language = "ch"
 source_language = "en"
@@ -11,9 +11,26 @@ mode = "plain"
 user_term = ""
 
 [terminology]
-enabled = true
+enabled = false
 review_before_translate = false
 max_llm_candidates = 30
+
+[validation.retry]
+max_attempts = 3
+generate_pdf_on_error = true
+fail_on_error = true
+
+[validation.issues.command_mismatch]
+severity = "error"
+retryable = true
+
+[validation.issues.placeholder_mismatch]
+severity = "error"
+retryable = true
+
+[validation.issues.bracket_mismatch]
+severity = "error"
+retryable = true
 
 [llm_config]
 model = ""

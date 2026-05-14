@@ -1,4 +1,4 @@
-sys_name = "LaTeXTrans"
+sys_name = "LaTeXTransPlus"
 version = "0.1.0"
 target_language = "ch"
 source_language = "en"
