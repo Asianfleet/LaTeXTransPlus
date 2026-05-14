@@ -19,7 +19,7 @@ English | [中文](README_ZH.md)
 • [Configuration](#-configuration)
 • [Usage](#-usage)
 • [Outputs](#-outputs)
-• [Translation Examples](#-translation-examples)
+<!-- • [Translation Examples](#-translation-examples) -->
 • [Acknowledgments](#-acknowledgments)
 
 </p>
