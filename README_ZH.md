@@ -4,7 +4,7 @@
 
 <img src="./logo.png" width="100%"></img>
 
-  **LaTeXTrans+**
+  **LaTeXTransPlus**
 
   **直接翻译 LaTeX 论文源码，并在尽量保持文档结构的前提下生成多语言 PDF。**
 
@@ -27,7 +27,7 @@
 
 # 📖 简介
 
-LaTeXTrans+ 是一个基于原 LaTeXTrans 项目开发的 LaTeX 论文翻译工具。它直接翻译 LaTeX 源码项目，而不是翻译已经渲染后的 PDF，然后重构翻译后的 LaTeX 项目并编译生成 PDF。
+LaTeXTransPlus 是一个基于原 LaTeXTrans 项目开发的 LaTeX 论文翻译工具。它直接翻译 LaTeX 源码项目，而不是翻译已经渲染后的 PDF，然后重构翻译后的 LaTeX 项目并编译生成 PDF。
 
 当前实现会协调 Parser、Terminology Generator、Translator、Validator 和 PDF Generator 完成工作流。项目支持从 arXiv 下载源码、处理本地 LaTeX 项目、处理压缩源码包、生成项目级术语表、配置源语言与目标语言、基于校验结果自动重译，并为每个项目保存 workflow 日志。
 
@@ -67,7 +67,7 @@ latextrans
 
 如果使用 MiKTeX，建议启用缺失宏包的自动安装。Windows 下部分 LaTeX 工具链还可能需要 Strawberry Perl。
 
-LaTeXTrans+ 使用 `latexmk` 编译译文项目，并会根据目标语言选择 `pdflatex`、`xelatex` 或 `lualatex`。请确保 TeX 发行版中已经安装所需引擎和语言宏包。中文输出会按需使用 `ctex`，日文输出使用 `luatexja`，韩文输出使用 `kotex`。
+LaTeXTransPlus 使用 `latexmk` 编译译文项目，并会根据目标语言选择 `pdflatex`、`xelatex` 或 `lualatex`。请确保 TeX 发行版中已经安装所需引擎和语言宏包。中文输出会按需使用 `ctex`，日文输出使用 `luatexja`，韩文输出使用 `kotex`。
 
 ## 可选：使用 Conda 环境
 
@@ -102,7 +102,7 @@ user_term = ""
 
 `source_language` 和 `target_language` 使用 prompt 层支持的短语言代码，例如 `en`、`ch`、`zh`、`ja`、`jp`、`de`、`fr`、`es`、`ko`、`ru`、`pt`、`it` 和 `ar`。默认翻译方向是 English to Chinese。
 
-对于 PDF 生成，LaTeXTrans+ 内置了中文（`ch`/`zh`/`cn`）、日文（`ja`/`jp`）和韩文（`ko`）目标的宏包与编译引擎处理。其他目标语言仍可用于翻译，但 PDF 是否能成功编译取决于原始 LaTeX 项目以及本机 TeX 环境中可用的宏包。
+对于 PDF 生成，LaTeXTransPlus 内置了中文（`ch`/`zh`/`cn`）、日文（`ja`/`jp`）和韩文（`ko`）目标的宏包与编译引擎处理。其他目标语言仍可用于翻译，但 PDF 是否能成功编译取决于原始 LaTeX 项目以及本机 TeX 环境中可用的宏包。
 
 `mode` 当前支持：
 
@@ -139,7 +139,7 @@ review_before_translate = false
 max_llm_candidates = 30
 ```
 
-启用后，LaTeXTrans+ 会扫描解析后的论文文本，调用 LLM 选择项目级术语，并写入：
+启用后，LaTeXTransPlus 会扫描解析后的论文文本，调用 LLM 选择项目级术语，并写入：
 
 - `project_terms.csv`
 - `project_terms_decisions.json`
@@ -191,7 +191,7 @@ latextrans --arxiv 2508.18791
 latextrans --arxiv 2508.18791v2
 ```
 
-也可以传入 arXiv 的 `abs`、`pdf` 或 `e-print` URL，LaTeXTrans+ 会自动提取 ID：
+也可以传入 arXiv 的 `abs`、`pdf` 或 `e-print` URL，LaTeXTransPlus 会自动提取 ID：
 
 ```bash
 latextrans --arxiv https://arxiv.org/abs/2508.18791
@@ -235,7 +235,7 @@ latextrans --project D:\paper_a,D:\paper_b,D:\paper_c.zip
 latextrans --all-existing
 ```
 
-当提供 `--arxiv` 或 `--project` 时，LaTeXTrans+ 只处理这些显式输入，并忽略 `tex source` 下其他已有目录。
+当提供 `--arxiv` 或 `--project` 时，LaTeXTransPlus 只处理这些显式输入，并忽略 `tex source` 下其他已有目录。
 
 ## 使用自定义配置或覆盖路径
 
@@ -295,7 +295,7 @@ outputs/<target_language>_<project_name>/
 
 如果仍有校验错误，是否继续生成 PDF 取决于 `validation.retry.generate_pdf_on_error`。如果 `validation.retry.fail_on_error = true`，即使生成了 PDF，残留的校验错误也会导致 CLI 以失败状态退出。
 
-如果某个编译器生成了 PDF，但对应 `.log` 中存在严重 LaTeX 错误，LaTeXTrans+ 会把该次编译视为失败，并在可用时尝试下一个编译引擎。未生成最终 PDF 时，请优先查看对应的 build 日志目录。
+如果某个编译器生成了 PDF，但对应 `.log` 中存在严重 LaTeX 错误，LaTeXTransPlus 会把该次编译视为失败，并在可用时尝试下一个编译引擎。未生成最终 PDF 时，请优先查看对应的 build 日志目录。
 
 # 🖼️ 翻译示例
 
@@ -357,4 +357,4 @@ outputs/<target_language>_<project_name>/
 
 # 🙏 致谢
 
-LaTeXTrans+ 基于 [LaTeXTrans](https://github.com/NiuTrans/LaTeXTrans) 项目开发。感谢 [LaTeXTrans](https://github.com/NiuTrans/LaTeXTrans) 项目及其贡献者提供原始的结构化 LaTeX 翻译 workflow 与实现基础。
+LaTeXTransPlus 基于 [LaTeXTrans](https://github.com/NiuTrans/LaTeXTrans) 项目开发。感谢 [LaTeXTrans](https://github.com/NiuTrans/LaTeXTrans) 项目及其贡献者提供原始的结构化 LaTeX 翻译 workflow 与实现基础。

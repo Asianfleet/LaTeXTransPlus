@@ -4,7 +4,7 @@ English | [中文](README_ZH.md)
 
 <img src="./logo.png" width="100%"></img>
 
-  **LaTeXTrans+**
+  **LaTeXTransPlus**
 
   **Translate LaTeX paper sources into multilingual PDF outputs while preserving document structure.**
 
@@ -27,7 +27,7 @@ English | [中文](README_ZH.md)
 
 # 📖 Introduction
 
-LaTeXTrans+ is a LaTeX paper translation tool developed based on the original LaTeXTrans project. It translates LaTeX source projects directly instead of translating rendered PDFs, then reconstructs and compiles the translated LaTeX project into a PDF.
+LaTeXTransPlus is a LaTeX paper translation tool developed based on the original LaTeXTrans project. It translates LaTeX source projects directly instead of translating rendered PDFs, then reconstructs and compiles the translated LaTeX project into a PDF.
 
 The current implementation coordinates a parser, terminology generator, translator, validator, and PDF generator. It supports arXiv source downloads, local LaTeX projects, compressed source archives, project-level terminology extraction, configurable source and target languages, validation-driven retranslation, and per-project workflow logs.
 
@@ -67,7 +67,7 @@ To generate PDF output, install [MiKTeX](https://miktex.org/download) or [TeX Li
 
 For MiKTeX, enable package installation on the fly. On Windows, Strawberry Perl may also be required by parts of the LaTeX toolchain.
 
-LaTeXTrans+ compiles translated projects with `latexmk` and may use `pdflatex`, `xelatex`, or `lualatex` depending on the target language. Make sure the required engine and language packages are available in your TeX distribution. Chinese output uses `ctex` when needed, Japanese output uses `luatexja`, and Korean output uses `kotex`.
+LaTeXTransPlus compiles translated projects with `latexmk` and may use `pdflatex`, `xelatex`, or `lualatex` depending on the target language. Make sure the required engine and language packages are available in your TeX distribution. Chinese output uses `ctex` when needed, Japanese output uses `luatexja`, and Korean output uses `kotex`.
 
 ## Optional Conda Environment
 
@@ -102,7 +102,7 @@ user_term = ""
 
 `source_language` and `target_language` accept short language codes used by the prompt layer, such as `en`, `ch`, `zh`, `ja`, `jp`, `de`, `fr`, `es`, `ko`, `ru`, `pt`, `it`, and `ar`. The default is English to Chinese.
 
-For PDF generation, LaTeXTrans+ has built-in package and engine handling for Chinese (`ch`/`zh`/`cn`), Japanese (`ja`/`jp`), and Korean (`ko`) targets. Other target languages can still be translated, but successful PDF compilation depends on the original LaTeX project and the packages available in your TeX environment.
+For PDF generation, LaTeXTransPlus has built-in package and engine handling for Chinese (`ch`/`zh`/`cn`), Japanese (`ja`/`jp`), and Korean (`ko`) targets. Other target languages can still be translated, but successful PDF compilation depends on the original LaTeX project and the packages available in your TeX environment.
 
 `mode` currently accepts:
 
@@ -139,7 +139,7 @@ review_before_translate = false
 max_llm_candidates = 30
 ```
 
-When enabled, LaTeXTrans+ scans parsed paper text, asks the LLM to select project terminology, and writes:
+When enabled, LaTeXTransPlus scans parsed paper text, asks the LLM to select project terminology, and writes:
 
 - `project_terms.csv`
 - `project_terms_decisions.json`
@@ -191,7 +191,7 @@ Versioned arXiv IDs are supported:
 latextrans --arxiv 2508.18791v2
 ```
 
-You can also pass arXiv `abs`, `pdf`, or `e-print` URLs; LaTeXTrans+ extracts the ID automatically:
+You can also pass arXiv `abs`, `pdf`, or `e-print` URLs; LaTeXTransPlus extracts the ID automatically:
 
 ```bash
 latextrans --arxiv https://arxiv.org/abs/2508.18791
@@ -235,7 +235,7 @@ To process every project already under `tex_sources_dir`:
 latextrans --all-existing
 ```
 
-When `--arxiv` or `--project` is provided, LaTeXTrans+ processes only those explicit inputs and ignores other existing folders under `tex source`.
+When `--arxiv` or `--project` is provided, LaTeXTransPlus processes only those explicit inputs and ignores other existing folders under `tex source`.
 
 ## Use a Custom Config or Override Paths
 
@@ -295,7 +295,7 @@ Typical generated files include:
 
 If validation errors remain, PDF generation depends on `validation.retry.generate_pdf_on_error`. If `validation.retry.fail_on_error = true`, remaining validation errors cause the CLI to exit with failure status even if a PDF is generated.
 
-If a compiler produces a PDF but its `.log` contains hard LaTeX errors, LaTeXTrans+ treats that compilation attempt as failed and tries the next configured engine when available. Check the build log directories for details when no final PDF is produced.
+If a compiler produces a PDF but its `.log` contains hard LaTeX errors, LaTeXTransPlus treats that compilation attempt as failed and tries the next configured engine when available. Check the build log directories for details when no final PDF is produced.
 
 # 🖼️ Translation Examples
 
@@ -357,4 +357,4 @@ See [`examples/`](examples/) for more sample assets and translated PDFs.
 
 # 🙏 Acknowledgments
 
-LaTeXTrans+ is developed based on the [LaTeXTrans](https://github.com/NiuTrans/LaTeXTrans) project. We thank the [LaTeXTrans](https://github.com/NiuTrans/LaTeXTrans) project and its contributors for the original structured LaTeX translation workflow and implementation foundation.
+LaTeXTransPlus is developed based on the [LaTeXTrans](https://github.com/NiuTrans/LaTeXTrans) project. We thank the [LaTeXTrans](https://github.com/NiuTrans/LaTeXTrans) project and its contributors for the original structured LaTeX translation workflow and implementation foundation.
