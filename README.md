@@ -93,7 +93,7 @@ scripts\windows\latextrans.cmd
 scripts\windows\latextrans-tui.cmd
 ```
 
-The wrappers call the programs installed in the `latextrans` environment through `conda run -n latextrans`. Install the project into that environment first:
+The wrappers activate the `latextrans` environment before calling the installed programs. Install the project into that environment first:
 
 ```powershell
 conda run -n latextrans python -m pip install -e D:\Workspace\tools\LaTeXTransPlus
@@ -115,7 +115,7 @@ scripts/linux/latextrans
 scripts/linux/latextrans-tui
 ```
 
-They use the same `conda run -n latextrans` pattern. Install the project into that environment first, then add `scripts/linux` to your `PATH` or place the scripts in another PATH directory. Make them executable before use:
+They activate the `latextrans` environment before calling the installed programs. Install the project into that environment first, then add `scripts/linux` to your `PATH` or place the scripts in another PATH directory. Make them executable before use:
 
 ```bash
 chmod +x scripts/linux/latextrans scripts/linux/latextrans-tui

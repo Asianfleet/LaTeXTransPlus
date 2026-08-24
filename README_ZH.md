@@ -93,7 +93,7 @@ scripts\windows\latextrans.cmd
 scripts\windows\latextrans-tui.cmd
 ```
 
-这两个脚本会通过 `conda run -n latextrans` 调用已安装在 `latextrans` 环境中的程序。使用前请先在该环境中安装项目：
+这两个脚本会先激活 `latextrans` 环境，再调用其中已安装的程序。使用前请先在该环境中安装项目：
 
 ```powershell
 conda run -n latextrans python -m pip install -e D:\Workspace\tools\LaTeXTransPlus
@@ -115,7 +115,7 @@ scripts/linux/latextrans
 scripts/linux/latextrans-tui
 ```
 
-它们使用相同的 `conda run -n latextrans` 方式。先把项目安装到该环境，再把 `scripts/linux` 加入 `PATH`，或将脚本放到其他已在 `PATH` 中的目录。使用前记得赋予可执行权限：
+它们会先激活 `latextrans` 环境，再调用其中已安装的程序。先把项目安装到该环境，再把 `scripts/linux` 加入 `PATH`，或将脚本放到其他已在 `PATH` 中的目录。使用前记得赋予可执行权限：
 
 ```bash
 chmod +x scripts/linux/latextrans scripts/linux/latextrans-tui
