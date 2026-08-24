@@ -33,7 +33,7 @@
 - Produce `merge_llm_payload(payload: dict[str, Any], custom_json: dict[str, Any]) -> dict[str, Any]`.
 - `load_runtime_config()` must validate `llm_config.custom_json` and retain its parsed dictionary under the same key for agents.
 
-- [ ] **Step 1: Write failing helper and runtime tests**
+- [x] **Step 1: Write failing helper and runtime tests**
 
 Add tests for:
 
@@ -61,7 +61,7 @@ def test_merge_llm_payload_rejects_reserved_field_conflicts(self):
 
 Add a runtime test that loads a TOML file with `custom_json` and asserts the parsed dictionary is present in `config["llm_config"]`.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
@@ -71,7 +71,7 @@ python -m unittest tests.test_llm_config tests.test_runtime_config
 
 Expected: FAIL because the shared functions and `custom_json` validation do not exist.
 
-- [ ] **Step 3: Implement minimal shared helpers**
+- [x] **Step 3: Implement minimal shared helpers**
 
 In `src/config.py`:
 
@@ -81,7 +81,7 @@ In `src/config.py`:
 - Merge by copying the base payload, reject any key already present in the base payload, then update with custom fields.
 - Validate and replace `llm_config["custom_json"]` in `load_runtime_config()` through the shared parser.
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
 Run the same focused command and then:
 
@@ -91,7 +91,7 @@ python -m unittest tests.test_runtime_config
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/config.py src/runtime.py tests/test_llm_config.py tests/test_runtime_config.py
@@ -112,7 +112,7 @@ git commit -m "feat(config): validate custom LLM JSON fields"
 - Each agent reads the validated `llm_config.custom_json` dictionary, defaulting to `{}` for direct unit construction.
 - Every locally constructed request payload is passed through `merge_llm_payload()` before network submission.
 
-- [ ] **Step 1: Write failing request-payload tests**
+- [x] **Step 1: Write failing request-payload tests**
 
 Add tests that use the existing fake request/session patterns and assert:
 
@@ -122,7 +122,7 @@ custom = {"enable_thinking": True, "reasoning_effort": "high"}
 
 appears at the top level of Parser, Translator, and Terminology request JSON. Add a Translator test for a retry/helper request and assert the same fields are present. Add a test that a direct agent config without `custom_json` produces no extra fields.
 
-- [ ] **Step 2: Run focused request tests and verify RED**
+- [x] **Step 2: Run focused request tests and verify RED**
 
 Run:
 
@@ -132,7 +132,7 @@ python -m unittest tests.test_llm_request_payloads tests.test_translator_retry_p
 
 Expected: FAIL because current payloads do not include custom fields.
 
-- [ ] **Step 3: Implement payload injection**
+- [x] **Step 3: Implement payload injection**
 
 Import `merge_llm_payload` in all three agents. Add a small instance helper where useful, such as `_build_llm_payload(payload)`, with a docstring, or call the shared function directly. Apply it to:
 
@@ -143,7 +143,7 @@ Import `merge_llm_payload` in all three agents. Add a small instance helper wher
 
 Do not alter retry loops, headers, response parsing, or business prompts.
 
-- [ ] **Step 4: Run focused request tests and verify GREEN**
+- [x] **Step 4: Run focused request tests and verify GREEN**
 
 Run:
 
@@ -153,7 +153,7 @@ python -m unittest tests.test_llm_request_payloads tests.test_translator_retry_p
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/agents/tool_agents/parser_agent.py src/agents/tool_agents/translator_agent.py src/agents/tool_agents/terminology_agent.py tests/test_llm_request_payloads.py tests/test_translator_retry_prompt.py tests/test_terminology_agent.py
@@ -174,7 +174,7 @@ git commit -m "feat(llm): apply custom JSON to agent requests"
 - Add `ConfigField(("llm_config", "custom_json"), "自定义请求 JSON", "textarea", "LLM", "")`.
 - Existing form parsing and TOML preview/save behavior must preserve the string exactly as entered, subject only to normal TextArea handling.
 
-- [ ] **Step 1: Write failing TUI/config tests**
+- [x] **Step 1: Write failing TUI/config tests**
 
 Assert that:
 
@@ -183,7 +183,7 @@ Assert that:
 - The settings screen exposes `#config-llm_config-custom_json` as a `TextArea`.
 - The template contains `custom_json = ""`.
 
-- [ ] **Step 2: Run focused tests and verify RED**
+- [x] **Step 2: Run focused tests and verify RED**
 
 Run:
 
@@ -193,7 +193,7 @@ python -m unittest tests.test_tui_config tests.test_tui_app
 
 Expected: FAIL because the field and template entry are absent.
 
-- [ ] **Step 3: Implement TUI/template/documentation changes**
+- [x] **Step 3: Implement TUI/template/documentation changes**
 
 Add the textarea field after the existing LLM endpoint fields. Add an empty TOML value to `config/template.toml`; do not add a secret or enabled thinking behavior by default. Document:
 
@@ -209,7 +209,7 @@ custom_json = '{"reasoning_effort": "high"}'
 
 for OpenAI-compatible requests. Explain that fields are merged at the top level and reserved field conflicts fail.
 
-- [ ] **Step 4: Run focused tests and verify GREEN**
+- [x] **Step 4: Run focused tests and verify GREEN**
 
 Run:
 
@@ -219,7 +219,7 @@ python -m unittest tests.test_tui_config tests.test_tui_app
 
 Expected: PASS, with the real UI config protected according to `AGENTS.md`.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```powershell
 git add src/tui/config_schema.py config/template.toml README.md README_ZH.md tests/test_tui_app.py tests/test_tui_config.py
@@ -231,7 +231,7 @@ git commit -m "feat(ui): expose custom LLM JSON configuration"
 **Files:**
 - Modify: `docs/superpowers/plans/2026-08-24-llm-custom-json.md`
 
-- [ ] **Step 1: Run the complete test suite**
+- [x] **Step 1: Run the complete test suite**
 
 Run in the `latextrans` conda environment:
 
@@ -241,7 +241,7 @@ python -m unittest discover tests
 
 Expected: all tests pass.
 
-- [ ] **Step 2: Check formatting and task-only diff**
+- [x] **Step 2: Check formatting and task-only diff**
 
 Run:
 
@@ -253,13 +253,21 @@ git diff HEAD~3..HEAD --stat
 
 Confirm no API keys, generated files, or unrelated modifications are present.
 
-- [ ] **Step 3: Update this plan**
+- [x] **Step 3: Update this plan**
 
 Check off completed tasks and add a short implementation note describing the shared parser/merge helper and the three-agent coverage.
 
-- [ ] **Step 4: Commit bookkeeping**
+- [x] **Step 4: Commit bookkeeping**
 
 ```powershell
 git add docs/superpowers/plans/2026-08-24-llm-custom-json.md
 git commit -m "docs: record custom LLM JSON implementation"
 ```
+
+## Implementation Notes
+
+- Added shared `parse_custom_json()` and `merge_llm_payload()` helpers in `src/config.py`.
+- Runtime configuration parses and validates `llm_config.custom_json`, including reserved-field conflicts.
+- Parser, Translator, and Terminology request payloads now receive the same top-level custom fields.
+- Added TUI textarea support, template/default configuration entries, bilingual documentation, and regression tests.
+- Final verification: `conda run -n latextrans python -m unittest discover tests` passed with 334 tests.
