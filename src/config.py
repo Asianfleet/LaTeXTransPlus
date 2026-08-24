@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, NoReturn
 
 
 LLM_RESERVED_FIELDS = {
@@ -12,26 +12,32 @@ LLM_RESERVED_FIELDS = {
 }
 
 
+def _reject_json_constant(value: str) -> NoReturn:
+    """拒绝 JSON 标准中不存在的 NaN 和 Infinity 常量。"""
+    raise ValueError(f"Invalid llm_config.custom_json constant: {value}.")
+
+
 def parse_custom_json(value: Any) -> Dict[str, Any]:
     """解析 LLM 自定义 JSON，并要求结果为 JSON object。"""
     if value is None:
         return {}
     if isinstance(value, dict):
-        return dict(value)
-    if not isinstance(value, str):
-        raise ValueError("llm_config.custom_json must be a JSON object string.")
+        parsed = dict(value)
+    else:
+        if not isinstance(value, str):
+            raise ValueError("llm_config.custom_json must be a JSON object string.")
 
-    stripped = value.strip()
-    if not stripped:
-        return {}
+        stripped = value.strip()
+        if not stripped:
+            return {}
 
-    try:
-        parsed = json.loads(stripped)
-    except json.JSONDecodeError as exc:
-        raise ValueError(f"Invalid llm_config.custom_json JSON: {exc.msg}.") from exc
+        try:
+            parsed = json.loads(stripped, parse_constant=_reject_json_constant)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid llm_config.custom_json JSON: {exc.msg}.") from exc
 
-    if not isinstance(parsed, dict):
-        raise ValueError("llm_config.custom_json must decode to a JSON object.")
+        if not isinstance(parsed, dict):
+            raise ValueError("llm_config.custom_json must decode to a JSON object.")
     conflicts = sorted(LLM_RESERVED_FIELDS.intersection(parsed))
     if conflicts:
         fields = ", ".join(conflicts)

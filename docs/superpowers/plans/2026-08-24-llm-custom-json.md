@@ -268,6 +268,7 @@ git commit -m "docs: record custom LLM JSON implementation"
 
 - Added shared `parse_custom_json()` and `merge_llm_payload()` helpers in `src/config.py`.
 - Runtime configuration parses and validates `llm_config.custom_json`, including reserved-field conflicts.
+- Custom JSON parsing rejects non-standard `NaN` and `Infinity` constants.
 - Parser, Translator, and Terminology request payloads now receive the same top-level custom fields.
 - Added TUI textarea support, template/default configuration entries, bilingual documentation, and regression tests.
 - Final verification: `conda run -n latextrans python -m unittest discover tests` passed with 334 tests.

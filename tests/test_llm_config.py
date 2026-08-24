@@ -16,10 +16,16 @@ class LlmConfigTests(unittest.TestCase):
             parse_custom_json("[]")
         with self.assertRaises(ValueError):
             parse_custom_json("{")
+        with self.assertRaises(ValueError):
+            parse_custom_json('{"budget": NaN}')
+        with self.assertRaises(ValueError):
+            parse_custom_json('{"budget": Infinity}')
 
     def test_parse_custom_json_rejects_reserved_request_fields(self):
         with self.assertRaisesRegex(ValueError, "model"):
             parse_custom_json('{"model": "override"}')
+        with self.assertRaisesRegex(ValueError, "model"):
+            parse_custom_json({"model": "override"})
 
     def test_merge_llm_payload_adds_custom_fields_without_mutating_input(self):
         payload = {"model": "m", "temperature": 0}
