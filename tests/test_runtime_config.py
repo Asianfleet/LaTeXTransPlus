@@ -7,6 +7,38 @@ from src.runtime import load_runtime_config
 
 
 class RuntimeConfigTests(unittest.TestCase):
+    def test_load_runtime_config_parses_custom_json_object(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.toml"
+            config_path.write_text(
+                """
+[llm_config]
+custom_json = '{"enable_thinking": true, "reasoning_effort": "high"}'
+""".strip(),
+                encoding="utf-8",
+            )
+
+            config = load_runtime_config(str(config_path))
+
+        self.assertEqual(
+            config["llm_config"]["custom_json"],
+            {"enable_thinking": True, "reasoning_effort": "high"},
+        )
+
+    def test_load_runtime_config_rejects_custom_json_reserved_fields(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            config_path = Path(tmp_dir) / "config.toml"
+            config_path.write_text(
+                """
+[llm_config]
+custom_json = '{"model": "override"}'
+""".strip(),
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(ValueError, "model"):
+                load_runtime_config(str(config_path))
+
     def test_load_runtime_config_reads_api_key_from_configured_env_var(self):
         env_name = "LATEXTRANS_TEST_API_KEY"
         with tempfile.TemporaryDirectory() as tmp_dir:

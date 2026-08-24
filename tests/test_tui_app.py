@@ -806,7 +806,12 @@ class TuiConfigPageTests(unittest.IsolatedAsyncioTestCase):
                     "bracket_mismatch": {"severity": "error", "retryable": True},
                 },
             },
-            "llm_config": {"model": "deepseek-v4-flash", "api_key_env": "DEEPSEEK_API_KEY", "base_url": ""},
+            "llm_config": {
+                "model": "deepseek-v4-flash",
+                "api_key_env": "DEEPSEEK_API_KEY",
+                "base_url": "",
+                "custom_json": "",
+            },
             "zotero": {
                 "local_api_base": "http://127.0.0.1:23119/api",
                 "web_api_key_env": "ZOTERO_API_KEY",
@@ -826,6 +831,9 @@ class TuiConfigPageTests(unittest.IsolatedAsyncioTestCase):
                 app.query_one("#config-validation-issues-command_mismatch-severity", Select).value = "warning"
                 app.query_one("#config-validation-issues-command_mismatch-retryable", Switch).value = False
                 app.query_one("#config-llm_config-model", Input).value = "model-x"
+                app.query_one("#config-llm_config-custom_json", TextArea).text = (
+                    '{"enable_thinking": true}'
+                )
                 app.query_one("#config-zotero-local_api_base", Input).value = "http://localhost:23119/api"
                 app.query_one("#config-zotero-web_api_key_env", Input).value = "MY_ZOTERO_API_KEY"
                 app.persist_config_form_change()
@@ -844,6 +852,10 @@ class TuiConfigPageTests(unittest.IsolatedAsyncioTestCase):
             self.assertEqual(saved["validation"]["issues"]["command_mismatch"]["severity"], "warning")
             self.assertFalse(saved["validation"]["issues"]["command_mismatch"]["retryable"])
             self.assertEqual(saved["llm_config"]["model"], "model-x")
+            self.assertEqual(
+                saved["llm_config"]["custom_json"],
+                '{"enable_thinking": true}',
+            )
             self.assertEqual(saved["zotero"]["local_api_base"], "http://localhost:23119/api")
             self.assertEqual(saved["zotero"]["web_api_key_env"], "MY_ZOTERO_API_KEY")
             self.assertIn('target_language = "fr"', app.query_one("#config-preview", TextArea).text)

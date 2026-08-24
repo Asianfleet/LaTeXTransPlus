@@ -71,6 +71,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("llm_config", "model"), "模型", "input", "LLM", ""),
     ConfigField(("llm_config", "api_key_env"), "API key 环境变量", "input", "LLM", ""),
     ConfigField(("llm_config", "base_url"), "接口地址", "input", "LLM", ""),
+    ConfigField(("llm_config", "custom_json"), "自定义请求 JSON", "textarea", "LLM", ""),
     ConfigField(("zotero", "local_api_base"), "Zotero 本地 API", "input", "Zotero", "http://127.0.0.1:23119/api"),
     ConfigField(("zotero", "web_api_key_env"), "Zotero Web API key 环境变量", "input", "Zotero", "ZOTERO_API_KEY"),
 )

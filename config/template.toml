@@ -36,6 +36,7 @@ retryable = true
 model = ""
 api_key_env = ""
 base_url = ""
+custom_json = ""
 
 [zotero]
 local_api_base = "http://127.0.0.1:23119/api"

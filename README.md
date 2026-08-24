@@ -162,9 +162,27 @@ Configure the model endpoint under `[llm_config]`:
 model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/chat/completions"
+custom_json = ""
 ```
 
 `api_key_env` names the environment variable that stores your API key. You can also override model settings from the CLI with `--model`, `--url`, and `--key`.
+
+`custom_json` is a JSON object of additional top-level fields applied to every Parser, Translator, and
+Terminology request. Use it for provider-specific reasoning controls, for example with SiliconFlow:
+
+```toml
+custom_json = '{"enable_thinking": true}'
+```
+
+OpenAI-compatible endpoints can use:
+
+```toml
+custom_json = '{"reasoning_effort": "high"}'
+```
+
+This field adds request parameters; it is not a complete request body. It cannot override
+`model`, `messages`, `temperature`, `max_tokens`, or `max_new_tokens`. Configuration fails on such
+conflicts. An empty string disables custom fields.
 
 Example endpoints:
 

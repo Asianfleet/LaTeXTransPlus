@@ -36,6 +36,7 @@ retryable = true
 model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/chat/completions"
+custom_json = ""
 
 [zotero]
 local_api_base = "http://127.0.0.1:23119/api"

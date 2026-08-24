@@ -1,5 +1,6 @@
 ﻿from typing import Dict, Any, List, Optional
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
+from src.config import merge_llm_payload, parse_custom_json
 #from TransLatex.src.formats.latex.prompts import *
 import src.formats.latex.prompts as pm
 from src.formats.latex.utils import *
@@ -55,6 +56,7 @@ class TranslatorAgent(BaseToolAgent):
         self.model = config["llm_config"].get("model", "gpt-4o")
         self.base_url = config["llm_config"].get("base_url", None)
         self.API_KEY = config["llm_config"].get("api_key", None)
+        self.custom_json = parse_custom_json(config["llm_config"].get("custom_json"))
         self.user_term = config.get("user_term", None)
         self.target_language = config.get("target_language", "ch")
         self.category = config.get("category", None)
@@ -592,7 +594,7 @@ class TranslatorAgent(BaseToolAgent):
                                      type: str,
                                      session: aiohttp.ClientSession) -> str:
         
-        payload = {
+        payload = merge_llm_payload({
             "model": f"{self.model}",
             "messages": [
                 {"role": "system", "content": f"{system_prompt}"},
@@ -600,7 +602,7 @@ class TranslatorAgent(BaseToolAgent):
             ],
             "temperature": 0.7,
             "max_new_tokens": 8192
-        }
+        }, self.custom_json)
 
         headers = {
             "Authorization": f"Bearer {self.API_KEY}",
@@ -636,7 +638,7 @@ class TranslatorAgent(BaseToolAgent):
                                           type: str,
                                           session: aiohttp.ClientSession) -> str:
 
-        payload = {
+        payload = merge_llm_payload({
             "model": f"{self.model}",
             "messages": [
                 {
@@ -651,7 +653,7 @@ class TranslatorAgent(BaseToolAgent):
             "temperature": 0.7,
             # "max_length": 100000,
             "max_new_tokens": 8192
-        }
+        }, self.custom_json)
 
         headers = {
             "Authorization": f"Bearer {self.API_KEY}",
@@ -700,7 +702,7 @@ class TranslatorAgent(BaseToolAgent):
                 "Now, please translate the following new paragraph. Maintain the terminology from the glossary provided."
             )
 
-        payload = {
+        payload = merge_llm_payload({
             "model": f"{self.model}",
             "messages": [
                 {
@@ -715,7 +717,7 @@ class TranslatorAgent(BaseToolAgent):
             "temperature": 0.7,
             # "max_length": 100000,
             "max_new_tokens": 8192
-        }
+        }, self.custom_json)
 
         headers = {
             "Authorization": f"Bearer {self.API_KEY}",
@@ -810,7 +812,7 @@ class TranslatorAgent(BaseToolAgent):
         source_label = self._source_language_label()
         target_label = self._target_language_label()
 
-        payload = {
+        payload = merge_llm_payload({
             "model": f"{self.model}",
             "messages": [
                 {
@@ -825,7 +827,7 @@ class TranslatorAgent(BaseToolAgent):
             "temperature": 0.7,
             # "max_length": 100000,
             # "max_tokens": 50
-        }
+        }, self.custom_json)
 
         headers = {
             "Authorization": f"Bearer {self.API_KEY}",
@@ -850,7 +852,7 @@ class TranslatorAgent(BaseToolAgent):
         """
         Requests the LLM to summarize the given text.
         """
-        payload = {
+        payload = merge_llm_payload({
             "model": f"{self.model}",
             "messages": [
                 {
@@ -865,7 +867,7 @@ class TranslatorAgent(BaseToolAgent):
             "temperature": 0.7,
             # "max_length": 100000,
             "max_new_tokens": 8192
-        }
+        }, self.custom_json)
 
         headers = {
             "Authorization": f"Bearer {self.API_KEY}",
@@ -890,7 +892,7 @@ class TranslatorAgent(BaseToolAgent):
         """
         Requests the LLM to refine the given summary.
         """
-        payload = {
+        payload = merge_llm_payload({
             "model": f"{self.model}",
             "messages": [
                 {
@@ -905,7 +907,7 @@ class TranslatorAgent(BaseToolAgent):
             "temperature": 0.7,
             # "max_length": 100000,
             "max_new_tokens": 8192
-        }
+        }, self.custom_json)
 
         headers = {
             "Authorization": f"Bearer {self.API_KEY}",

@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
+from src.config import merge_llm_payload, parse_custom_json
 from src.formats.latex.prompts import language_label
 from src.formats.latex.utils import (
     LatexNodes2Text,
@@ -271,6 +272,7 @@ class TerminologyAgent(BaseToolAgent):
         self.model = llm_config.get("model", "gpt-4o")
         self.base_url = llm_config.get("base_url")
         self.api_key = llm_config.get("api_key")
+        self.custom_json = parse_custom_json(llm_config.get("custom_json"))
 
     def execute(self) -> dict[str, Any]:
         project_name = self.project_dir.name
@@ -647,14 +649,14 @@ class TerminologyAgent(BaseToolAgent):
             },
         }
         endpoint = self.base_url or "https://api.openai.com/v1/chat/completions"
-        request_payload = {
+        request_payload = merge_llm_payload({
             "model": self.model,
             "messages": [
                 {"role": "system", "content": system_prompt},
                 {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
             ],
             "temperature": 0,
-        }
+        }, self.custom_json)
         request_headers = {
             "Authorization": f"Bearer {self.api_key}",
             "Content-Type": "application/json",

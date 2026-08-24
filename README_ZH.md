@@ -162,9 +162,26 @@ user_term = ""
 model = "deepseek-v4-flash"
 api_key_env = "DEEPSEEK_API_KEY"
 base_url = "https://api.deepseek.com/chat/completions"
+custom_json = ""
 ```
 
 `api_key_env` 是保存 API key 的环境变量名。也可以通过 CLI 的 `--model`、`--url` 和 `--key` 覆盖模型配置。
+
+`custom_json` 是追加到每次 LLM 请求顶层的自定义 JSON object，Parser、Translator 和 Terminology
+请求都会使用它。可以用它开启供应商支持的思考模式，例如硅基流动：
+
+```toml
+custom_json = '{"enable_thinking": true}'
+```
+
+OpenAI 兼容接口也可以传入：
+
+```toml
+custom_json = '{"reasoning_effort": "high"}'
+```
+
+该字段只追加新请求参数，不是完整请求体。不能覆盖程序生成的 `model`、`messages`、`temperature`、
+`max_tokens` 或 `max_new_tokens`；发生冲突时配置会报错。空字符串表示不追加参数。
 
 常见 endpoint 示例：
 
