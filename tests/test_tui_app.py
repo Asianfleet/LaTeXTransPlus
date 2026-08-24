@@ -338,6 +338,19 @@ class TuiEntryPageTests(TuiAppTests):
             self.assertIn(app.current_task.task_id, notify.call_args.args[0])
             start_current_task.assert_called_once_with()
 
+    async def test_submit_entry_form_clears_input_after_successful_submission(self):
+        """确认成功提交任务后入口输入框会自动清空。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            app.query_one("#input-type-select", Select).value = "arxiv"
+            batch_input = app.query_one("#batch-input", TextArea)
+            batch_input.text = "2508.18791"
+
+            with patch.object(app, "start_current_task"), patch.object(app, "notify"):
+                app.submit_entry_form()
+
+            self.assertEqual(batch_input.text, "")
+
     async def test_start_button_submits_entry_form_without_leaving_entry_page(self):
         """确认开始按钮提交入口表单后仍留在入口页。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
@@ -412,6 +425,7 @@ class TuiEntryPageTests(TuiAppTests):
             app.submit_entry_form()
 
             self.assertIn("remote input must be", str(app.query_one("#entry-error", Static).content))
+            self.assertEqual(app.query_one("#batch-input", TextArea).text, "file:///bad.zip")
             self.assertIsNone(app.current_task)
             self.assertEqual(app.query_one("#main-switcher", ContentSwitcher).current, PAGE_ENTRY)
 

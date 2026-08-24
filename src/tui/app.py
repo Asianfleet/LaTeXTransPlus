@@ -878,6 +878,7 @@ class LaTeXTransTuiApp(App[None]):
         error_widget.update("")
         self.current_task = TaskViewState(input_type=input_type, inputs=items, task_id=self._next_task_id())
         self.tasks.append(self.current_task)
+        self.query_one("#batch-input", TextArea).text = ""
         self.switch_page(PAGE_ENTRY)
         self.notify(
             f"任务已开始：{self.current_task.task_id}（{len(items)} 个条目）",
