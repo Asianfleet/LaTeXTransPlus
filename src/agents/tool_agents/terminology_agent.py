@@ -251,6 +251,10 @@ PROPER_NAME_WORDS = {
     "mistral",
     "qwen",
 }
+TERMINOLOGY_REQUEST_TIMEOUT = 180
+TERMINOLOGY_RETRY_COUNT = 3
+TERMINOLOGY_RETRY_DELAY = 5
+TERMINOLOGY_BATCH_SIZE = 10
 
 
 class TerminologyAgent(BaseToolAgent):
@@ -574,6 +578,7 @@ class TerminologyAgent(BaseToolAgent):
         term_contexts: dict[str, list[str]],
         known_terms: dict[str, str],
     ) -> list[dict[str, Any]]:
+        """Request terminology decisions in bounded batches and merge the results."""
         if not self.api_key:
             raise RuntimeError("llm_config.api_key is required for terminology generation")
 
@@ -587,6 +592,41 @@ class TerminologyAgent(BaseToolAgent):
             "items must have an empty selected_translation. "
             "Return only JSON with a top-level decisions array."
         )
+        batches = [
+            candidates[start : start + TERMINOLOGY_BATCH_SIZE]
+            for start in range(0, len(candidates), TERMINOLOGY_BATCH_SIZE)
+        ]
+        decisions: list[dict[str, Any]] = []
+        for batch_number, batch_candidates in enumerate(batches, start=1):
+            batch_term_contexts = {
+                candidate: term_contexts.get(candidate, [])
+                for candidate in batch_candidates
+            }
+            decisions.extend(
+                self._request_llm_for_term_batch_decisions(
+                    system_prompt=system_prompt,
+                    candidates=batch_candidates,
+                    paper_context=paper_context,
+                    term_contexts=batch_term_contexts,
+                    known_terms=known_terms,
+                    batch_number=batch_number,
+                    total_batches=len(batches),
+                )
+            )
+        return decisions
+
+    def _request_llm_for_term_batch_decisions(
+        self,
+        *,
+        system_prompt: str,
+        candidates: list[str],
+        paper_context: dict[str, Any],
+        term_contexts: dict[str, list[str]],
+        known_terms: dict[str, str],
+        batch_number: int,
+        total_batches: int,
+    ) -> list[dict[str, Any]]:
+        """Request and validate one terminology batch with retry diagnostics."""
         user_payload = {
             "source_language": self.source_language,
             "target_language": self.target_language,
@@ -607,23 +647,50 @@ class TerminologyAgent(BaseToolAgent):
             },
         }
         endpoint = self.base_url or "https://api.openai.com/v1/chat/completions"
-        response = requests.post(
-            endpoint,
-            headers={
-                "Authorization": f"Bearer {self.api_key}",
-                "Content-Type": "application/json",
-            },
-            json={
-                "model": self.model,
-                "messages": [
-                    {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
-                ],
-                "temperature": 0,
-            },
-            timeout=60,
-        )
-        response.raise_for_status()
+        request_payload = {
+            "model": self.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": json.dumps(user_payload, ensure_ascii=False)},
+            ],
+            "temperature": 0,
+        }
+        request_headers = {
+            "Authorization": f"Bearer {self.api_key}",
+            "Content-Type": "application/json",
+        }
+        max_attempts = TERMINOLOGY_RETRY_COUNT + 1
+        for attempt in range(TERMINOLOGY_RETRY_COUNT + 1):
+            started_at = time.monotonic()
+            try:
+                response = requests.post(
+                    endpoint,
+                    headers=request_headers,
+                    json=request_payload,
+                    timeout=TERMINOLOGY_REQUEST_TIMEOUT,
+                )
+                response.raise_for_status()
+                elapsed = time.monotonic() - started_at
+                trace_id = self._get_response_trace_id(response)
+                self.log(
+                    f"Terminology batch {batch_number}/{total_batches} "
+                    f"attempt {attempt + 1}/{max_attempts} succeeded after {elapsed:.1f}s; "
+                    f"trace_id={trace_id or 'unavailable'}."
+                )
+                break
+            except requests.exceptions.RequestException as exc:
+                elapsed = time.monotonic() - started_at
+                trace_id = self._get_response_trace_id(getattr(exc, "response", None))
+                self.log(
+                    f"Terminology batch {batch_number}/{total_batches} "
+                    f"attempt {attempt + 1}/{max_attempts} failed after {elapsed:.1f}s; "
+                    f"trace_id={trace_id or 'unavailable'}: {exc}",
+                    level="warning",
+                )
+                if attempt >= TERMINOLOGY_RETRY_COUNT:
+                    raise
+                time.sleep(TERMINOLOGY_RETRY_DELAY)
+
         content = response.json()["choices"][0]["message"]["content"]
         parsed = json.loads(self._extract_json_payload(content))
         if not isinstance(parsed, dict) or "decisions" not in parsed:
@@ -632,6 +699,24 @@ class TerminologyAgent(BaseToolAgent):
         if not isinstance(decisions, list):
             raise ValueError("Terminology LLM response must contain a decisions array")
         return decisions
+
+    @staticmethod
+    def _get_response_trace_id(response: Any) -> str:
+        """Extract a provider request identifier from an HTTP response."""
+        headers = getattr(response, "headers", None)
+        if not headers:
+            return ""
+        for header_name in (
+            "x-siliconflow-trace-id",
+            "x-request-id",
+            "x-trace-id",
+            "trace-id",
+            "request-id",
+        ):
+            trace_id = headers.get(header_name)
+            if trace_id:
+                return str(trace_id)
+        return ""
 
     def _extract_json_payload(self, content: str) -> str:
         stripped = content.strip()

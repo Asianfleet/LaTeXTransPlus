@@ -4,13 +4,16 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+import requests
+
 from src.agents.tool_agents.terminology_agent import TerminologyAgent
 from src.terminology import PROJECT_TERMS_DECISIONS_FILENAME, PROJECT_TERMS_FILENAME
 
 
 class _FakeResponse:
-    def __init__(self, content: str):
+    def __init__(self, content: str, headers=None):
         self.content = content
+        self.headers = headers or {}
 
     def raise_for_status(self):
         return None
@@ -519,6 +522,179 @@ class TerminologyAgentExecuteTests(unittest.TestCase):
 
         self.assertEqual(captured["url"], endpoint)
         self.assertEqual(decisions[0]["selected_translation"], "幂采样")
+
+    def test_request_llm_retries_three_times_after_initial_failure(self):
+        agent = TerminologyAgent(
+            config={
+                "source_language": "en",
+                "target_language": "ch",
+                "llm_config": {
+                    "api_key": "test-key",
+                    "base_url": "https://api.deepseek.com/chat/completions",
+                    "model": "deepseek-chat",
+                },
+            },
+            project_dir="paper",
+            output_dir="unused",
+        )
+        attempts = 0
+        response = _FakeResponse(json.dumps({
+            "decisions": [
+                {
+                    "source_term": "power sampling",
+                    "selected_translation": "幂采样",
+                }
+            ]
+        }))
+
+        def fake_post(_url, **kwargs):
+            nonlocal attempts
+            attempts += 1
+            self.assertEqual(kwargs["timeout"], 180)
+            if attempts <= 3:
+                raise requests.exceptions.ReadTimeout("temporary timeout")
+            return response
+
+        with patch("src.agents.tool_agents.terminology_agent.requests.post", side_effect=fake_post), \
+                patch("src.agents.tool_agents.terminology_agent.time.sleep") as sleep:
+            decisions = agent._request_llm_for_term_decisions(
+                ["power sampling"],
+                {"title": "Reasoning by Sampling"},
+                {"power sampling": ["Power sampling works."]},
+                {},
+            )
+
+        self.assertEqual(attempts, 4)
+        self.assertEqual(sleep.call_count, 3)
+        sleep.assert_called_with(5)
+        self.assertEqual(decisions[0]["selected_translation"], "幂采样")
+
+    def test_request_llm_splits_candidates_into_batches(self):
+        agent = TerminologyAgent(
+            config={
+                "source_language": "en",
+                "target_language": "ch",
+                "llm_config": {
+                    "api_key": "test-key",
+                    "base_url": "https://api.deepseek.com/chat/completions",
+                    "model": "deepseek-chat",
+                },
+            },
+            project_dir="paper",
+            output_dir="unused",
+        )
+        candidates = [f"power sampling {index}" for index in range(25)]
+        batch_sizes = []
+        batch_terms = []
+
+        def fake_post(_url, **kwargs):
+            payload = json.loads(kwargs["json"]["messages"][1]["content"])
+            batch = payload["candidates"]
+            batch_sizes.append(len(batch))
+            batch_terms.extend(batch)
+            return _FakeResponse(json.dumps({
+                "decisions": [
+                    {
+                        "source_term": candidate,
+                        "selected_translation": f"翻译 {candidate}",
+                    }
+                    for candidate in batch
+                ]
+            }))
+
+        with patch("src.agents.tool_agents.terminology_agent.requests.post", side_effect=fake_post):
+            decisions = agent._request_llm_for_term_decisions(
+                candidates,
+                {"title": "Reasoning by Sampling"},
+                {candidate: [f"{candidate} works."] for candidate in candidates},
+                {},
+            )
+
+        self.assertEqual(batch_sizes, [10, 10, 5])
+        self.assertEqual(batch_terms, candidates)
+        self.assertEqual(
+            [decision["source_term"] for decision in decisions],
+            candidates,
+        )
+
+    def test_request_llm_logs_retry_attempts_and_trace_id(self):
+        agent = TerminologyAgent(
+            config={
+                "source_language": "en",
+                "target_language": "ch",
+                "llm_config": {
+                    "api_key": "test-key",
+                    "base_url": "https://api.deepseek.com/chat/completions",
+                    "model": "deepseek-chat",
+                },
+            },
+            project_dir="paper",
+            output_dir="unused",
+        )
+        logs = []
+        response = _FakeResponse(
+            json.dumps({
+                "decisions": [
+                    {
+                        "source_term": "power sampling",
+                        "selected_translation": "幂采样",
+                    }
+                ]
+            }),
+            headers={"x-request-id": "trace-success-123"},
+        )
+        attempts = 0
+
+        def fake_post(_url, **_kwargs):
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise requests.exceptions.ReadTimeout("temporary timeout")
+            return response
+
+        agent.log = lambda message, level="info": logs.append((level, message))
+        with patch("src.agents.tool_agents.terminology_agent.requests.post", side_effect=fake_post), \
+                patch("src.agents.tool_agents.terminology_agent.time.sleep"):
+            agent._request_llm_for_term_decisions(
+                ["power sampling"],
+                {"title": "Reasoning by Sampling"},
+                {"power sampling": ["Power sampling works."]},
+                {},
+            )
+
+        self.assertTrue(any("attempt 1/4 failed" in message for _, message in logs))
+        self.assertTrue(any("attempt 2/4 succeeded" in message for _, message in logs))
+        self.assertTrue(any("trace-success-123" in message for _, message in logs))
+
+    def test_request_llm_raises_after_three_retries(self):
+        agent = TerminologyAgent(
+            config={
+                "source_language": "en",
+                "target_language": "ch",
+                "llm_config": {
+                    "api_key": "test-key",
+                    "base_url": "https://api.deepseek.com/chat/completions",
+                    "model": "deepseek-chat",
+                },
+            },
+            project_dir="paper",
+            output_dir="unused",
+        )
+
+        with patch(
+            "src.agents.tool_agents.terminology_agent.requests.post",
+            side_effect=requests.exceptions.ReadTimeout("persistent timeout"),
+        ) as post, patch("src.agents.tool_agents.terminology_agent.time.sleep") as sleep:
+            with self.assertRaises(requests.exceptions.ReadTimeout):
+                agent._request_llm_for_term_decisions(
+                    ["power sampling"],
+                    {"title": "Reasoning by Sampling"},
+                    {"power sampling": ["Power sampling works."]},
+                    {},
+                )
+
+        self.assertEqual(post.call_count, 4)
+        self.assertEqual(sleep.call_count, 3)
 
     def test_extract_json_payload_handles_preface_uppercase_fence_and_trailing_text(self):
         agent = TerminologyAgent(
