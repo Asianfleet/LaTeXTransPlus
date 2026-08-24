@@ -27,16 +27,6 @@ from src.terminology import (
 )
 
 
-DOMAIN_WORDS = {
-    "algorithm",
-    "distribution",
-    "likelihood",
-    "model",
-    "reward",
-    "sampling",
-    "sampler",
-    "verifier",
-}
 STOP_PHRASES = {"this paper", "our method", "the result", "different tasks"}
 FUNCTION_WORDS = {
     "a",
@@ -508,8 +498,6 @@ class TerminologyAgent(BaseToolAgent):
 
         phrase = " ".join(phrase_tokens)
         if phrase in STOP_PHRASES:
-            return False
-        if not any(token in DOMAIN_WORDS for token in phrase_tokens):
             return False
         if any(token in LATEX_ARTIFACT_WORDS for token in phrase_tokens):
             return False

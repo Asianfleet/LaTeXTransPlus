@@ -79,14 +79,17 @@ class TerminologyAgentContextTests(unittest.TestCase):
             {
                 "part": "sec",
                 "id": "1",
-                "text": "Power sampling uses a power distribution. Power sampling improves reasoning.",
+                "text": (
+                    "Semantic analysis supports formatting evaluation. "
+                    "Semantic analysis improves evaluation."
+                ),
             }
         ]
 
         candidates = agent._extract_rule_candidates(records)
 
-        self.assertIn("power sampling", candidates)
-        self.assertIn("power distribution", candidates)
+        self.assertIn("semantic analysis", candidates)
+        self.assertIn("formatting evaluation", candidates)
         self.assertNotIn("this paper", candidates)
 
     def test_english_candidate_extraction_rejects_context_fragments(self):
