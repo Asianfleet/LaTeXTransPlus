@@ -816,12 +816,12 @@ def merge_tex_from_inputs(main_file_path):
         match = result.group(2)
         inputfilepath = os.path.join(dirname, match)
         if match.endswith('.tex'): #判断input的文件是否以.tex结尾
-            if os.path.exists(f'{inputfilepath}'):
+            if os.path.isfile(inputfilepath):
                 inputfilepath = f'{inputfilepath}'
             else:
                 raise FileNotFoundError(f"File not found: {inputfilepath}")
         else:
-            if os.path.exists(f'{inputfilepath}.tex'):
+            if os.path.isfile(f'{inputfilepath}.tex'):
                 inputfilepath = f'{inputfilepath}.tex'
             else:
                 raise FileNotFoundError(f"File not found: {inputfilepath}.tex")

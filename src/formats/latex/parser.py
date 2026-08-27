@@ -119,9 +119,9 @@ class LatexParser:
             match = result.group(4)
             inputfilepath = os.path.join(self.dir, match)
 
-            if os.path.exists(f'{inputfilepath}'):
+            if os.path.isfile(inputfilepath):
                 inputfilepath = f'{inputfilepath}'
-            elif os.path.exists(f'{inputfilepath}.tex'):
+            elif os.path.isfile(f'{inputfilepath}.tex'):
                 inputfilepath = f'{inputfilepath}.tex'
             else:
                 print(f"⚠️ Warning: File not found: {inputfilepath}.tex or {inputfilepath}")
