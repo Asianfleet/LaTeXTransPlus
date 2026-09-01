@@ -113,3 +113,15 @@ OK
 ## 顾虑
 
 按钮具体操作由 Task 5 接入；当前仅负责控件、选择身份和可用性计算。
+
+## 复审修复
+
+复审发现项目表同时处理 `MouseDown`、`Click` 和 `RowSelected` 会造成一次鼠标点击重复切换。现已统一由 `on_mouse_down` 完成切换，并由表格标记抑制对应的 `RowSelected`；新增真实 `pilot.click` 回归测试。
+
+验证命令：
+
+```powershell
+conda run -n latextrans python -m unittest tests.test_tui_app.TuiProjectManagerTests -v
+```
+
+结果：4 个测试通过。

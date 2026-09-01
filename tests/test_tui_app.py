@@ -1763,6 +1763,25 @@ class TuiProjectManagerTests(TuiAppTests):
             app._toggle_project_selection(0)
             self.assertEqual(table.get_cell_at((0, 0)), "[]")
 
+    async def test_project_table_mouse_click_selects_row_once(self):
+        """确认真实鼠标点击只切换一次，并将首行变为选中标记。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            task = TaskViewState(input_type="arxiv", inputs=["paper"], task_id="task-1", total=1)
+            task.projects.append(ProjectViewState(project_name="paper", status=ProjectStatus.COMPLETED))
+            app.tasks = [task]
+            app.refresh_task_table()
+            app.action_project_manager()
+            await pilot.pause()
+
+            table = app.query_one("#task-table", DataTable)
+            self.assertGreater(table.region.width, 0)
+            self.assertGreater(table.region.height, 0)
+            self.assertEqual(table.get_cell_at((0, 0)), "[]")
+            await pilot.click("#task-table", offset=(1, 1))
+            await pilot.pause()
+            self.assertEqual(table.get_cell_at((0, 0)), "[√]")
+
     async def test_project_action_buttons_require_all_selected_projects_to_match(self):
         """确认终止、删除、重译按钮遵循所有选中项目的状态约束。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)

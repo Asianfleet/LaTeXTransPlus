@@ -211,31 +211,16 @@ class ProjectManagementTable(DataTable):
     """项目管理表，单击数据行即可切换项目选择状态。"""
 
     def __init__(self, *args: object, **kwargs: object) -> None:
-        """初始化项目表的单击防抖状态。"""
+        """初始化项目表的行选择抑制状态。"""
         super().__init__(*args, **kwargs)
-        self._ignore_next_click = False
+
+        self._suppress_next_row_selected = False
 
     def on_mouse_down(self, event: events.MouseDown) -> None:
-        """在鼠标按下时立即切换项目行，保证单击即可选中。"""
+        """在鼠标按下时切换项目行，并抑制后续重复行事件。"""
         if self._toggle_clicked_row(event):
-            self._ignore_next_click = True
+            self._suppress_next_row_selected = True
             event.stop()
-
-    def on_click(self, event: events.Click) -> None:
-        """拦截默认行选择，避免单击触发两次切换。"""
-        if self._ignore_next_click:
-            self._ignore_next_click = False
-            event.stop()
-            return
-        if self._toggle_clicked_row(event):
-            event.stop()
-
-    async def _on_click(self, event: events.Click) -> None:
-        """在 DataTable 默认点击处理前切换项目选择状态。"""
-        if self._toggle_clicked_row(event):
-            event.stop()
-            return
-        await super()._on_click(event)
 
     def _toggle_clicked_row(self, event: events.MouseEvent) -> bool:
         """根据点击事件切换项目行，返回是否成功处理。"""
@@ -836,6 +821,10 @@ class LaTeXTransTuiApp(App[None]):
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """切换项目管理或 Zotero 结果行的选中状态。"""
         if event.data_table.id == "task-table":
+            table = event.data_table
+            if getattr(table, "_suppress_next_row_selected", False):
+                table._suppress_next_row_selected = False
+                return
             if event.cursor_row is not None:
                 self._toggle_project_selection(event.cursor_row)
             return
