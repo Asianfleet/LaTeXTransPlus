@@ -810,6 +810,15 @@ class LaTeXTransTuiApp(App[None]):
         delete.disabled = not all_stopped
         retry.disabled = not all_stopped
 
+    def _terminate_selected_projects(self) -> None:
+        """强制终止所有选中项目所属的翻译任务。"""
+        selected = self._selected_project_states()
+        if not selected:
+            return
+        task_ids = {task.task_id for task, _ in selected}
+        for task_id in task_ids:
+            self.terminate_task_process(task_id)
+
     def _delete_selected_projects(self) -> None:
         """删除所有选中的非运行项目及其输出目录和历史记录。"""
         selected = list(self._selected_project_states())

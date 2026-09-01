@@ -1914,6 +1914,19 @@ class TuiProjectManagerTests(TuiAppTests):
             self.assertEqual(len(app.tasks), 2)
             start.assert_called_once_with()
 
+    async def test_terminate_button_terminates_selected_task(self):
+        """确认点击终止按钮会强制终止选中项目所属任务。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="running", total=1)
+        task.projects.append(ProjectViewState(project_name="2508.18791", status=ProjectStatus.RUNNING))
+        async with app.run_test():
+            app.tasks = [task]
+            app.selected_project_keys = {(task.task_id, "2508.18791")}
+            app.refresh_task_table()
+            with patch.object(app, "terminate_task_process") as terminate:
+                app.on_button_pressed(Button.Pressed(app.query_one("#terminate-translation-button", Button)))
+            terminate.assert_called_once_with(task.task_id)
+
 
 class TuiZoteroImportTests(TuiAppTests):
     """验证 Zotero tab 能对选中项目的 PDF 调用 adapter 并反馈状态。"""
