@@ -326,6 +326,33 @@ class CoordinatorAgent:
         """
         return self.loop.run_until_complete(coro)
 
+    def _log(self, message: str, level: str = "info") -> None:
+        """将协调器状态写入项目日志，并按配置转发到控制台。"""
+        level_labels = {
+            "info": "INFO",
+            "debug": "DEBUG",
+            "warning": "WARNING",
+            "error": "ERROR",
+        }
+        if level not in level_labels:
+            raise ValueError(f"Unknown log level: {level}")
+
+        line = f"[CoordinatorAgent] [{level_labels[level]}] {message}"
+        log_callback = self.config.get("_project_log_callback")
+        if callable(log_callback):
+            log_callback(
+                {
+                    "agent_name": "CoordinatorAgent",
+                    "level": level,
+                    "message": message,
+                    "line": line,
+                }
+            )
+            if self.config.get("_project_log_print_console"):
+                print(line)
+            return
+        print(line)
+
     async def workflow_latextrans_async(self) -> Dict[str, Any]:
         """
         initializes the tool agent based on the provided agent name key.
@@ -425,14 +452,18 @@ class CoordinatorAgent:
         
             PDF_file_path = generator_agent.execute()
         except Exception as e:
-            print(f"🤖🚧 {self.name}: Failed to translated {os.path.basename(self.project_dir)}.{e}")
+            error = f"Generation failed ({type(e).__name__}): {e}"
+            self._log(
+                f"{self.name}: Failed to translate {os.path.basename(self.project_dir)}. {error}",
+                level="error",
+            )
             return build_workflow_result(
                 project_name=base_name,
                 pdf_path=None,
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
                 validation_failed=True,
-                error=str(e),
+                error=error,
                 project_terms_path=terminology_result.get("project_terms_path"),
                 project_terms_decisions_path=terminology_result.get("project_terms_decisions_path"),
             )
@@ -459,7 +490,11 @@ class CoordinatorAgent:
                 project_terms_decisions_path=terminology_result.get("project_terms_decisions_path"),
             )
         else:
-            print(f"🤖🚧 {self.name}: Failed to translated {os.path.basename(self.project_dir)}.")
+            self._log(
+                f"{self.name}: Failed to translate {os.path.basename(self.project_dir)}. "
+                "PDF generation returned no output path.",
+                level="error",
+            )
             return build_workflow_result(
                 project_name=base_name,
                 pdf_path=None,
@@ -546,16 +581,26 @@ class CoordinatorAgent:
         try:
             pdf_file_path = generator_agent.execute()
         except Exception as e:
+            error = f"Generation failed ({type(e).__name__}): {e}"
+            self._log(
+                f"{self.name}: Failed to translate {os.path.basename(self.project_dir)}. {error}",
+                level="error",
+            )
             return build_workflow_result(
                 project_name=base_name,
                 pdf_path=None,
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
                 validation_failed=True,
-                error=str(e),
+                error=error,
             )
 
         if not pdf_file_path:
+            self._log(
+                f"{self.name}: Failed to translate {os.path.basename(self.project_dir)}. "
+                "PDF generation returned no output path.",
+                level="error",
+            )
             return build_workflow_result(
                 project_name=base_name,
                 pdf_path=None,

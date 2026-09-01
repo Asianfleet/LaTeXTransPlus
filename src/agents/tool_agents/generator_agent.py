@@ -90,7 +90,14 @@ class GeneratorAgent(BaseToolAgent):
                                 output_latex_dir=transed_latex_dir,
                                 target_language=target_language
         )
-        latex_constructor.construct()
+        try:
+            latex_constructor.construct()
+        except Exception as exc:
+            self.log(
+                f"LaTeX reconstruction failed ({type(exc).__name__}): {exc}",
+                level="error",
+            )
+            raise
 
         with _suppress_stderr():
             self.progress_bar.progress(80)
@@ -102,7 +109,14 @@ class GeneratorAgent(BaseToolAgent):
             log_callback=self.config.get("_project_log_callback"),
             emit_console=bool(self.config.get("_project_log_print_console", True)),
         )
-        pdf_file = latex_compiler.compile()
+        try:
+            pdf_file = latex_compiler.compile()
+        except Exception as exc:
+            self.log(
+                f"PDF compilation failed ({type(exc).__name__}): {exc}",
+                level="error",
+            )
+            raise
 
         with _suppress_stderr():
             self.progress_bar.progress(90)
@@ -119,6 +133,7 @@ class GeneratorAgent(BaseToolAgent):
             self.log(f"✅ Successfully generated for {os.path.basename(self.project_dir)}.")
             return pdf_file
         else:
+            self.log("PDF compilation returned no output path.", level="error")
             with _suppress_stderr():
                 self.status_text.error("❌ Failed to compile PDF document.")
                 self.process_b.empty()

@@ -24,6 +24,24 @@ from src.agents.coordinator_agent import (
 
 
 class CoordinatorMessageTests(unittest.TestCase):
+    def test_coordinator_error_log_uses_project_log_callback(self):
+        events = []
+        agent = CoordinatorAgent(
+            config={"_project_log_callback": events.append},
+            project_dir=r"D:\tex source\paper",
+            output_dir=r"D:\repo\outputs",
+        )
+        try:
+            agent._log("Generation failed (ValueError): broken document", level="error")
+        finally:
+            agent.loop.close()
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["agent_name"], "CoordinatorAgent")
+        self.assertEqual(events[0]["level"], "error")
+        self.assertIn("ValueError", events[0]["line"])
+        self.assertIn("broken document", events[0]["line"])
+
     def test_filter_retryable_reports_keeps_errors_and_legacy_reports(self):
         reports = [
             {"severity": "warning", "retryable": False, "num_or_ph": "warning-only"},

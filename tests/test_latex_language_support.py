@@ -511,6 +511,40 @@ class GeneratorAgentLanguagePropagationTests(unittest.TestCase):
         self.assertEqual(constructor_languages, ["ja"])
         self.assertEqual(compiler_languages, ["ja"])
 
+    def test_generator_logs_reconstruction_exception_with_stage_and_type(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            source_dir = root / "paper"
+            source_dir.mkdir()
+            (source_dir / "main.tex").write_text("source", encoding="utf-8")
+            output_dir = root / "output"
+            output_dir.mkdir()
+            for filename in ("sections_map.json", "captions_map.json", "envs_map.json", "newcommands_map.json", "inputs_map.json"):
+                (output_dir / filename).write_text("[]", encoding="utf-8")
+
+            events = []
+
+            class FailingConstructor:
+                def __init__(self, **kwargs):
+                    pass
+
+                def construct(self):
+                    raise ValueError("Mismatched tags: begin vs end")
+
+            with patch("src.formats.latex.reconstruct.LatexConstructor", FailingConstructor), \
+                    patch("src.agents.tool_agents.generator_agent.st"):
+                agent = GeneratorAgent(
+                    config={"target_language": "ch", "_project_log_callback": events.append},
+                    project_dir=str(source_dir),
+                    output_dir=str(output_dir),
+                )
+                with self.assertRaisesRegex(ValueError, "Mismatched tags"):
+                    agent.execute()
+
+        lines = [event["line"] for event in events]
+        self.assertTrue(any("LaTeX reconstruction failed" in line for line in lines))
+        self.assertTrue(any("ValueError" in line and "Mismatched tags" in line for line in lines))
+
 
 if __name__ == "__main__":
     unittest.main()
