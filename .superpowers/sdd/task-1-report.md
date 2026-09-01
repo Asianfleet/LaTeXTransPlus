@@ -180,5 +180,4 @@ conda run -n latextrans python -m unittest tests.test_tui_state -v
 
 ## 疑虑
 
-无。应用层停止态集合仍需在后续任务中加入 `ProjectStatus.CANCELLED`，以便按钮启用规则识别取消项目。
-
+无。应用层停止态集合已在后续 App 任务中加入 `ProjectStatus.CANCELLED`。

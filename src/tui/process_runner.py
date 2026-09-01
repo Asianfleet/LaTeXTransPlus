@@ -96,4 +96,3 @@ def terminate_tui_task_process(handle: TuiTaskProcess) -> None:
         close_queue = getattr(handle.queue, "close", None)
         if close_queue is not None:
             close_queue()
-
