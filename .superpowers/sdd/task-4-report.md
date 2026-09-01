@@ -1,5 +1,28 @@
 # Task 4 实现报告
 
+> 以下保留共享工作区中此前写入的状态模型报告，未作删除。
+
+## 此前报告：状态模型和事件归并
+
+### 状态
+
+已完成。
+
+### TDD 证据
+
+此前已通过 `tests.test_tui_state` 及相关 TUI 测试集合验证状态模型实现。
+
+### 变更与实现说明
+
+- 新增 `ProjectStatus`、`ProjectViewState` 和 `TaskViewState`。
+- `TaskViewState.apply_event()` 归并 `run_start`、`project_start`、`project_complete`、`project_error` 事件。
+- 终态事件会重新统计完成与失败计数，避免重复事件导致计数漂移。
+
+### 自审与顾虑
+
+- 新增类、函数和测试方法均包含 docstring，未读取 secrets。
+- `running_project` 在项目完成或失败后保留最后启动项目名；未知事件只记录不改变派生状态。
+
 ## 状态
 
 已完成项目管理表多选列、顶部操作按钮和按钮状态规则。
