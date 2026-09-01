@@ -207,6 +207,59 @@ class ErrorReportsTable(DataTable):
                 app.call_after_refresh(app._refresh_selected_errors_table)
 
 
+class ProjectManagementTable(DataTable):
+    """项目管理表，单击数据行即可切换项目选择状态。"""
+
+    def __init__(self, *args: object, **kwargs: object) -> None:
+        """初始化项目表的单击防抖状态。"""
+        super().__init__(*args, **kwargs)
+        self._ignore_next_click = False
+
+    def on_mouse_down(self, event: events.MouseDown) -> None:
+        """在鼠标按下时立即切换项目行，保证单击即可选中。"""
+        if self._toggle_clicked_row(event):
+            self._ignore_next_click = True
+            event.stop()
+
+    def on_click(self, event: events.Click) -> None:
+        """拦截默认行选择，避免单击触发两次切换。"""
+        if self._ignore_next_click:
+            self._ignore_next_click = False
+            event.stop()
+            return
+        if self._toggle_clicked_row(event):
+            event.stop()
+
+    async def _on_click(self, event: events.Click) -> None:
+        """在 DataTable 默认点击处理前切换项目选择状态。"""
+        if self._toggle_clicked_row(event):
+            event.stop()
+            return
+        await super()._on_click(event)
+
+    def _toggle_clicked_row(self, event: events.MouseEvent) -> bool:
+        """根据点击事件切换项目行，返回是否成功处理。"""
+        meta = event.style.meta or {}
+        has_cell_meta = "row" in meta and "column" in meta
+        row_index = int(meta["row"]) if has_cell_meta else self._row_index_from_click(event)
+        column_index = int(meta["column"]) if has_cell_meta else 0
+        if not meta.get("out_of_bounds", False) and 0 <= row_index < self.row_count and column_index >= 0:
+            self.cursor_coordinate = Coordinate(row_index, column_index)
+            app = self.app
+            if hasattr(app, "_toggle_project_selection"):
+                app._toggle_project_selection(row_index)
+            self._scroll_cursor_into_view(animate=True)
+            return True
+        return False
+
+    def _row_index_from_click(self, event: events.MouseEvent) -> int:
+        """从 Textual 鼠标坐标推导项目表行索引。"""
+        row_index = int(event.y) - self.header_height
+        if 0 <= row_index < self.row_count or event.screen_y is None:
+            return row_index
+        return int(event.screen_y - self.region.y) - self.header_height
+
+
 class ZoteroResultsTable(DataTable):
     """Zotero 搜索结果表，单击数据行即可切换选中状态。"""
 
@@ -369,6 +422,16 @@ class LaTeXTransTuiApp(App[None]):
     #tasks,
     #detail {
         padding-top: 1;
+    }
+
+    #project-actions {
+        height: auto;
+        margin-bottom: 1;
+    }
+
+    #project-actions Button {
+        width: auto;
+        margin-right: 1;
     }
 
     #tex-preview-scroll {
@@ -537,6 +600,7 @@ class LaTeXTransTuiApp(App[None]):
     tasks: list[TaskViewState]
     selected_project_name: str | None = None
     selected_task_id: str | None = None
+    selected_project_keys: set[tuple[str, str]]
     zotero_adapter_factory = staticmethod(
         lambda api_key, local_api_base: ZoteroAdapter(
             api_key=api_key,
@@ -558,6 +622,7 @@ class LaTeXTransTuiApp(App[None]):
         self.tasks = []
         self.selected_project_name = None
         self.selected_task_id = None
+        self.selected_project_keys = set()
         self.load_history_on_mount = load_history_on_mount
         self.current_config: dict[str, object] = {}
         self.loading_config_form = False
@@ -617,7 +682,11 @@ class LaTeXTransTuiApp(App[None]):
                                 yield Button("导入", id="import-zotero-button", flat=True)
                             yield ZoteroResultsTable(id="zotero-results", cursor_type="row")
                 with Vertical(id=PAGE_TASKS):
-                    yield DataTable(id="task-table")
+                    with Horizontal(id="project-actions"):
+                        yield Button("终止翻译", id="terminate-translation-button", flat=True, disabled=True)
+                        yield Button("删除", id="delete-project-button", flat=True, disabled=True)
+                        yield Button("重新翻译", id="retry-translation-button", flat=True, disabled=True)
+                    yield ProjectManagementTable(id="task-table", cursor_type="row")
                 with Vertical(id=PAGE_CONFIG):
                     with ConfigTabbedContent(initial="config-form-tab", id="config-tabs"):
                         with TabPane("配置", id="config-form-tab"):
@@ -701,16 +770,59 @@ class LaTeXTransTuiApp(App[None]):
 
     def refresh_task_table(self) -> None:
         """Refresh the project management table from all known task states."""
-        table = self.query_one("#task-table", DataTable)
+        table = self.query_one("#task-table", ProjectManagementTable)
+        project_states = self._iter_project_states()
+        valid_keys = {(task.task_id, project.project_name) for task, project in project_states}
+        self.selected_project_keys.intersection_update(valid_keys)
         table.clear(columns=True)
-        table.add_columns("项目", "状态", "任务 id")
+        table.add_columns("选中", "项目", "状态", "任务 id")
 
-        for task, project in self._iter_project_states():
+        for task, project in project_states:
+            key = (task.task_id, project.project_name)
             table.add_row(
+                "[√]" if key in self.selected_project_keys else "[]",
                 project.project_name,
                 project.status.value,
                 task.task_id,
             )
+        self._refresh_project_action_buttons()
+
+    def _selected_project_states(self) -> list[tuple[TaskViewState, ProjectViewState]]:
+        """返回当前选中的任务和项目状态。"""
+        return [
+            (task, project)
+            for task, project in self._iter_project_states()
+            if (task.task_id, project.project_name) in self.selected_project_keys
+        ]
+
+    def _toggle_project_selection(self, row_index: int) -> None:
+        """切换项目管理表指定行的选择状态并刷新按钮。"""
+        project_states = self._iter_project_states()
+        if not 0 <= row_index < len(project_states):
+            return
+        task, project = project_states[row_index]
+        key = (task.task_id, project.project_name)
+        if key in self.selected_project_keys:
+            self.selected_project_keys.remove(key)
+        else:
+            self.selected_project_keys.add(key)
+        self.refresh_task_table()
+
+    def _refresh_project_action_buttons(self) -> None:
+        """根据全选项目状态更新终止、删除和重译按钮可用性。"""
+        try:
+            terminate = self.query_one("#terminate-translation-button", Button)
+            delete = self.query_one("#delete-project-button", Button)
+            retry = self.query_one("#retry-translation-button", Button)
+        except NoMatches:
+            return
+        selected = self._selected_project_states()
+        has_selection = bool(selected)
+        all_running = has_selection and all(project.status == ProjectStatus.RUNNING for _, project in selected)
+        all_stopped = has_selection and all(project.status != ProjectStatus.RUNNING for _, project in selected)
+        terminate.disabled = not all_running
+        delete.disabled = not all_stopped
+        retry.disabled = not all_stopped
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle sidebar project selection from the project list."""
@@ -722,7 +834,11 @@ class LaTeXTransTuiApp(App[None]):
             self.select_project(project.project_name, task.task_id)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """切换 Zotero 结果行的选中状态。"""
+        """切换项目管理或 Zotero 结果行的选中状态。"""
+        if event.data_table.id == "task-table":
+            if event.cursor_row is not None:
+                self._toggle_project_selection(event.cursor_row)
+            return
         if event.data_table.id != "zotero-results":
             return
         row_index = event.cursor_row
@@ -746,6 +862,15 @@ class LaTeXTransTuiApp(App[None]):
             self.auto_match_zotero_items()
         elif event.button.id == "import-zotero-button":
             self.import_selected_project_to_zotero()
+        elif event.button.id == "terminate-translation-button":
+            if hasattr(self, "_terminate_selected_projects"):
+                self._terminate_selected_projects()
+        elif event.button.id == "delete-project-button":
+            if hasattr(self, "_delete_selected_projects"):
+                self._delete_selected_projects()
+        elif event.button.id == "retry-translation-button":
+            if hasattr(self, "_retry_selected_projects"):
+                self._retry_selected_projects()
 
     def on_input_changed(self, event: Input.Changed) -> None:
         """配置输入框变化时立即保存并刷新预览。"""

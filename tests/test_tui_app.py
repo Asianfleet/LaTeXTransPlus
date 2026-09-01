@@ -488,13 +488,14 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
             table = app.query_one("#task-table", DataTable)
 
             self.assertEqual(len(app.tasks), 1)
-            self.assertEqual(str(table.ordered_columns[0].label), "项目")
-            self.assertEqual(str(table.ordered_columns[1].label), "状态")
-            self.assertEqual(str(table.ordered_columns[2].label), "任务 id")
-            self.assertEqual(len(table.ordered_columns), 3)
+            self.assertEqual(str(table.ordered_columns[0].label), "选中")
+            self.assertEqual(str(table.ordered_columns[1].label), "项目")
+            self.assertEqual(str(table.ordered_columns[2].label), "状态")
+            self.assertEqual(str(table.ordered_columns[3].label), "任务 id")
+            self.assertEqual(len(table.ordered_columns), 4)
             self.assertEqual(table.row_count, 2)
-            self.assertEqual(table.get_cell_at((0, 2)), task.task_id)
-            self.assertEqual(table.get_cell_at((1, 2)), task.task_id)
+            self.assertEqual(table.get_cell_at((0, 3)), task.task_id)
+            self.assertEqual(table.get_cell_at((1, 3)), task.task_id)
 
     async def test_sidebar_marks_projects_from_running_task_orange(self):
         """确认左侧项目属于进行中任务时用橙色文字展示。"""
@@ -1292,8 +1293,8 @@ class TuiResultViewsTests(TuiAppTests):
 
             table = app.query_one("#task-table", DataTable)
             self.assertEqual(table.row_count, 1)
-            self.assertEqual(table.get_cell_at((0, 0)), "paper")
-            self.assertEqual(table.get_cell_at((0, 1)), "completed")
+            self.assertEqual(table.get_cell_at((0, 1)), "paper")
+            self.assertEqual(table.get_cell_at((0, 2)), "completed")
 
     async def test_refresh_project_list_adds_selectable_items(self):
         """确认侧栏项目列表会展示当前任务下的项目。"""
@@ -1732,6 +1733,79 @@ class TuiResultViewsTests(TuiAppTests):
                 self.assertEqual(terms_table.row_count, 1)
                 self.assertEqual(terms_table.get_cell_at((0, 0)), "Graph")
                 self.assertEqual(terms_table.get_cell_at((0, 1)), "图")
+
+
+class TuiProjectManagerTests(TuiAppTests):
+    """验证项目管理表的多选和批量操作按钮状态。"""
+
+    def _task_with_projects(self) -> tuple[TaskViewState, TaskViewState]:
+        """构造一个包含运行项目和已完成项目的任务集合。"""
+        running = TaskViewState(input_type="arxiv", inputs=["running"], task_id="task-running", total=1)
+        running.projects.append(ProjectViewState(project_name="running", status=ProjectStatus.RUNNING))
+        completed = TaskViewState(input_type="arxiv", inputs=["done"], task_id="task-done", total=1)
+        completed.projects.append(ProjectViewState(project_name="done", status=ProjectStatus.COMPLETED))
+        return running, completed
+
+    async def test_project_table_has_selection_column_and_toggles_rows(self):
+        """确认项目表首列为选择标记，点击同一行可切换选中状态。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            running, completed = self._task_with_projects()
+            app.tasks = [running, completed]
+            app.refresh_task_table()
+
+            table = app.query_one("#task-table", DataTable)
+            self.assertEqual([str(column.label) for column in table.ordered_columns], ["选中", "项目", "状态", "任务 id"])
+            self.assertEqual(table.get_cell_at((0, 0)), "[]")
+
+            app._toggle_project_selection(0)
+            self.assertEqual(table.get_cell_at((0, 0)), "[√]")
+            app._toggle_project_selection(0)
+            self.assertEqual(table.get_cell_at((0, 0)), "[]")
+
+    async def test_project_action_buttons_require_all_selected_projects_to_match(self):
+        """确认终止、删除、重译按钮遵循所有选中项目的状态约束。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            running, completed = self._task_with_projects()
+            app.tasks = [running, completed]
+            app.refresh_task_table()
+            terminate = app.query_one("#terminate-translation-button", Button)
+            delete = app.query_one("#delete-project-button", Button)
+            retry = app.query_one("#retry-translation-button", Button)
+
+            self.assertTrue(terminate.disabled)
+            self.assertTrue(delete.disabled)
+            self.assertTrue(retry.disabled)
+
+            app._toggle_project_selection(0)
+            self.assertFalse(terminate.disabled)
+            self.assertTrue(delete.disabled)
+            self.assertTrue(retry.disabled)
+
+            app._toggle_project_selection(0)
+            app._toggle_project_selection(1)
+            self.assertTrue(terminate.disabled)
+            self.assertFalse(delete.disabled)
+            self.assertFalse(retry.disabled)
+
+            app._toggle_project_selection(0)
+            self.assertTrue(terminate.disabled)
+            self.assertTrue(delete.disabled)
+            self.assertTrue(retry.disabled)
+
+    async def test_refresh_task_table_preserves_existing_project_selection(self):
+        """确认刷新表格后保留仍存在项目的选择身份并清理失效身份。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            running, completed = self._task_with_projects()
+            app.tasks = [running, completed]
+            app.selected_project_keys = {(running.task_id, "running"), ("missing", "gone")}
+            app.refresh_task_table()
+
+            self.assertEqual(app.selected_project_keys, {(running.task_id, "running")})
+            table = app.query_one("#task-table", DataTable)
+            self.assertEqual(table.get_cell_at((0, 0)), "[√]")
 
 
 class TuiZoteroImportTests(TuiAppTests):
