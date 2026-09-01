@@ -1096,6 +1096,74 @@ class TuiTaskEventTests(TuiAppTests):
             self.assertEqual(app.current_task.completed, 1)
             self.assertEqual(app.current_task.total, 1)
 
+    async def test_process_task_events_update_state(self):
+        """确认进程队列事件会更新任务状态并注册进程句柄。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        handle = Mock()
+        handle.process.is_alive.return_value = False
+        with patch("src.tui.app.start_tui_task_process", return_value=handle) as start_process, \
+            patch("src.tui.app.drain_process_messages", side_effect=[
+                [("event", {"type": "project_start", "project_name": "2508.18791"})],
+                [("event", {"type": "project_complete", "project_name": "2508.18791"})],
+                [],
+            ]):
+            async with app.run_test() as pilot:
+                task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-process")
+                app.current_task = task
+                app.tasks = [task]
+                app.start_current_task()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+        start_process.assert_called_once()
+        self.assertEqual(task.projects[0].status, ProjectStatus.COMPLETED)
+        self.assertNotIn(task.task_id, app.task_processes)
+
+    async def test_process_error_marks_running_project_failed_and_refreshes(self):
+        """确认子进程异常会将运行项目标记失败并刷新任务表。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        handle = Mock()
+        handle.process.is_alive.return_value = False
+        with patch("src.tui.app.start_tui_task_process", return_value=handle), \
+            patch("src.tui.app.drain_process_messages", side_effect=[
+                [("event", {"type": "project_start", "project_name": "2508.18791"})],
+                [("error", {"error": "child failed"})],
+                [],
+            ]), patch.object(app, "refresh_task_table") as refresh_table:
+            async with app.run_test() as pilot:
+                task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-error")
+                app.current_task = task
+                app.tasks = [task]
+                app.start_current_task()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+        self.assertEqual(task.projects[0].status, ProjectStatus.FAILED)
+        self.assertEqual(task.failed, 1)
+        refresh_table.assert_called()
+
+    async def test_terminate_task_marks_cancelled_and_ignores_late_completion(self):
+        """确认强制终止调用 terminate，且迟到完成事件不会覆盖 cancelled。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        handle = Mock()
+        handle.process.is_alive.return_value = True
+        async with app.run_test():
+            task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-cancel", total=1)
+            task.projects.append(ProjectViewState(project_name="2508.18791", status=ProjectStatus.RUNNING))
+            app.current_task = task
+            app.tasks = [task]
+            app.task_processes[task.task_id] = handle
+
+            with patch("src.tui.app.terminate_tui_task_process") as terminate_process:
+                app.terminate_task_process(task.task_id)
+            app.handle_runtime_event(
+                {"type": "project_complete", "project_name": "2508.18791"},
+                task,
+            )
+
+        terminate_process.assert_called_once_with(handle)
+        self.assertEqual(task.projects[0].status, ProjectStatus.CANCELLED)
+
     async def test_stale_worker_events_do_not_update_new_current_task(self):
         """确认旧任务 worker 回调不会污染新的 current_task。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)

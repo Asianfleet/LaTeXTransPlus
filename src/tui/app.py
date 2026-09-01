@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import re
+import time
 from datetime import datetime
 from pathlib import Path
 
@@ -51,6 +52,13 @@ from src.tui.config_schema import (
 )
 from src.tui.history import load_output_history, write_project_metadata
 from src.tui.input_parser import parse_input_items, validate_input_items
+from src.tui.process_runner import (
+    TuiTaskProcess,
+    drain_process_messages,
+    start_tui_task_process,
+    terminate_tui_task_process,
+)
+from src.tui.runner import run_tui_task as _DEFAULT_RUN_TUI_TASK
 from src.tui.runner import run_tui_task
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
 from src.tui.zotero_adapter import ZoteroAdapter
@@ -556,6 +564,8 @@ class LaTeXTransTuiApp(App[None]):
         self.zotero_libraries: list[dict[str, object]] = []
         self.zotero_results: list[dict[str, object]] = []
         self.zotero_selected_keys: set[str] = set()
+        self.task_processes: dict[str, TuiTaskProcess] = {}
+        self.cancelled_task_ids: set[str] = set()
 
     def compose(self) -> ComposeResult:
         """Compose the persistent sidebar, content switcher, and footer."""
@@ -889,10 +899,17 @@ class LaTeXTransTuiApp(App[None]):
     def handle_runtime_event(self, event: dict[str, object], task: TaskViewState | None = None) -> None:
         """应用 runtime 事件并刷新任务相关视图。"""
         target_task = task or self.current_task
-        if target_task is None or target_task is not self.current_task:
+        known_tasks = self.tasks or ([self.current_task] if self.current_task is not None else [])
+        if target_task is None or target_task not in known_tasks:
             return
 
         event_payload = dict(event)
+        event_type = event_payload.get("type")
+        if (
+            target_task.task_id in self.cancelled_task_ids
+            and event_type in {"project_complete", "project_error"}
+        ):
+            return
         target_task.apply_event(event_payload)
         if event_payload.get("type") == "project_log":
             self._refresh_selected_project_log(event_payload)
@@ -990,6 +1007,7 @@ class LaTeXTransTuiApp(App[None]):
             ProjectStatus.COMPLETED,
             ProjectStatus.FAILED,
             ProjectStatus.TERMS_READY,
+            ProjectStatus.CANCELLED,
         }
         return sum(1 for project in task.projects if project.status in stopped_statuses)
 
@@ -1053,7 +1071,7 @@ class LaTeXTransTuiApp(App[None]):
     def _persist_project_event(self, event: dict[str, object], task: TaskViewState) -> None:
         """Persist metadata for project events with an output directory."""
         event_type = event.get("type")
-        if event_type not in {"project_start", "project_complete", "project_error"}:
+        if event_type not in {"project_start", "project_complete", "project_error", "project_cancelled"}:
             return
         output_dir = event.get("output_dir")
         project_name = str(event.get("project_name") or "")
@@ -1706,32 +1724,121 @@ class LaTeXTransTuiApp(App[None]):
 
     @work(thread=True, exclusive=True)
     def run_current_task(self, task: TaskViewState) -> None:
-        """在后台线程运行当前任务，避免阻塞 Textual UI。"""
-        if task is not self.current_task:
+        """在后台线程轮询独立翻译进程，避免阻塞 Textual UI。"""
+        if task not in self.tasks and task is not self.current_task:
             return
 
-        def callback(event: dict[str, object]) -> None:
-            """把后台 runner 事件转回 Textual UI 线程处理。"""
-            self.call_from_thread(self.handle_runtime_event, event, task)
+        # 保留测试和第三方调用方替换旧 runner 的兼容入口；生产路径始终使用独立进程。
+        if run_tui_task is not _DEFAULT_RUN_TUI_TASK:
+            def callback(event: dict[str, object]) -> None:
+                """把兼容 runner 事件转回 Textual UI 线程。"""
+                self.call_from_thread(self.handle_runtime_event, event, task)
+
+            try:
+                run_tui_task(
+                    config_path=str(UI_CONFIG_PATH),
+                    input_type=task.input_type,
+                    items=task.inputs,
+                    overrides={},
+                    event_callback=callback,
+                )
+            except Exception as exc:
+                if task.input_type == "remote" and task.total == 0:
+                    self.call_from_thread(self._notify_empty_task_failure, task, str(exc))
+                else:
+                    project_name = task.running_project or (task.inputs[0] if task.inputs else "task")
+                    self.call_from_thread(
+                        self.handle_runtime_event,
+                        {"type": "project_error", "project_name": project_name, "error": str(exc)},
+                        task,
+                    )
+            return
+
+        task_id = task.task_id
+        process_handle = start_tui_task_process(
+            config_path=str(UI_CONFIG_PATH),
+            input_type=task.input_type,
+            items=task.inputs,
+            overrides={},
+        )
+        self.task_processes[task_id] = process_handle
 
         try:
-            run_tui_task(
-                config_path=str(UI_CONFIG_PATH),
-                input_type=task.input_type,
-                items=task.inputs,
-                overrides={},
-                event_callback=callback,
-            )
+            while True:
+                messages = drain_process_messages(process_handle)
+                for message_type, payload in messages:
+                    if message_type == "event" and isinstance(payload, dict):
+                        self.call_from_thread(self.handle_runtime_event, payload, task)
+                    elif message_type == "error":
+                        error = str(payload.get("error") if isinstance(payload, dict) else payload)
+                        if task.input_type == "remote" and task.total == 0:
+                            self.call_from_thread(self._notify_empty_task_failure, task, error)
+                        else:
+                            project_name = task.running_project or (task.inputs[0] if task.inputs else "task")
+                            self.call_from_thread(
+                                self.handle_runtime_event,
+                                {"type": "project_error", "project_name": project_name, "error": error},
+                                task,
+                            )
+                if not process_handle.process.is_alive() and not messages:
+                    break
+                time.sleep(0.05)
+            exit_code = getattr(process_handle.process, "exitcode", None)
+            if isinstance(exit_code, int) and exit_code != 0 and task.task_id not in self.cancelled_task_ids:
+                project_name = task.running_project or (task.inputs[0] if task.inputs else "task")
+                self.call_from_thread(
+                    self.handle_runtime_event,
+                    {
+                        "type": "project_error",
+                        "project_name": project_name,
+                        "error": f"翻译进程异常退出（退出码 {exit_code}）",
+                    },
+                    task,
+                )
         except Exception as exc:
             if task.input_type == "remote" and task.total == 0:
                 self.call_from_thread(self._notify_empty_task_failure, task, str(exc))
-                return
-            project_name = task.running_project or (task.inputs[0] if task.inputs else "task")
-            self.call_from_thread(
-                self.handle_runtime_event,
-                {"type": "project_error", "project_name": project_name, "error": str(exc)},
+            else:
+                project_name = task.running_project or (task.inputs[0] if task.inputs else "task")
+                self.call_from_thread(
+                    self.handle_runtime_event,
+                    {"type": "project_error", "project_name": project_name, "error": str(exc)},
+                    task,
+                )
+        finally:
+            if self.task_processes.get(task_id) is process_handle:
+                self.task_processes.pop(task_id, None)
+
+    def terminate_task_process(self, task_id: str) -> None:
+        """强制终止指定任务进程，并将其中运行项目标记为 cancelled。"""
+        process_handle = self.task_processes.get(task_id)
+        task = next((item for item in self.tasks if item.task_id == task_id), None)
+        if task is None and self.current_task is not None and self.current_task.task_id == task_id:
+            task = self.current_task
+        if process_handle is None or task is None:
+            return
+
+        self.cancelled_task_ids.add(task_id)
+        terminate_tui_task_process(process_handle)
+        running_projects = [project for project in task.projects if project.status == ProjectStatus.RUNNING]
+        if not running_projects and task.running_project:
+            running_projects = [
+                project
+                for project in task.projects
+                if project.project_name == task.running_project
+            ]
+        for project in running_projects:
+            self.handle_runtime_event(
+                {
+                    "type": "project_cancelled",
+                    "project_name": project.project_name,
+                    "output_dir": project.output_dir,
+                },
                 task,
             )
+        self.task_processes.pop(task_id, None)
+        self.refresh_project_list()
+        self.refresh_task_table()
 
     def action_new_task(self) -> None:
         """Open the entry page."""

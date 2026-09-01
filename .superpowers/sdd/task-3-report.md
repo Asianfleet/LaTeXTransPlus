@@ -1,76 +1,36 @@
-# Task 3 Report: 输入解析和校验
+# Task 3 报告：TUI 进程事件轮询
 
 ## 状态
 
-已完成 SDD Task 3：新增 TUI 输入类型、批量文本解析和按输入类型校验逻辑。
+已完成 Task 3。`LaTeXTransTuiApp` 现在通过 `process_runner` 启动独立翻译进程，在 Textual worker 中轮询消息队列，并将事件安全地转回 UI 线程。
 
 ## TDD 证据
 
-### RED
+先新增以下失败测试并运行确认失败：
 
-先创建 `tests/test_tui_input_parser.py`，覆盖：
+- `test_process_task_events_update_state`
+- `test_process_error_marks_running_project_failed_and_refreshes`
+- `test_terminate_task_marks_cancelled_and_ignores_late_completion`
 
-- 逗号和换行批量拆分
-- arXiv ID 和 arXiv URL 接受
-- arXiv 输入拒绝非 arXiv URL
-- local 输入拒绝 HTTP/HTTPS URL
-- remote 输入接受 HTTP/HTTPS URL
-- remote 输入拒绝非 HTTP/HTTPS URL
-
-运行命令：
+初次运行因 `src.tui.app` 尚无 `start_tui_task_process` 等接口而失败，符合预期。实现后运行：
 
 ```powershell
-conda run -n latextrans python -m unittest tests.test_tui_input_parser
+conda run -n latextrans python -m unittest tests.test_tui_app.TuiTaskEventTests.test_process_task_events_update_state tests.test_tui_app.TuiTaskEventTests.test_process_error_marks_running_project_failed_and_refreshes tests.test_tui_app.TuiTaskEventTests.test_terminate_task_marks_cancelled_and_ignores_late_completion tests.test_tui_app.TuiTaskEventTests.test_stale_worker_events_do_not_update_new_current_task tests.test_tui_app.TuiTaskEventTests.test_worker_exception_is_reported_in_current_task -v
 ```
 
-结果：失败，符合预期。
+结果：`Ran 5 tests ... OK`。
 
-关键错误：
+另外验证了两个 remote prepare 异常回归测试，结果 `Ran 2 tests ... OK`。
 
-```text
-ModuleNotFoundError: No module named 'src.tui.input_parser'
-FAILED (errors=1)
-```
+## 实现内容
 
-### GREEN
-
-随后创建 `src/tui/input_parser.py`，实现：
-
-- `InputType = Literal["arxiv", "local", "remote"]`
-- `parse_input_items(input_type, text)`
-- `validate_input_items(input_type, items)`
-
-再次运行：
-
-```powershell
-conda run -n latextrans python -m unittest tests.test_tui_input_parser
-```
-
-结果：
-
-```text
-Ran 6 tests in 0.000s
-OK
-```
-
-## 变更文件
-
-- `src/tui/input_parser.py`
-- `tests/test_tui_input_parser.py`
-- `.superpowers/sdd/task-3-report.md`
-
-未修改 `.superpowers/sdd/progress.md`。
-
-## 自审
-
-- 新增函数均包含 docstring。
-- 新增测试方法均包含 docstring。
-- 仅实现 brief 指定接口，没有扩展 UI 或调用链。
-- 校验错误文本与 brief 预期保持一致。
-- 使用 `conda run -n latextrans python -m unittest tests.test_tui_input_parser` 完成 RED/GREEN 验证。
+- 初始化 `task_processes` 和 `cancelled_task_ids` 注册表。
+- `run_current_task` 使用 `start_tui_task_process`、`drain_process_messages` 轮询事件，处理子进程错误和异常退出，并在完成后清理句柄。
+- `handle_runtime_event` 接受任务历史中的任意任务；取消任务后忽略迟到的完成/失败事件。
+- 新增 `terminate_task_process`，调用强制终止接口，将运行项目发送 `project_cancelled` 事件并刷新视图。
+- `CANCELLED` 纳入停止态集合；取消事件可持久化项目元数据。
+- 保留测试替换旧 `run_tui_task` 的兼容入口，不影响生产进程隔离路径。
 
 ## 顾虑
 
-- `local` 类型首版仅拒绝 HTTP/HTTPS URL，不检查路径是否实际存在；这与 brief 给出的实现范围一致。
-- `remote` 类型仅校验 URL scheme，不校验归档扩展名；测试名称包含 archive，但 brief 的期望实现只要求 HTTP/HTTPS。
-- arXiv URL 校验接受所有 `*.arxiv.org` 或 `arxiv.org` HTTP/HTTPS URL，不限制路径为 `/abs/`；这是按 brief 示例实现保持的宽松策略。
+完整 `tests.test_tui_app` 在当前环境中运行超过一分钟无输出，已中止；聚焦测试均已通过。完整测试应由主代理在所有 TUI 管理界面改动合并后统一执行。
