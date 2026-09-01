@@ -159,15 +159,12 @@ user_term = ""
 
 ```toml
 [llm_config]
-model = "deepseek-v4-flash"
-api_key_env = "DEEPSEEK_API_KEY"
-base_url = "https://api.deepseek.com/chat/completions"
-custom_json = ""
+profile = "deepseek"
 ```
 
-`api_key_env` 是保存 API key 的环境变量名。也可以通过 CLI 的 `--model`、`--url` 和 `--key` 覆盖模型配置。
+`config/provider/deepseek.toml` 会提供模型接口配置，文件根部填写 `model`、`api_key_env`、`base_url` 和 `custom_json`。也可以通过 CLI 的 `--model`、`--url` 和 `--key` 覆盖模型配置。
 
-`custom_json` 是追加到每次 LLM 请求顶层的自定义 JSON object，Parser、Translator 和 Terminology
+provider 文件中的 `custom_json` 是追加到每次 LLM 请求顶层的自定义 JSON object，Parser、Translator 和 Terminology
 请求都会使用它。可以用它开启供应商支持的思考模式，例如硅基流动：
 
 ```toml

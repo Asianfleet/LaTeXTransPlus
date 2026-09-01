@@ -8,7 +8,7 @@ from typing import Any, Callable, ContextManager, Dict, Iterable, List, Optional
 import toml
 
 from src.agents.coordinator_agent import CoordinatorAgent
-from src.config import parse_custom_json, resolve_llm_api_key
+from src.config import load_llm_profile, parse_custom_json, resolve_llm_api_key
 from src.formats.latex.utils import (
     batch_download_arxiv_tex,
     extract_arxiv_ids,
@@ -137,7 +137,8 @@ def load_runtime_config(
     config = toml.load(config_path)
     overrides = overrides or {}
 
-    llm_config = config.setdefault("llm_config", {})
+    load_llm_profile(config, config_path)
+    llm_config = config["llm_config"]
     if "custom_json" in llm_config:
         llm_config["custom_json"] = parse_custom_json(llm_config["custom_json"])
     if overrides.get("url"):

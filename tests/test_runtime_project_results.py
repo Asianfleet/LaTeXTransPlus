@@ -20,13 +20,21 @@ class RuntimeProjectResultTests(unittest.TestCase):
             config_path = Path(tmp_dir) / "config.toml"
             config_path.write_text(
                 """
-[llm_config]
-model = "test-model"
-api_key = "test-key"
-base_url = "https://example.test/v1/chat/completions"
-
 paper_list = []
 retranslate_with_terms = false
+
+[llm_config]
+profile = "test"
+""".strip(),
+                encoding="utf-8",
+            )
+            (Path(tmp_dir) / "provider").mkdir()
+            (Path(tmp_dir) / "provider" / "test.toml").write_text(
+                """
+model = "test-model"
+api_key_env = ""
+base_url = "https://example.test/v1/chat/completions"
+custom_json = ""
 """.strip(),
                 encoding="utf-8",
             )
@@ -50,15 +58,13 @@ retranslate_with_terms = false
             project_dir.mkdir()
             config_path.write_text(
                 f"""
-[llm_config]
-model = "test-model"
-api_key = "test-key"
-base_url = "https://example.test/v1/chat/completions"
-
 paper_list = []
 tex_sources_dir = {str(source_dir)!r}
 output_dir = {str(output_dir)!r}
 target_language = "ch"
+
+[llm_config]
+profile = "test"
 """.strip(),
                 encoding="utf-8",
             )

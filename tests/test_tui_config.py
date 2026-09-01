@@ -51,11 +51,11 @@ class TuiConfigTests(unittest.TestCase):
             self.assertEqual(loaded["target_language"], "fr")
             self.assertTrue(loaded["ui"]["dark"])
 
-    def test_template_declares_custom_llm_json(self):
-        """模板应提供可编辑的 LLM 自定义 JSON 配置项。"""
+    def test_template_declares_llm_profile(self):
+        """模板应提供 LLM profile 配置项。"""
         template = Path("config/template.toml").read_text(encoding="utf-8")
 
-        self.assertIn('custom_json = ""', template)
+        self.assertIn('profile = "default"', template)
 
 
 if __name__ == "__main__":

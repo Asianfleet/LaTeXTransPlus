@@ -1,6 +1,9 @@
 import json
 import os
+from pathlib import Path
 from typing import Any, Dict, NoReturn
+
+import toml
 
 
 LLM_RESERVED_FIELDS = {
@@ -10,6 +13,7 @@ LLM_RESERVED_FIELDS = {
     "max_tokens",
     "max_new_tokens",
 }
+LLM_PROFILE_FIELDS = ("model", "api_key_env", "base_url", "custom_json")
 
 
 def _reject_json_constant(value: str) -> NoReturn:
@@ -62,6 +66,54 @@ def merge_llm_payload(
     merged = dict(payload)
     merged.update(custom_json)
     return merged
+
+
+def load_llm_profile(config: Dict[str, Any], config_path: str) -> Dict[str, Any]:
+    """从主配置旁的 provider 目录加载并展开唯一的 LLM profile。"""
+    llm_config = config.get("llm_config")
+    if not isinstance(llm_config, dict):
+        raise ValueError("[llm_config] must contain only a non-empty string profile.")
+
+    unsupported = sorted(set(llm_config) - {"profile"})
+    if unsupported:
+        fields = ", ".join(unsupported)
+        raise ValueError(
+            f"[llm_config] only supports profile; unsupported field(s): {fields}."
+        )
+
+    profile = llm_config.get("profile")
+    if not isinstance(profile, str) or not profile.strip():
+        raise ValueError("llm_config.profile must be a non-empty string.")
+    profile = profile.strip()
+    profile_name = Path(profile)
+    if profile_name.name != profile or profile in {".", ".."}:
+        raise ValueError("llm_config.profile must be a provider file name without a path.")
+
+    provider_path = Path(config_path).resolve().parent / "provider" / f"{profile}.toml"
+    if not provider_path.is_file():
+        raise FileNotFoundError(f"LLM provider profile not found: {provider_path}")
+    provider_config = toml.load(provider_path)
+    if not isinstance(provider_config, dict):
+        raise ValueError(f"LLM provider profile must be a TOML table: {provider_path}")
+    if "llm_config" in provider_config:
+        raise ValueError(
+            f"LLM provider profile must define fields at the TOML root: {provider_path}"
+        )
+
+    missing = [field for field in LLM_PROFILE_FIELDS if field not in provider_config]
+    if missing:
+        raise ValueError(
+            f"LLM provider profile is missing field(s): {', '.join(missing)}."
+        )
+    for field in LLM_PROFILE_FIELDS:
+        if not isinstance(provider_config[field], str):
+            raise ValueError(f"LLM provider field '{field}' must be a string.")
+
+    config["llm_config"] = {"profile": profile}
+    config["llm_config"].update(
+        {field: provider_config[field] for field in LLM_PROFILE_FIELDS}
+    )
+    return config
 
 
 def resolve_llm_api_key(config: Dict[str, Any]) -> Dict[str, Any]:

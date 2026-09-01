@@ -9,3 +9,5 @@ config/ui.toml
 outputs
 tex source
 LaTeXTrans.egg-info/
+config/provider/*
+!config/provider/default.toml

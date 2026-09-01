@@ -159,16 +159,13 @@ Configure the model endpoint under `[llm_config]`:
 
 ```toml
 [llm_config]
-model = "deepseek-v4-flash"
-api_key_env = "DEEPSEEK_API_KEY"
-base_url = "https://api.deepseek.com/chat/completions"
-custom_json = ""
+profile = "deepseek"
 ```
 
-`api_key_env` names the environment variable that stores your API key. You can also override model settings from the CLI with `--model`, `--url`, and `--key`.
+`config/provider/deepseek.toml` provides the model endpoint configuration. Put `model`, `api_key_env`, `base_url`, and `custom_json` at the file root. You can also override model settings from the CLI with `--model`, `--url`, and `--key`.
 
-`custom_json` is a JSON object of additional top-level fields applied to every Parser, Translator, and
-Terminology request. Use it for provider-specific reasoning controls, for example with SiliconFlow:
+The provider file `custom_json` field is a JSON object of additional top-level fields applied to every Parser,
+Translator, and Terminology request. Use it for provider-specific reasoning controls, for example with SiliconFlow:
 
 ```toml
 custom_json = '{"enable_thinking": true}'

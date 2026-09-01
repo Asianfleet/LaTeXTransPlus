@@ -68,10 +68,7 @@ CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("validation", "issues", "placeholder_mismatch", "retryable"), "占位符不匹配可重试", "switch", "校验", True),
     ConfigField(("validation", "issues", "bracket_mismatch", "severity"), "括号不匹配级别", "select", "校验", "error", SEVERITY_OPTIONS),
     ConfigField(("validation", "issues", "bracket_mismatch", "retryable"), "括号不匹配可重试", "switch", "校验", True),
-    ConfigField(("llm_config", "model"), "模型", "input", "LLM", ""),
-    ConfigField(("llm_config", "api_key_env"), "API key 环境变量", "input", "LLM", ""),
-    ConfigField(("llm_config", "base_url"), "接口地址", "input", "LLM", ""),
-    ConfigField(("llm_config", "custom_json"), "自定义请求 JSON", "textarea", "LLM", ""),
+    ConfigField(("llm_config", "profile"), "LLM 配置 profile", "input", "LLM", ""),
     ConfigField(("zotero", "local_api_base"), "Zotero 本地 API", "input", "Zotero", "http://127.0.0.1:23119/api"),
     ConfigField(("zotero", "web_api_key_env"), "Zotero Web API key 环境变量", "input", "Zotero", "ZOTERO_API_KEY"),
 )
@@ -137,6 +134,8 @@ def normalized_config_from_form(
 ) -> dict[str, Any]:
     """把表单字段值合并回配置副本，保留不可编辑元数据。"""
     config = copy.deepcopy(base_config)
+    if "llm_config" in config:
+        config["llm_config"] = {}
     for field in CONFIG_FIELDS:
         set_config_value(config, field.path, values[field.path])
     return config

@@ -681,9 +681,7 @@ class TuiConfigPageTests(TuiAppTests):
                 },
             },
             "llm_config": {
-                "model": "deepseek-v4-flash",
-                "api_key_env": "DEEPSEEK_API_KEY",
-                "base_url": "https://api.deepseek.com/chat/completions",
+                "profile": "deepseek",
             },
             "zotero": {
                 "local_api_base": "http://127.0.0.1:23119/api",
@@ -813,12 +811,12 @@ class TuiConfigPageTests(TuiAppTests):
         """确认延迟处理的配置变更不会越过测试生命周期写入真实文件。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
         async with app.run_test() as pilot:
-            with patch("src.tui.app.load_ui_config", return_value={"llm_config": {"model": "model-ja"}}):
+            with patch("src.tui.app.load_ui_config", return_value={"llm_config": {"profile": "profile-ja"}}):
                 app.load_config_page()
             await pilot.pause()
 
             self.save_ui_config.reset_mock()
-            app.query_one("#config-llm_config-model", Input).value = "model-fr"
+            app.query_one("#config-llm_config-profile", Input).value = "profile-fr"
             await pilot.pause()
 
             self.save_ui_config.assert_called()
@@ -848,10 +846,7 @@ class TuiConfigPageTests(TuiAppTests):
                 },
             },
             "llm_config": {
-                "model": "deepseek-v4-flash",
-                "api_key_env": "DEEPSEEK_API_KEY",
-                "base_url": "",
-                "custom_json": "",
+                "profile": "deepseek",
             },
             "zotero": {
                 "local_api_base": "http://127.0.0.1:23119/api",
@@ -871,10 +866,7 @@ class TuiConfigPageTests(TuiAppTests):
                 app.query_one("#config-validation-retry-max_attempts", Input).value = "2"
                 app.query_one("#config-validation-issues-command_mismatch-severity", Select).value = "warning"
                 app.query_one("#config-validation-issues-command_mismatch-retryable", Switch).value = False
-                app.query_one("#config-llm_config-model", Input).value = "model-x"
-                app.query_one("#config-llm_config-custom_json", TextArea).text = (
-                    '{"enable_thinking": true}'
-                )
+                app.query_one("#config-llm_config-profile", Input).value = "profile-x"
                 app.query_one("#config-zotero-local_api_base", Input).value = "http://localhost:23119/api"
                 app.query_one("#config-zotero-web_api_key_env", Input).value = "MY_ZOTERO_API_KEY"
                 app.persist_config_form_change()
@@ -892,11 +884,7 @@ class TuiConfigPageTests(TuiAppTests):
             self.assertEqual(saved["validation"]["retry"]["max_attempts"], 2)
             self.assertEqual(saved["validation"]["issues"]["command_mismatch"]["severity"], "warning")
             self.assertFalse(saved["validation"]["issues"]["command_mismatch"]["retryable"])
-            self.assertEqual(saved["llm_config"]["model"], "model-x")
-            self.assertEqual(
-                saved["llm_config"]["custom_json"],
-                '{"enable_thinking": true}',
-            )
+            self.assertEqual(saved["llm_config"]["profile"], "profile-x")
             self.assertEqual(saved["zotero"]["local_api_base"], "http://localhost:23119/api")
             self.assertEqual(saved["zotero"]["web_api_key_env"], "MY_ZOTERO_API_KEY")
             self.assertIn('target_language = "fr"', app.query_one("#config-preview", TextArea).text)
