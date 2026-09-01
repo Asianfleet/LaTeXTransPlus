@@ -15,6 +15,7 @@ class ProjectStatus(str, Enum):
     TERMS_READY = "terms_ready"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
 
 
 @dataclass
@@ -75,7 +76,7 @@ class TaskViewState:
             self._copy_project_fields(project, event)
             return
 
-        if event_type in {"project_complete", "project_error"}:
+        if event_type in {"project_complete", "project_error", "project_cancelled"}:
             project = self._get_or_create_project(str(event.get("project_name") or "project"))
             self._copy_project_fields(project, event)
             project.status = self._project_status_from_event(event_type, event)
@@ -112,6 +113,8 @@ class TaskViewState:
         """Return the project status represented by a terminal runtime event."""
         if event.get("status") == "needs_term_review":
             return ProjectStatus.TERMS_READY
+        if event_type == "project_cancelled":
+            return ProjectStatus.CANCELLED
         if event_type == "project_complete":
             return ProjectStatus.COMPLETED
         return ProjectStatus.FAILED

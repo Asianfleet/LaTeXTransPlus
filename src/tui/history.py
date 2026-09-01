@@ -93,8 +93,8 @@ def write_project_metadata(
 def infer_project_status(project_dir: Path) -> ProjectStatus:
     """Infer project status from output artifacts."""
     metadata_status = _metadata_status(read_project_metadata(project_dir))
-    if metadata_status == ProjectStatus.FAILED:
-        return ProjectStatus.FAILED
+    if metadata_status in {ProjectStatus.FAILED, ProjectStatus.CANCELLED}:
+        return metadata_status
 
     if _errors_report_has_errors(project_dir / "errors_report.json"):
         return ProjectStatus.FAILED

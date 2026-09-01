@@ -1,7 +1,11 @@
 """Tests for Textual UI task state merging."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
+from src.tui.history import load_output_history
 from src.tui.state import ProjectStatus, TaskViewState
 
 
@@ -104,6 +108,49 @@ class TuiStateTests(unittest.TestCase):
         self.assertEqual(state.projects[0].log_lines, ["[ParserAgent] [INFO] parsed"])
         self.assertEqual(state.completed, 0)
         self.assertEqual(state.failed, 0)
+
+    def test_cancelled_status_is_a_stopped_project_state(self):
+        """强制终止事件应标记取消状态且不计入成功或失败。"""
+        state = TaskViewState(input_type="arxiv", inputs=["paper"], total=1)
+        state.apply_event(
+            {
+                "type": "project_cancelled",
+                "project_name": "paper",
+                "output_dir": r"D:\\out",
+                "error": "terminated",
+            }
+        )
+
+        self.assertEqual(state.projects[0].status, ProjectStatus.CANCELLED)
+        self.assertEqual(state.completed, 0)
+        self.assertEqual(state.failed, 0)
+        self.assertEqual(state.projects[0].output_dir, r"D:\\out")
+
+    def test_history_metadata_loads_cancelled_status(self):
+        """历史元数据中的 cancelled 状态应恢复为取消项目。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_root = Path(temp_dir)
+            project_dir = output_root / "paper"
+            project_dir.mkdir()
+            (project_dir / ".latextrans-tui.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "task-1",
+                        "input_type": "arxiv",
+                        "input_item": "paper",
+                        "project_name": "paper",
+                        "status": "cancelled",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            tasks = load_output_history(output_root)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].projects[0].status, ProjectStatus.CANCELLED)
+        self.assertEqual(tasks[0].completed, 0)
+        self.assertEqual(tasks[0].failed, 0)
 
 
 if __name__ == "__main__":

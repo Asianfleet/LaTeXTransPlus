@@ -149,3 +149,36 @@ conda run -n latextrans python -m unittest tests.test_tui_app.TuiPackagingTests 
 Ran 5 tests in 0.224s
 OK
 ```
+
+
+# Task 1（取消状态）报告
+
+## 状态
+
+DONE
+
+## 实现
+
+- `ProjectStatus` 新增 `CANCELLED = "cancelled"`。
+- `TaskViewState.apply_event` 支持 `project_cancelled` 终止事件，复用既有字段复制逻辑，并保持成功/失败计数语义不变。
+- `infer_project_status` 对历史元数据中的 `cancelled` 状态直接返回，避免被产物推断覆盖。
+- 增加取消事件和历史元数据加载回归测试。
+
+## Commit
+
+`feat(tui): add cancelled project state`
+
+## 测试
+
+命令：
+
+```text
+conda run -n latextrans python -m unittest tests.test_tui_state -v
+```
+
+结果：8 tests，全部通过（OK）。
+
+## 疑虑
+
+无。应用层停止态集合仍需在后续任务中加入 `ProjectStatus.CANCELLED`，以便按钮启用规则识别取消项目。
+
