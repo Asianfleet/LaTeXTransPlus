@@ -1826,6 +1826,94 @@ class TuiProjectManagerTests(TuiAppTests):
             table = app.query_one("#task-table", DataTable)
             self.assertEqual(table.get_cell_at((0, 0)), "[√]")
 
+    async def test_delete_selected_projects_removes_output_and_history_but_keeps_source(self):
+        """确认删除会清理输出目录和内存历史，但不会删除源项目目录。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            output = root / "output"
+            source.mkdir()
+            output.mkdir()
+            (output / "artifact.txt").write_text("x", encoding="utf-8")
+            task = TaskViewState(input_type="local", inputs=[str(source)], task_id="task-1", total=1)
+            task.projects.append(
+                ProjectViewState(
+                    project_name="paper",
+                    status=ProjectStatus.COMPLETED,
+                    project_dir=str(source),
+                    output_dir=str(output),
+                )
+            )
+            async with app.run_test():
+                app.tasks = [task]
+                app.selected_project_keys = {(task.task_id, "paper")}
+                app.refresh_task_table()
+
+                app._delete_selected_projects()
+
+                self.assertTrue(source.is_dir())
+                self.assertFalse(output.exists())
+                self.assertEqual(app.tasks, [])
+                self.assertEqual(app.selected_project_keys, set())
+
+    async def test_delete_selected_projects_continues_after_one_failure(self):
+        """确认单个输出目录删除失败时，其他项目仍会继续删除。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first, second = root / "first", root / "second"
+            first.mkdir()
+            second.mkdir()
+            task = TaskViewState(input_type="local", inputs=["first", "second"], task_id="task-1", total=2)
+            task.projects.extend(
+                [
+                    ProjectViewState(project_name="first", status=ProjectStatus.COMPLETED, output_dir=str(first)),
+                    ProjectViewState(project_name="second", status=ProjectStatus.COMPLETED, output_dir=str(second)),
+                ]
+            )
+            async with app.run_test():
+                app.tasks = [task]
+                app.selected_project_keys = {(task.task_id, "first"), (task.task_id, "second")}
+                app.refresh_task_table()
+                real_rmtree = tui_app.shutil.rmtree
+
+                def fail_first(path):
+                    """仅让第一个目录删除失败，第二个使用真实递归删除。"""
+                    if Path(path) == first:
+                        raise OSError("locked")
+                    return real_rmtree(path)
+
+                with patch.object(tui_app.shutil, "rmtree", side_effect=fail_first):
+                    app._delete_selected_projects()
+
+                self.assertTrue(first.exists())
+                self.assertFalse(second.exists())
+                self.assertEqual([project.project_name for project in task.projects], ["first"])
+
+    async def test_retry_selected_projects_reuses_inputs_and_starts_one_task(self):
+        """确认批量重译复用原始输入，并只创建和启动一个新任务。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["2508.18791", "2508.18792"], task_id="old", total=2)
+        task.projects.extend(
+            [
+                ProjectViewState(project_name="2508.18791", status=ProjectStatus.FAILED),
+                ProjectViewState(project_name="2508.18792", status=ProjectStatus.COMPLETED),
+            ]
+        )
+        async with app.run_test():
+            app.tasks = [task]
+            app.selected_project_keys = {(task.task_id, "2508.18791"), (task.task_id, "2508.18792")}
+            app.refresh_task_table()
+            with patch.object(app, "start_current_task") as start:
+                app._retry_selected_projects()
+
+            self.assertIs(app.current_task, app.tasks[-1])
+            self.assertEqual(app.current_task.input_type, "arxiv")
+            self.assertEqual(app.current_task.inputs, ["2508.18791", "2508.18792"])
+            self.assertEqual(len(app.tasks), 2)
+            start.assert_called_once_with()
+
 
 class TuiZoteroImportTests(TuiAppTests):
     """验证 Zotero tab 能对选中项目的 PDF 调用 adapter 并反馈状态。"""

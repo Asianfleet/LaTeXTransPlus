@@ -6,6 +6,7 @@ import csv
 import json
 import os
 import re
+import shutil
 import time
 from datetime import datetime
 from pathlib import Path
@@ -808,6 +809,106 @@ class LaTeXTransTuiApp(App[None]):
         terminate.disabled = not all_running
         delete.disabled = not all_stopped
         retry.disabled = not all_stopped
+
+    def _delete_selected_projects(self) -> None:
+        """删除所有选中的非运行项目及其输出目录和历史记录。"""
+        selected = list(self._selected_project_states())
+        if not selected:
+            return
+
+        removed_keys: set[tuple[str, str]] = set()
+        for task, project in selected:
+            if project.status == ProjectStatus.RUNNING:
+                continue
+            output_dir = Path(project.output_dir) if project.output_dir else None
+            try:
+                if output_dir is not None and output_dir.exists():
+                    if not output_dir.is_dir():
+                        raise OSError(f"输出路径不是目录：{output_dir}")
+                    shutil.rmtree(output_dir)
+            except OSError as exc:
+                self.notify(
+                    f"删除失败：{project.project_name}，错误：{exc}",
+                    title="LaTeXTransPlus",
+                    severity="error",
+                )
+                continue
+
+            task.projects = [item for item in task.projects if item is not project]
+            removed_keys.add((task.task_id, project.project_name))
+            if self.selected_project_name == project.project_name and self.selected_task_id == task.task_id:
+                self.selected_project_name = None
+                self.selected_task_id = None
+
+        self.selected_project_keys.difference_update(removed_keys)
+        self.tasks = [task for task in self.tasks if task.projects]
+        if self.current_task is not None and not self.current_task.projects:
+            self.current_task = None
+        self.refresh_project_list()
+        self.refresh_task_table()
+
+    def _retry_input_for_project(
+        self,
+        task: TaskViewState,
+        project: ProjectViewState,
+    ) -> tuple[str, str]:
+        """解析项目重译所需的输入类型和原始输入项。"""
+        input_type = str(task.input_type or "")
+        for item in task.inputs:
+            candidate = str(item)
+            if candidate == project.project_name or Path(candidate).name == project.project_name:
+                if input_type in {"arxiv", "local", "remote"}:
+                    return input_type, candidate
+
+        # 批量任务通常按项目顺序保存输入；名称无法直接匹配时使用同序输入。
+        try:
+            project_index = task.projects.index(project)
+        except ValueError:
+            project_index = -1
+        if 0 <= project_index < len(task.inputs) and len(task.inputs) == len(task.projects):
+            if input_type in {"arxiv", "local", "remote"}:
+                return input_type, str(task.inputs[project_index])
+
+        project_dir = Path(project.project_dir) if project.project_dir else None
+        if input_type not in {"arxiv", "local", "remote"} and project_dir is not None and project_dir.exists():
+            return "local", str(project_dir)
+        if input_type in {"local", "remote"} and len(task.projects) == 1 and task.inputs:
+            return input_type, str(task.inputs[0])
+        if input_type == "arxiv":
+            return input_type, project.project_name
+        if project_dir is not None and project_dir.exists():
+            return "local", str(project_dir)
+        return (input_type or "arxiv"), project.project_name
+
+    def _retry_selected_projects(self) -> None:
+        """将所有选中的非运行项目合并为一个新的翻译任务并启动。"""
+        selected = list(self._selected_project_states())
+        if not selected or any(project.status == ProjectStatus.RUNNING for _, project in selected):
+            return
+
+        retry_inputs: list[str] = []
+        retry_type = ""
+        for task, project in selected:
+            input_type, input_item = self._retry_input_for_project(task, project)
+            if not retry_type:
+                retry_type = input_type
+            if input_item not in retry_inputs:
+                retry_inputs.append(input_item)
+        if not retry_inputs:
+            return
+
+        retry_task = TaskViewState(
+            input_type=retry_type or "arxiv",
+            inputs=retry_inputs,
+            task_id=self._next_task_id(),
+            total=len(retry_inputs),
+        )
+        self.current_task = retry_task
+        self.tasks.append(retry_task)
+        self.selected_project_keys.clear()
+        self.refresh_project_list()
+        self.refresh_task_table()
+        self.start_current_task()
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle sidebar project selection from the project list."""
