@@ -111,10 +111,10 @@ class TaskViewState:
 
     def _project_status_from_event(self, event_type: object, event: dict[str, Any]) -> ProjectStatus:
         """Return the project status represented by a terminal runtime event."""
-        if event.get("status") == "needs_term_review":
-            return ProjectStatus.TERMS_READY
         if event_type == "project_cancelled":
             return ProjectStatus.CANCELLED
+        if event.get("status") == "needs_term_review":
+            return ProjectStatus.TERMS_READY
         if event_type == "project_complete":
             return ProjectStatus.COMPLETED
         return ProjectStatus.FAILED

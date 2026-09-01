@@ -126,6 +126,18 @@ class TuiStateTests(unittest.TestCase):
         self.assertEqual(state.failed, 0)
         self.assertEqual(state.projects[0].output_dir, r"D:\\out")
 
+    def test_cancelled_event_takes_priority_over_review_status(self):
+        """取消事件即使携带术语状态也必须保持 cancelled。"""
+        state = TaskViewState(input_type="arxiv", inputs=["paper"], total=1)
+        state.apply_event(
+            {
+                "type": "project_cancelled",
+                "project_name": "paper",
+                "status": "needs_term_review",
+            }
+        )
+        self.assertEqual(state.projects[0].status, ProjectStatus.CANCELLED)
+
     def test_history_metadata_loads_cancelled_status(self):
         """历史元数据中的 cancelled 状态应恢复为取消项目。"""
         with tempfile.TemporaryDirectory() as temp_dir:
