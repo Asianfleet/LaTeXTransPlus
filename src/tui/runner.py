@@ -36,13 +36,18 @@ def run_tui_task(
         raise ValueError(f"Unsupported input type: {input_type}")
 
     config = runtime.load_runtime_config(config_path=resolved_config_path, overrides=runtime_overrides)
+    prepare_project_names = _prepare_project_names(input_type, items)
     try:
         projects, config, projects_dir, output_dir = runtime.prepare_projects(
             config=config,
             project_items=project_items,
             project_url_items=project_url_items,
             all_existing=False,
-            prepare_log_callback=lambda payload: _emit_prepare_log(payload, event_callback),
+            prepare_log_callback=lambda payload: _emit_prepare_log(
+                payload,
+                event_callback,
+                prepare_project_names,
+            ),
         )
     except ValueError:
         _emit_prepare_failure_events(input_type, items, event_callback)
@@ -80,11 +85,36 @@ def _emit_prepare_skip_events(
         _emit_prepare_error(item, event_callback)
 
 
-def _emit_prepare_log(payload: dict[str, Any], event_callback: TuiEventCallback) -> None:
+def _emit_prepare_log(
+    payload: dict[str, Any],
+    event_callback: TuiEventCallback,
+    project_names: set[str] | None = None,
+) -> None:
     """将准备阶段工具日志包装为项目日志或任务日志事件。"""
     event = dict(payload)
-    event["type"] = "project_log" if event.get("project_name") else "task_log"
+    project_name = str(event.get("project_name") or "")
+    is_known_project = bool(project_name) and (
+        project_names is None or project_name in project_names
+    )
+    event["type"] = "project_log" if is_known_project else "task_log"
+    if not is_known_project:
+        event.pop("project_name", None)
     event_callback(event)
+
+
+def _prepare_project_names(input_type: str, items: list[str]) -> set[str]:
+    """Return project names that can be confidently tied to submitted inputs."""
+    names: set[str] = set()
+    for item in items:
+        item_name = Path(item).name
+        names.add(item_name)
+        names.add(_archive_stem(item_name))
+    if input_type == "arxiv":
+        try:
+            names.update(str(item) for item in runtime.extract_arxiv_ids(items))
+        except (TypeError, ValueError):
+            pass
+    return {name for name in names if name}
 
 
 def _emit_prepare_failure_events(input_type: str, items: list[str], event_callback: TuiEventCallback) -> None:

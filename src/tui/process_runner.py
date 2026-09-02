@@ -6,6 +6,7 @@ import multiprocessing
 import os
 import queue as queue_module
 import sys
+import threading
 from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
@@ -25,13 +26,14 @@ class TuiTaskProcess:
 
 
 @contextmanager
-def _suppress_console_output() -> Iterator[None]:
-    """Temporarily detach Python console streams from the parent TUI terminal.
+def _capture_console_output(emit_line: Any) -> Iterator[None]:
+    """Capture child console output and forward complete lines to the TUI.
 
     TUI task processes are spawned with ``multiprocessing`` and therefore inherit
     the parent's terminal handles.  Redirecting both regular and dunder streams
     prevents libraries that write to ``sys.__stdout__``/``sys.__stderr__`` from
     corrupting Textual's alternate screen while preserving stream state on exit.
+    Separate pipes retain whether a line came from stdout or stderr.
     """
     original_streams: tuple[TextIO, TextIO, TextIO, TextIO] = (
         sys.stdout,
@@ -40,25 +42,47 @@ def _suppress_console_output() -> Iterator[None]:
         sys.__stderr__,
     )
     saved_fds = (os.dup(1), os.dup(2))
-    null_fd = os.open(os.devnull, os.O_WRONLY)
+    stdout_read, stdout_write = os.pipe()
+    stderr_read, stderr_write = os.pipe()
+
+    def forward_lines(read_fd: int, level: str) -> None:
+        """Read one redirected stream and publish each complete output line."""
+        with open(read_fd, "r", encoding="utf-8", errors="replace") as stream:
+            for line in stream:
+                text = line.rstrip("\r\n")
+                if text:
+                    emit_line(text, level)
+
+    stdout_thread = threading.Thread(target=forward_lines, args=(stdout_read, "info"), daemon=True)
+    stderr_thread = threading.Thread(target=forward_lines, args=(stderr_read, "error"), daemon=True)
     try:
-        os.dup2(null_fd, 1)
-        os.dup2(null_fd, 2)
-        with open(null_fd, "w", encoding="utf-8", closefd=False) as null_stream:
-            sys.stdout = null_stream
-            sys.stderr = null_stream
-            sys.__stdout__ = null_stream
-            sys.__stderr__ = null_stream
-            try:
-                yield
-            finally:
-                sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__ = original_streams
+        os.dup2(stdout_write, 1)
+        os.dup2(stderr_write, 2)
+        stdout_stream = open(os.dup(stdout_write), "w", encoding="utf-8", buffering=1)
+        stderr_stream = open(os.dup(stderr_write), "w", encoding="utf-8", buffering=1)
+        sys.stdout = stdout_stream
+        sys.stderr = stderr_stream
+        sys.__stdout__ = stdout_stream
+        sys.__stderr__ = stderr_stream
+        stdout_thread.start()
+        stderr_thread.start()
+        try:
+            yield
+        finally:
+            stdout_stream.flush()
+            stderr_stream.flush()
+            sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__ = original_streams
+            stdout_stream.close()
+            stderr_stream.close()
     finally:
         os.dup2(saved_fds[0], 1)
         os.dup2(saved_fds[1], 2)
         os.close(saved_fds[0])
         os.close(saved_fds[1])
-        os.close(null_fd)
+        os.close(stdout_write)
+        os.close(stderr_write)
+        stdout_thread.join(timeout=2)
+        stderr_thread.join(timeout=2)
 
 
 def _process_entry(
@@ -74,7 +98,11 @@ def _process_entry(
         """Publish a runtime event tagged for the parent process."""
         message_queue.put(("event", event))
 
-    with _suppress_console_output():
+    def emit_console_line(line: str, level: str) -> None:
+        """Publish output from uninstrumented task code as a task-level log."""
+        emit_event({"type": "task_log", "level": level, "message": line, "line": line})
+
+    with _capture_console_output(emit_console_line):
         try:
             result = run_tui_task(
                 config_path=config_path,

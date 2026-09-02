@@ -39,8 +39,8 @@ class TuiProcessRunnerTests(unittest.TestCase):
 
         self.assertEqual(messages.get(timeout=1), ("error", {"error": "boom"}))
 
-    def test_process_entry_suppresses_all_python_console_streams(self):
-        """Child task output must not leak into the parent's Textual terminal."""
+    def test_process_entry_forwards_python_console_streams_as_task_logs(self):
+        """Child task output should reach the UI as task_log events."""
         messages = multiprocessing.Queue()
         captured_stdout = io.StringIO()
         captured_stderr = io.StringIO()
@@ -66,10 +66,21 @@ class TuiProcessRunnerTests(unittest.TestCase):
 
         self.assertEqual(captured_stdout.getvalue(), "")
         self.assertEqual(captured_stderr.getvalue(), "")
-        self.assertEqual(messages.get(timeout=1), ("result", {"ok": True}))
+        received = [messages.get(timeout=1) for _ in range(5)]
+        forwarded = [message for message in received if message[0] == "event"]
+        self.assertEqual(
+            {message[0] for message in forwarded},
+            {"event"},
+        )
+        self.assertEqual(
+            {message[1]["line"] for message in forwarded},
+            {"stdout leak", "stderr leak", "dunder stdout leak", "dunder stderr leak"},
+        )
+        self.assertTrue(all(message[1]["type"] == "task_log" for message in forwarded))
+        self.assertIn(("result", {"ok": True}), received)
 
-    def test_process_entry_suppresses_direct_file_descriptor_writes(self):
-        """Low-level writes to stdout/stderr descriptors must not reach the TUI."""
+    def test_process_entry_forwards_direct_file_descriptor_writes(self):
+        """Low-level writes to stdout/stderr descriptors should reach the TUI as logs."""
         messages = multiprocessing.Queue()
         original_stdout_fd = os.dup(1)
         original_stderr_fd = os.dup(2)
@@ -96,7 +107,15 @@ class TuiProcessRunnerTests(unittest.TestCase):
             self.assertEqual(stdout_capture.read(), b"")
             self.assertEqual(stderr_capture.read(), b"")
 
-        self.assertEqual(messages.get(timeout=1), ("result", {"ok": True}))
+        received = [messages.get(timeout=1) for _ in range(3)]
+        forwarded = [message for message in received if message[0] == "event"]
+        self.assertEqual({message[0] for message in forwarded}, {"event"})
+        self.assertEqual(
+            {message[1]["line"] for message in forwarded},
+            {"fd stdout leak", "fd stderr leak"},
+        )
+        self.assertTrue(all(message[1]["type"] == "task_log" for message in forwarded))
+        self.assertIn(("result", {"ok": True}), received)
 
     def test_terminate_terminates_joins_kills_and_closes(self):
         """Termination should force-stop a live process and release resources."""

@@ -1401,7 +1401,7 @@ class LaTeXTransTuiApp(App[None]):
         log_widget = self.query_one("#project-log", RichLog)
         log_widget.clear()
         if project.log_path is None:
-            for line in project.log_lines:
+            for line in [*(task_log_lines or []), *project.log_lines]:
                 log_widget.write(line)
             return
 
@@ -1410,7 +1410,8 @@ class LaTeXTransTuiApp(App[None]):
             log_text = _merge_project_log_text(log_text, [*(task_log_lines or []), *project.log_lines])
             log_text = compact_progress_log_for_display(log_text)
         except OSError as exc:
-            log_text = "\n".join(project.log_lines) if project.log_lines else f"无法读取日志文件：{exc}"
+            fallback_lines = [*(task_log_lines or []), *project.log_lines]
+            log_text = "\n".join(fallback_lines) if fallback_lines else f"无法读取日志文件：{exc}"
         log_widget.write(log_text)
 
     def _refresh_errors_table(self, project: ProjectViewState) -> None:

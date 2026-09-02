@@ -579,9 +579,10 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
 
                     self.assertEqual(len(list_view.children), 1)
                     self.assertIn("2308.10248", str(list_view.children[0].query_one(Static).content))
-                    self.assertEqual(table.get_cell_at((0, 0)), "2308.10248")
-                    self.assertEqual(table.get_cell_at((0, 1)), "completed")
-                    self.assertEqual(table.get_cell_at((0, 2)), "")
+                    self.assertEqual(table.get_cell_at((0, 0)), "[]")
+                    self.assertEqual(table.get_cell_at((0, 1)), "2308.10248")
+                    self.assertEqual(table.get_cell_at((0, 2)), "completed")
+                    self.assertEqual(table.get_cell_at((0, 3)), "")
 
     async def test_selecting_history_project_loads_tex_preview(self):
         """确认点击历史项目时右侧 TeX 页能显示项目源码。"""
@@ -1092,6 +1093,18 @@ class TuiTaskEventTests(TuiAppTests):
         merged = _merge_project_log_text("[ParserAgent] parsed\n", ["Downloading paper", "[ParserAgent] parsed"])
 
         self.assertEqual(merged.splitlines(), ["Downloading paper", "[ParserAgent] parsed"])
+
+    def test_project_log_refresh_fallback_keeps_task_log_lines(self):
+        """日志文件不可读时，任务级准备日志仍应显示在详情区域。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        project = ProjectViewState(project_name="paper", log_path=r"D:\\missing\\latextrans.log")
+        log_widget = Mock()
+
+        with patch.object(app, "query_one", return_value=log_widget):
+            app._refresh_project_log(project, ["Downloading paper"])
+
+        rendered = str(log_widget.write.call_args.args[0])
+        self.assertIn("Downloading paper", rendered)
 
     async def test_start_current_task_initializes_total_without_run_start(self):
         """确认真实启动路径不依赖 runner 发送 run_start 也会初始化总数。"""
