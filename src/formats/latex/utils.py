@@ -48,6 +48,15 @@ def _safe_extract_tar(tar_ref: tarfile.TarFile, extract_path: Path) -> None:
             raise ValueError(f"Unsafe tar member path: {member.name}")
     tar_ref.extractall(extract_path)
 
+
+def _archive_stem(name: str) -> str:
+    """Return the project directory stem for supported archive names."""
+    lower_name = name.lower()
+    for suffix in (".tar.gz", ".tgz", ".tar", ".zip"):
+        if lower_name.endswith(suffix):
+            return name[: -len(suffix)]
+    return Path(name).stem
+
 def get_pattern_command_full(name, n=None):
     pattern = rf'\\({name})'
     if n is None:
@@ -101,7 +110,7 @@ def extract_compressed_files(folder_path, log_callback: Optional[Callable[[dict]
             except Exception as e:
                 message = f"[SKIP] Failed to extract {file_path}: {e}"
                 if log_callback:
-                    log_callback({"project_name": Path(file_path).stem, "level": "error", "message": message, "line": message})
+                    log_callback({"project_name": _archive_stem(Path(file_path).name), "level": "error", "message": message, "line": message})
                 else:
                     print(message)
     # return paths

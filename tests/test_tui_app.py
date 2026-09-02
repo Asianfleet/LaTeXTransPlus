@@ -1072,6 +1072,21 @@ class TuiTaskEventTests(TuiAppTests):
             refresh_project_list.assert_not_called()
             refresh_task_table.assert_not_called()
 
+    async def test_task_log_event_refreshes_selected_project_detail_log(self):
+        """任务级准备日志到达后应刷新当前项目详情日志区域。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            app.current_task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-1")
+            app.tasks = [app.current_task]
+            app.handle_runtime_event({"type": "project_start", "project_name": "2508.18791"})
+            app.select_project("2508.18791")
+
+            with patch.object(app, "_refresh_project_log") as refresh_log:
+                app.handle_runtime_event({"type": "task_log", "line": "Downloading metadata"})
+
+            refresh_log.assert_called_once()
+            self.assertIn("Downloading metadata", refresh_log.call_args.args[1])
+
     def test_project_log_refresh_preserves_prepare_lines_missing_from_file(self):
         """项目日志文件刷新时不应覆盖尚未落盘的准备阶段日志。"""
         merged = _merge_project_log_text("[ParserAgent] parsed\n", ["Downloading paper", "[ParserAgent] parsed"])

@@ -759,7 +759,12 @@ class LaTeXTransTuiApp(App[None]):
             return
 
         self._refresh_tex_preview(project)
-        self._refresh_project_log(project)
+        task_log_lines: list[str] | None = None
+        for task, candidate in self._iter_project_states():
+            if candidate is project:
+                task_log_lines = task.task_log_lines
+                break
+        self._refresh_project_log(project, task_log_lines)
         self._refresh_errors_table(project)
         self._refresh_terms_table(project)
         self._refresh_zotero_controls()
@@ -1145,8 +1150,8 @@ class LaTeXTransTuiApp(App[None]):
         ):
             return
         target_task.apply_event(event_payload)
-        if event_payload.get("type") == "project_log":
-            self._refresh_selected_project_log(event_payload)
+        if event_payload.get("type") in {"project_log", "task_log"}:
+            self._refresh_selected_project_log(event_payload, target_task)
             return
 
         self._replace_history_project(target_task)
@@ -1156,13 +1161,23 @@ class LaTeXTransTuiApp(App[None]):
         self.refresh_project_list()
         self.refresh_task_table()
 
-    def _refresh_selected_project_log(self, event: dict[str, object]) -> None:
+    def _refresh_selected_project_log(
+        self,
+        event: dict[str, object],
+        task: TaskViewState | None = None,
+    ) -> None:
         """如果日志事件属于当前详情项目，立即刷新日志控件。"""
-        if event.get("type") != "project_log":
+        if event.get("type") not in {"project_log", "task_log"}:
             return
         project = self._selected_project()
-        if project is not None and project.project_name == str(event.get("project_name") or ""):
-            self._refresh_project_log(project)
+        if project is None:
+            return
+        if event.get("type") == "task_log":
+            if task is not None:
+                self._refresh_project_log(project, task.task_log_lines)
+            return
+        if project.project_name == str(event.get("project_name") or ""):
+            self._refresh_project_log(project, task.task_log_lines if task is not None else None)
             self._refresh_terms_table(project)
 
     def _notify_task_event(self, event: dict[str, object], task: TaskViewState) -> None:
@@ -1377,7 +1392,11 @@ class LaTeXTransTuiApp(App[None]):
         except StopIteration:
             return None
 
-    def _refresh_project_log(self, project: ProjectViewState) -> None:
+    def _refresh_project_log(
+        self,
+        project: ProjectViewState,
+        task_log_lines: list[str] | None = None,
+    ) -> None:
         """Load the selected project's log file into the log panel."""
         log_widget = self.query_one("#project-log", RichLog)
         log_widget.clear()
@@ -1388,7 +1407,7 @@ class LaTeXTransTuiApp(App[None]):
 
         try:
             log_text = Path(project.log_path).read_text(encoding="utf-8")
-            log_text = _merge_project_log_text(log_text, project.log_lines)
+            log_text = _merge_project_log_text(log_text, [*(task_log_lines or []), *project.log_lines])
             log_text = compact_progress_log_for_display(log_text)
         except OSError as exc:
             log_text = "\n".join(project.log_lines) if project.log_lines else f"无法读取日志文件：{exc}"
