@@ -36,7 +36,8 @@ class TuiRunnerTests(unittest.TestCase):
                         )
 
         self.assertEqual(load_config.call_args.kwargs["overrides"]["paper_list"], ["2508.18791"])
-        prepare_projects.assert_called_once_with(config=config, project_items=[], project_url_items=[], all_existing=False)
+        prepare_projects.assert_called_once()
+        self.assertIn("prepare_log_callback", prepare_projects.call_args.kwargs)
         run_projects.assert_called_once()
         self.assertEqual(result["projects"], [r"D:\paper"])
 
@@ -109,6 +110,31 @@ class TuiRunnerTests(unittest.TestCase):
 
         self.assertEqual(events[0]["type"], "project_log")
         self.assertEqual(events[0]["line"], "[FakeAgent] [INFO] hello")
+
+    def test_run_tui_task_forwards_prepare_logs(self):
+        """准备阶段日志应通过项目日志事件进入 UI，而不是写入终端。"""
+        config = {"target_language": "ch", "paper_list": []}
+        events = []
+
+        def fake_prepare_projects(**kwargs):
+            kwargs["prepare_log_callback"]({
+                "project_name": "2508.18791",
+                "line": "Downloading 2508.18791: 1.00MB / 2.00MB",
+                "level": "info",
+            })
+            return ([r"D:\paper"], config, "src", "out")
+
+        with patch("src.tui.runner.ensure_ui_config", return_value=Path("config/ui.toml")):
+            with patch("src.tui.runner.runtime.load_runtime_config", return_value=config):
+                with patch("src.tui.runner.runtime.prepare_projects", side_effect=fake_prepare_projects):
+                    with patch(
+                        "src.tui.runner.runtime.run_projects",
+                        return_value={"completed_projects": [], "failed_projects": []},
+                    ):
+                        run_tui_task("config/ui.toml", "arxiv", ["2508.18791"], {}, events.append)
+
+        self.assertEqual(events[0]["type"], "project_log")
+        self.assertEqual(events[0]["project_name"], "2508.18791")
 
     def test_run_tui_task_emits_errors_for_prepare_skipped_inputs(self):
         """Prepare skips should emit visible project_error events while valid projects continue."""

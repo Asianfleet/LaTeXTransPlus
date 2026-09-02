@@ -14,9 +14,9 @@ import os
 import shutil
 import requests
 from bs4 import BeautifulSoup
-from typing import List
+from typing import Callable, List, Optional
 import time
-from src.utils.progress import st
+from src.utils.progress import progress_log_context, st
 import sys
 from pathlib import Path
 
@@ -63,7 +63,7 @@ def get_pattern_command_full(name, n=None):
         pattern += r'(?=[^a-zA-Z])'
     return pattern
 
-def extract_compressed_files(folder_path):
+def extract_compressed_files(folder_path, log_callback: Optional[Callable[[dict], None]] = None):
     """
     Traverse the given folder and extract all compressed files (zip, tar, tar.gz, etc.).
     After extraction, delete the source compressed files.
@@ -81,17 +81,29 @@ def extract_compressed_files(folder_path):
                         extract_path = Path(root) / file.replace('.zip', '')
                         extract_path.mkdir(parents=True, exist_ok=True)
                         _safe_extract_zip(zip_ref, extract_path)
-                        print(f"Extracted {file} to {extract_path}")
+                        message = f"Extracted {file} to {extract_path}"
+                        if log_callback:
+                            log_callback({"level": "info", "message": message, "line": message})
+                        else:
+                            print(message)
                     os.remove(file_path)
                 elif tarfile.is_tarfile(file_path):
                     with tarfile.open(file_path, 'r:*') as tar_ref:
                         extract_path = Path(root) / file.replace('.tar', '').replace('.gz', '')
                         extract_path.mkdir(parents=True, exist_ok=True)
                         _safe_extract_tar(tar_ref, extract_path)
-                        print(f"Extracted {file} to {extract_path}")
+                        message = f"Extracted {file} to {extract_path}"
+                        if log_callback:
+                            log_callback({"level": "info", "message": message, "line": message})
+                        else:
+                            print(message)
                     os.remove(file_path)
             except Exception as e:
-                print(f"[SKIP] Failed to extract {file_path}: {e}")
+                message = f"[SKIP] Failed to extract {file_path}: {e}"
+                if log_callback:
+                    log_callback({"level": "error", "message": message, "line": message})
+                else:
+                    print(message)
     # return paths
 
 def get_profect_dirs(folder_path):
@@ -989,7 +1001,11 @@ def download_tex(arxiv_id: str, tex_url: str, save_dir: str, headers: dict):
         sys.stderr = sys.__stderr__
         return None
 
-def batch_download_arxiv_tex(arxiv_ids: List[str], save_dir: str = "./tex_sources"):
+def batch_download_arxiv_tex(
+    arxiv_ids: List[str],
+    save_dir: str = "./tex_sources",
+    log_callback: Optional[Callable[[dict], None]] = None,
+):
     """
     批量下载多个 arXiv 论文的 TeX 源码
     """
@@ -998,23 +1014,49 @@ def batch_download_arxiv_tex(arxiv_ids: List[str], save_dir: str = "./tex_source
     for arxiv_id in arxiv_ids:
         if is_already_downloaded(arxiv_id, save_dir):
             source_dirs.append(os.path.join(save_dir, arxiv_id))
-            print(f"[SkIP] Already downloaded: {arxiv_id}")
+            message = f"[SkIP] Already downloaded: {arxiv_id}"
+            if log_callback:
+                log_callback({"project_name": arxiv_id, "level": "info", "message": message, "line": message})
+            else:
+                print(message)
             continue
 
         extracted_dir = os.path.join(save_dir, arxiv_id)
         if os.path.isdir(extracted_dir):
             shutil.rmtree(extracted_dir)
-            print(f"[RETRY] Removed invalid existing source directory: {extracted_dir}")
+            message = f"[RETRY] Removed invalid existing source directory: {extracted_dir}"
+            if log_callback:
+                log_callback({"project_name": arxiv_id, "level": "info", "message": message, "line": message})
+            else:
+                print(message)
 
         tex_url = get_tex_url(arxiv_id, headers)
         if tex_url:
-            dir = download_tex(arxiv_id, tex_url, save_dir, headers)
+            if log_callback:
+                with progress_log_context(
+                    lambda payload: log_callback({
+                        **payload,
+                        "project_name": arxiv_id,
+                    }),
+                    emit_console=False,
+                ):
+                    dir = download_tex(arxiv_id, tex_url, save_dir, headers)
+            else:
+                dir = download_tex(arxiv_id, tex_url, save_dir, headers)
             if dir:
                 source_dirs.append(dir)
             else:
-                print(f"[SKIP] Source download failed for {arxiv_id}, skip TeX processing.")
+                message = f"[SKIP] Source download failed for {arxiv_id}, skip TeX processing."
+                if log_callback:
+                    log_callback({"project_name": arxiv_id, "level": "error", "message": message, "line": message})
+                else:
+                    print(message)
         else:
-            print(f"[SKIP] No TeX source found for {arxiv_id}. Please check the arXiv ID or the availability of the source.")
+            message = f"[SKIP] No TeX source found for {arxiv_id}. Please check the arXiv ID or the availability of the source."
+            if log_callback:
+                log_callback({"project_name": arxiv_id, "level": "error", "message": message, "line": message})
+            else:
+                print(message)
 
             # 下载PDF文件
         pdf_url = f"https://arxiv.org/pdf/{arxiv_id}.pdf"
@@ -1030,7 +1072,11 @@ def batch_download_arxiv_tex(arxiv_ids: List[str], save_dir: str = "./tex_source
             devnull = open(os.devnull, 'w')
             try:
                 sys.stderr = devnull
-                st.success(f"[SUCCESS] Downloaded PDF for {arxiv_id}")
+                message = f"[SUCCESS] Downloaded PDF for {arxiv_id}"
+                if log_callback:
+                    log_callback({"project_name": arxiv_id, "level": "info", "message": message, "line": message})
+                else:
+                    st.success(message)
             finally:
                 sys.stderr = previous_stderr
                 devnull.close()
@@ -1039,14 +1085,18 @@ def batch_download_arxiv_tex(arxiv_ids: List[str], save_dir: str = "./tex_source
             devnull = open(os.devnull, 'w')
             try:
                 sys.stderr = devnull
-                st.error(f"[ERROR] Failed to download PDF for {arxiv_id}: {str(e)}")
+                message = f"[ERROR] Failed to download PDF for {arxiv_id}: {str(e)}"
+                if log_callback:
+                    log_callback({"project_name": arxiv_id, "level": "error", "message": message, "line": message})
+                else:
+                    st.error(message)
             finally:
                 sys.stderr = previous_stderr
                 devnull.close()
 
     return source_dirs
 
-def get_arxiv_category(arxiv_ids: List[str]) -> dict:
+def get_arxiv_category(arxiv_ids: List[str], log_callback: Optional[Callable[[dict], None]] = None) -> dict:
     results = {}
     headers = {"User-Agent": "Mozilla/5.0"}
     for arxiv_id in arxiv_ids:
@@ -1069,10 +1119,18 @@ def get_arxiv_category(arxiv_ids: List[str]) -> dict:
                     categories.extend(matches)
 
             if not categories:
-                print(f"[WARNING] No categories found for {arxiv_id}")
+                message = f"[WARNING] No categories found for {arxiv_id}"
+                if log_callback:
+                    log_callback({"project_name": arxiv_id, "level": "warning", "message": message, "line": message})
+                else:
+                    print(message)
 
         except requests.RequestException as e:
-            print(f"[ERROR] Failed to fetch {arxiv_id}: {e}")
+            message = f"[ERROR] Failed to fetch {arxiv_id}: {e}"
+            if log_callback:
+                log_callback({"project_name": arxiv_id, "level": "error", "message": message, "line": message})
+            else:
+                print(message)
             categories = []
 
         results[arxiv_id] = (categories)

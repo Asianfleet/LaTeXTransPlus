@@ -180,7 +180,18 @@ def prepare_projects(
     project_items: Optional[Iterable[str]] = None,
     project_url_items: Optional[Iterable[str]] = None,
     all_existing: bool = False,
+    prepare_log_callback: Optional[ProjectLogCallback] = None,
 ) -> tuple[List[str], Dict[str, Any], str, str]:
+    """准备输入项目；可选回调用于将准备阶段日志转发给 TUI。"""
+    def emit_prepare(message: str, level: str = "info", project_name: str | None = None) -> None:
+        if prepare_log_callback:
+            payload: Dict[str, Any] = {"level": level, "message": message, "line": message}
+            if project_name:
+                payload["project_name"] = project_name
+            prepare_log_callback(payload)
+        else:
+            print(message)
+
     input_items = config.get("paper_list", [])
     projects_dir = str(resolve_path(config.get("tex_sources_dir", "tex source")))
     output_dir = str(resolve_path(config.get("output_dir", "outputs")))
@@ -196,10 +207,28 @@ def prepare_projects(
         projects: List[str] = []
 
         if paper_list:
-            projects.extend(batch_download_arxiv_tex(paper_list, projects_dir))
+            if prepare_log_callback:
+                projects.extend(
+                    batch_download_arxiv_tex(
+                        paper_list,
+                        projects_dir,
+                        log_callback=prepare_log_callback,
+                    )
+                )
+            else:
+                projects.extend(batch_download_arxiv_tex(paper_list, projects_dir))
             if not config.get("user_term"):
-                config["category"] = get_arxiv_category(paper_list)
-            extract_compressed_files(projects_dir)
+                if prepare_log_callback:
+                    config["category"] = get_arxiv_category(
+                        paper_list,
+                        log_callback=prepare_log_callback,
+                    )
+                else:
+                    config["category"] = get_arxiv_category(paper_list)
+            if prepare_log_callback:
+                extract_compressed_files(projects_dir, log_callback=prepare_log_callback)
+            else:
+                extract_compressed_files(projects_dir)
 
         for project_path in project_items:
             resolved_project_path = str(resolve_path(project_path))
@@ -210,9 +239,9 @@ def prepare_projects(
                 try:
                     projects.append(extract_local_archive(resolved_project_path, projects_dir))
                 except Exception as e:
-                    print(f"[SKIP] Failed to extract local archive {project_path}: {e}")
+                    emit_prepare(f"[SKIP] Failed to extract local archive {project_path}: {e}", "error")
                 continue
-            print(f"[SKIP] Invalid local project path: {project_path}")
+            emit_prepare(f"[SKIP] Invalid local project path: {project_path}", "error")
 
         for project_url in project_url_items:
             archive_path: Optional[str] = None
@@ -220,9 +249,9 @@ def prepare_projects(
                 archive_path = download_remote_archive(project_url, projects_dir)
                 projects.append(extract_local_archive(archive_path, projects_dir))
             except RemoteArchiveDownloadError as e:
-                print(f"[SKIP] Failed to download remote archive {project_url}: {e}")
+                emit_prepare(f"[SKIP] Failed to download remote archive {project_url}: {e}", "error")
             except Exception as e:
-                print(f"[SKIP] Failed to extract remote archive {project_url}: {e}")
+                emit_prepare(f"[SKIP] Failed to extract remote archive {project_url}: {e}", "error")
             finally:
                 if archive_path:
                     try:
@@ -230,8 +259,11 @@ def prepare_projects(
                     except OSError:
                         pass
     elif all_existing:
-        print("No explicit inputs. Processing all existing projects in the specified directory.")
-        extract_compressed_files(projects_dir)
+        emit_prepare("No explicit inputs. Processing all existing projects in the specified directory.")
+        if prepare_log_callback:
+            extract_compressed_files(projects_dir, log_callback=prepare_log_callback)
+        else:
+            extract_compressed_files(projects_dir)
         projects = get_profect_dirs(projects_dir)
         if not projects:
             raise ValueError("No projects found. Check 'tex_sources_dir' and 'paper_list' in config.")

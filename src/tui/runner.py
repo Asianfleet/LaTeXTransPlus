@@ -42,6 +42,7 @@ def run_tui_task(
             project_items=project_items,
             project_url_items=project_url_items,
             all_existing=False,
+            prepare_log_callback=lambda payload: _emit_prepare_log(payload, event_callback),
         )
     except ValueError:
         _emit_prepare_failure_events(input_type, items, event_callback)
@@ -77,6 +78,14 @@ def _emit_prepare_skip_events(
     skipped_items = _prepare_skipped_items(input_type, items, projects)
     for item in skipped_items:
         _emit_prepare_error(item, event_callback)
+
+
+def _emit_prepare_log(payload: dict[str, Any], event_callback: TuiEventCallback) -> None:
+    """将准备阶段工具日志包装为统一的项目日志事件。"""
+    event = dict(payload)
+    event["type"] = "project_log"
+    event.setdefault("project_name", "prepare")
+    event_callback(event)
 
 
 def _emit_prepare_failure_events(input_type: str, items: list[str], event_callback: TuiEventCallback) -> None:
