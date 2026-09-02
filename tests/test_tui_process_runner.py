@@ -2,6 +2,8 @@
 
 import multiprocessing
 import queue
+import io
+import sys
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -34,6 +36,35 @@ class TuiProcessRunnerTests(unittest.TestCase):
             process_runner._process_entry("config.toml", "local", [], {}, messages)
 
         self.assertEqual(messages.get(timeout=1), ("error", {"error": "boom"}))
+
+    def test_process_entry_suppresses_all_python_console_streams(self):
+        """Child task output must not leak into the parent's Textual terminal."""
+        messages = multiprocessing.Queue()
+        captured_stdout = io.StringIO()
+        captured_stderr = io.StringIO()
+        original_streams = (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
+
+        def fake_runner(config_path, input_type, items, overrides, event_callback):
+            """Write through every Python console stream used by task code."""
+            print("stdout leak")
+            print("stderr leak", file=sys.stderr)
+            sys.__stdout__.write("dunder stdout leak\n")
+            sys.__stderr__.write("dunder stderr leak\n")
+            return {"ok": True}
+
+        sys.stdout = captured_stdout
+        sys.stderr = captured_stderr
+        sys.__stdout__ = captured_stdout
+        sys.__stderr__ = captured_stderr
+        try:
+            with patch.object(process_runner, "run_tui_task", side_effect=fake_runner):
+                process_runner._process_entry("config.toml", "local", [], {}, messages)
+        finally:
+            sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__ = original_streams
+
+        self.assertEqual(captured_stdout.getvalue(), "")
+        self.assertEqual(captured_stderr.getvalue(), "")
+        self.assertEqual(messages.get(timeout=1), ("result", {"ok": True}))
 
     def test_terminate_terminates_joins_kills_and_closes(self):
         """Termination should force-stop a live process and release resources."""

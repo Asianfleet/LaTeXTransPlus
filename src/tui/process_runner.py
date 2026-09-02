@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
 import queue as queue_module
+import sys
+from contextlib import contextmanager
 from dataclasses import dataclass
 from multiprocessing.queues import Queue
-from typing import Any
+from typing import Any, Iterator, TextIO
 
 from src.tui.runner import run_tui_task
 
@@ -19,6 +22,32 @@ class TuiTaskProcess:
 
     process: multiprocessing.Process
     queue: Queue
+
+
+@contextmanager
+def _suppress_console_output() -> Iterator[None]:
+    """Temporarily detach Python console streams from the parent TUI terminal.
+
+    TUI task processes are spawned with ``multiprocessing`` and therefore inherit
+    the parent's terminal handles.  Redirecting both regular and dunder streams
+    prevents libraries that write to ``sys.__stdout__``/``sys.__stderr__`` from
+    corrupting Textual's alternate screen while preserving stream state on exit.
+    """
+    original_streams: tuple[TextIO, TextIO, TextIO, TextIO] = (
+        sys.stdout,
+        sys.stderr,
+        sys.__stdout__,
+        sys.__stderr__,
+    )
+    with open(os.devnull, "w", encoding="utf-8") as null_stream:
+        sys.stdout = null_stream
+        sys.stderr = null_stream
+        sys.__stdout__ = null_stream
+        sys.__stderr__ = null_stream
+        try:
+            yield
+        finally:
+            sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__ = original_streams
 
 
 def _process_entry(
@@ -34,17 +63,18 @@ def _process_entry(
         """Publish a runtime event tagged for the parent process."""
         message_queue.put(("event", event))
 
-    try:
-        result = run_tui_task(
-            config_path=config_path,
-            input_type=input_type,
-            items=items,
-            overrides=overrides,
-            event_callback=emit_event,
-        )
-        message_queue.put(("result", result))
-    except Exception as exc:  # pragma: no cover - exact exception comes from runtime integrations
-        message_queue.put(("error", {"error": str(exc)}))
+    with _suppress_console_output():
+        try:
+            result = run_tui_task(
+                config_path=config_path,
+                input_type=input_type,
+                items=items,
+                overrides=overrides,
+                event_callback=emit_event,
+            )
+            message_queue.put(("result", result))
+        except Exception as exc:  # pragma: no cover - exact exception comes from runtime integrations
+            message_queue.put(("error", {"error": str(exc)}))
 
 
 def start_tui_task_process(
