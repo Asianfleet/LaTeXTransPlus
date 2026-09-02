@@ -97,6 +97,11 @@ def build_workflow_result(
     project_terms_path: Optional[str] = None,
     project_terms_decisions_path: Optional[str] = None,
 ) -> Dict[str, Any]:
+    if error is None and validation_failed:
+        error = format_validation_failure_message(
+            errors_report_path=errors_report_path,
+            validation_summary=validation_summary,
+        )
     result = {
         "project_name": project_name,
         "ok": not validation_failed and error is None,
@@ -110,6 +115,19 @@ def build_workflow_result(
     if project_terms_decisions_path is not None:
         result["project_terms_decisions_path"] = project_terms_decisions_path
     return result
+
+
+def format_validation_failure_message(
+    errors_report_path: str,
+    validation_summary: Dict[str, int],
+) -> str:
+    """构造校验重试耗尽后的稳定失败摘要。"""
+    return (
+        "Validation failed after retries; "
+        f"remaining validation errors: {validation_summary.get('errors', 0)}, "
+        f"warnings: {validation_summary.get('warnings', 0)}. "
+        f"Error report: {errors_report_path}."
+    )
 
 
 def should_run_terminology_scan(config: Dict[str, Any]) -> bool:
@@ -426,6 +444,13 @@ class CoordinatorAgent:
         validation_summary = summarize_validation_reports(errors_report or [])
         validation_failed = self.validation_policy.should_fail(validation_summary)
         errors_report_path = os.path.join(transed_project_dir, "errors_report.json")
+        validation_error = (
+            format_validation_failure_message(errors_report_path, validation_summary)
+            if validation_failed
+            else None
+        )
+        if validation_error:
+            self._log(validation_error, level="error")
 
         if not should_generate_pdf_after_validation(
             validation_summary=validation_summary,
@@ -441,6 +466,7 @@ class CoordinatorAgent:
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
                 validation_failed=validation_failed,
+                error=validation_error,
                 project_terms_path=terminology_result.get("project_terms_path"),
                 project_terms_decisions_path=terminology_result.get("project_terms_decisions_path"),
             )
@@ -560,6 +586,13 @@ class CoordinatorAgent:
 
         validation_summary = summarize_validation_reports(errors_report or [])
         validation_failed = self.validation_policy.should_fail(validation_summary)
+        validation_error = (
+            format_validation_failure_message(errors_report_path, validation_summary)
+            if validation_failed
+            else None
+        )
+        if validation_error:
+            self._log(validation_error, level="error")
 
         if not should_generate_pdf_after_validation(
             validation_summary=validation_summary,
@@ -571,6 +604,7 @@ class CoordinatorAgent:
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
                 validation_failed=validation_failed,
+                error=validation_error,
             )
 
         generator_agent = GeneratorAgent(

@@ -1192,7 +1192,7 @@ class LaTeXTransTuiApp(App[None]):
                 if self._should_notify_project_event(task, project_name, "project_terms_ready"):
                     self.notify(f"术语表已生成：{project_name}，任务 id：{task.task_id}", title="LaTeXTransPlus")
             elif self._should_notify_project_event(task, project_name, "project_error"):
-                error = str(event.get("error") or "未知异常")
+                error = self._project_error_message(event)
                 self.notify(
                     f"发生异常：{project_name}，任务 id：{task.task_id}，错误：{error}",
                     title="LaTeXTransPlus",
@@ -1202,6 +1202,24 @@ class LaTeXTransTuiApp(App[None]):
         if self._task_is_finished(task) and not task.completion_notified:
             task.completion_notified = True
             self.notify(f"任务全部完成：{task.task_id}", title="LaTeXTransPlus")
+
+    def _project_error_message(self, event: dict[str, object]) -> str:
+        """Return a useful project error message, including validation details when present."""
+        explicit_error = str(event.get("error") or "").strip()
+        if explicit_error:
+            return explicit_error
+
+        summary = event.get("validation_summary")
+        if isinstance(summary, dict) and summary.get("errors", 0):
+            errors = int(summary.get("errors", 0))
+            warnings = int(summary.get("warnings", 0))
+            report_path = str(event.get("errors_report_path") or "未提供")
+            return (
+                "Validation failed after retries; "
+                f"remaining validation errors: {errors}, warnings: {warnings}. "
+                f"Error report: {report_path}."
+            )
+        return "未知异常"
 
     def _should_notify_project_event(self, task: TaskViewState, project_name: str, event_type: str) -> bool:
         """返回项目终态事件是否尚未发过通知，并记录本次通知键。"""

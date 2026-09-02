@@ -1002,6 +1002,33 @@ class TuiTaskEventTests(TuiAppTests):
             self.assertTrue(any("runner failed" in message for message in messages))
             self.assertIn("任务全部完成：task-1", messages)
 
+    async def test_validation_project_error_notification_includes_summary(self):
+        """校验失败事件缺少 error 时也应展示剩余错误数和报告路径。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            app.current_task = TaskViewState(
+                input_type="arxiv",
+                inputs=["2508.18791"],
+                task_id="task-validation-error",
+                total=1,
+            )
+            app.tasks = [app.current_task]
+
+            with patch.object(app, "notify") as notify:
+                app.handle_runtime_event(
+                    {
+                        "type": "project_error",
+                        "project_name": "2508.18791",
+                        "validation_summary": {"warnings": 1, "errors": 2, "total": 3},
+                        "errors_report_path": r"D:\out\errors_report.json",
+                    },
+                    app.current_task,
+                )
+
+            messages = [call.args[0] for call in notify.call_args_list]
+            self.assertTrue(any("remaining validation errors: 2" in message for message in messages))
+            self.assertTrue(any(r"D:\out\errors_report.json" in message for message in messages))
+
     async def test_review_required_event_notifies_terms_ready_and_task_completion(self):
         """确认等待术语确认不会弹异常通知，且会结束当前任务。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
