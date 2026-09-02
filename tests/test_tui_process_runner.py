@@ -1,9 +1,11 @@
 """Tests for the hard-terminable TUI task process wrapper."""
 
 import multiprocessing
+import os
 import queue
 import io
 import sys
+import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
@@ -64,6 +66,36 @@ class TuiProcessRunnerTests(unittest.TestCase):
 
         self.assertEqual(captured_stdout.getvalue(), "")
         self.assertEqual(captured_stderr.getvalue(), "")
+        self.assertEqual(messages.get(timeout=1), ("result", {"ok": True}))
+
+    def test_process_entry_suppresses_direct_file_descriptor_writes(self):
+        """Low-level writes to stdout/stderr descriptors must not reach the TUI."""
+        messages = multiprocessing.Queue()
+        original_stdout_fd = os.dup(1)
+        original_stderr_fd = os.dup(2)
+        with tempfile.TemporaryFile() as stdout_capture, tempfile.TemporaryFile() as stderr_capture:
+            os.dup2(stdout_capture.fileno(), 1)
+            os.dup2(stderr_capture.fileno(), 2)
+            try:
+                def fake_runner(config_path, input_type, items, overrides, event_callback):
+                    """Write directly to inherited process descriptors."""
+                    os.write(1, b"fd stdout leak\n")
+                    os.write(2, b"fd stderr leak\n")
+                    return {"ok": True}
+
+                with patch.object(process_runner, "run_tui_task", side_effect=fake_runner):
+                    process_runner._process_entry("config.toml", "local", [], {}, messages)
+            finally:
+                os.dup2(original_stdout_fd, 1)
+                os.dup2(original_stderr_fd, 2)
+                os.close(original_stdout_fd)
+                os.close(original_stderr_fd)
+
+            stdout_capture.seek(0)
+            stderr_capture.seek(0)
+            self.assertEqual(stdout_capture.read(), b"")
+            self.assertEqual(stderr_capture.read(), b"")
+
         self.assertEqual(messages.get(timeout=1), ("result", {"ok": True}))
 
     def test_terminate_terminates_joins_kills_and_closes(self):

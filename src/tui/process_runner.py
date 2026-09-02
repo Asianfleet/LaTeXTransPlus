@@ -39,15 +39,26 @@ def _suppress_console_output() -> Iterator[None]:
         sys.__stdout__,
         sys.__stderr__,
     )
-    with open(os.devnull, "w", encoding="utf-8") as null_stream:
-        sys.stdout = null_stream
-        sys.stderr = null_stream
-        sys.__stdout__ = null_stream
-        sys.__stderr__ = null_stream
-        try:
-            yield
-        finally:
-            sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__ = original_streams
+    saved_fds = (os.dup(1), os.dup(2))
+    null_fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        os.dup2(null_fd, 1)
+        os.dup2(null_fd, 2)
+        with open(null_fd, "w", encoding="utf-8", closefd=False) as null_stream:
+            sys.stdout = null_stream
+            sys.stderr = null_stream
+            sys.__stdout__ = null_stream
+            sys.__stderr__ = null_stream
+            try:
+                yield
+            finally:
+                sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__ = original_streams
+    finally:
+        os.dup2(saved_fds[0], 1)
+        os.dup2(saved_fds[1], 2)
+        os.close(saved_fds[0])
+        os.close(saved_fds[1])
+        os.close(null_fd)
 
 
 def _process_entry(
