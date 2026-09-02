@@ -81,6 +81,16 @@ ERROR_STATUS_COLUMN_WIDTH = 8
 ERROR_MIN_CONTENT_COLUMN_WIDTH = 6
 PROGRESS_LOG_LINE_RE = re.compile(r"^\[[#-]+\]\s+\d{1,3}(?:\.\d+)?%")
 APP_TITLE_PLAIN = "LaTeXTransPlus"
+
+
+def _merge_project_log_text(file_text: str, memory_lines: list[str]) -> str:
+    """合并日志文件与尚未落盘的准备阶段日志，并保持准备日志在前。"""
+    file_lines = file_text.splitlines()
+    file_line_set = set(file_lines)
+    pending_lines = [line for line in memory_lines if line and line not in file_line_set]
+    return "\n".join(pending_lines + file_lines)
+
+
 APP_TITLE_ART = "\n".join(
     (
         "  ██╗      █████╗ ████████╗███████╗██╗  ██╗████████╗██████╗  █████╗ ███╗   ██╗███████╗      ██╗",
@@ -1378,6 +1388,7 @@ class LaTeXTransTuiApp(App[None]):
 
         try:
             log_text = Path(project.log_path).read_text(encoding="utf-8")
+            log_text = _merge_project_log_text(log_text, project.log_lines)
             log_text = compact_progress_log_for_display(log_text)
         except OSError as exc:
             log_text = "\n".join(project.log_lines) if project.log_lines else f"无法读取日志文件：{exc}"

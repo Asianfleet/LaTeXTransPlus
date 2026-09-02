@@ -83,7 +83,7 @@ def extract_compressed_files(folder_path, log_callback: Optional[Callable[[dict]
                         _safe_extract_zip(zip_ref, extract_path)
                         message = f"Extracted {file} to {extract_path}"
                         if log_callback:
-                            log_callback({"level": "info", "message": message, "line": message})
+                            log_callback({"project_name": extract_path.name, "level": "info", "message": message, "line": message})
                         else:
                             print(message)
                     os.remove(file_path)
@@ -94,14 +94,14 @@ def extract_compressed_files(folder_path, log_callback: Optional[Callable[[dict]
                         _safe_extract_tar(tar_ref, extract_path)
                         message = f"Extracted {file} to {extract_path}"
                         if log_callback:
-                            log_callback({"level": "info", "message": message, "line": message})
+                            log_callback({"project_name": extract_path.name, "level": "info", "message": message, "line": message})
                         else:
                             print(message)
                     os.remove(file_path)
             except Exception as e:
                 message = f"[SKIP] Failed to extract {file_path}: {e}"
                 if log_callback:
-                    log_callback({"level": "error", "message": message, "line": message})
+                    log_callback({"project_name": Path(file_path).stem, "level": "error", "message": message, "line": message})
                 else:
                     print(message)
     # return paths

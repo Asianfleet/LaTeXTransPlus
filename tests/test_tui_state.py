@@ -109,6 +109,15 @@ class TuiStateTests(unittest.TestCase):
         self.assertEqual(state.completed, 0)
         self.assertEqual(state.failed, 0)
 
+    def test_task_log_event_does_not_create_project(self):
+        """无项目归属的准备日志应保存在任务状态，不创建虚假项目。"""
+        state = TaskViewState(input_type="arxiv", inputs=["2508.18791"])
+
+        state.apply_event({"type": "task_log", "line": "preparing"})
+
+        self.assertEqual(state.projects, [])
+        self.assertEqual(state.task_log_lines, ["preparing"])
+
     def test_cancelled_status_is_a_stopped_project_state(self):
         """强制终止事件应标记取消状态且不计入成功或失败。"""
         state = TaskViewState(input_type="arxiv", inputs=["paper"], total=1)

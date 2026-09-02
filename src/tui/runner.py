@@ -81,10 +81,9 @@ def _emit_prepare_skip_events(
 
 
 def _emit_prepare_log(payload: dict[str, Any], event_callback: TuiEventCallback) -> None:
-    """将准备阶段工具日志包装为统一的项目日志事件。"""
+    """将准备阶段工具日志包装为项目日志或任务日志事件。"""
     event = dict(payload)
-    event["type"] = "project_log"
-    event.setdefault("project_name", "prepare")
+    event["type"] = "project_log" if event.get("project_name") else "task_log"
     event_callback(event)
 
 

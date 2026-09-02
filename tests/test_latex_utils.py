@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import zipfile
 from pathlib import Path
 from unittest.mock import patch
 
@@ -94,6 +95,22 @@ class LatexUtilsTests(unittest.TestCase):
 
             download_tex.assert_called_once()
             self.assertEqual(source_dirs, [str(stale_dir)])
+
+    def test_extract_compressed_files_reports_extracted_project_name(self):
+        """解压日志应归属解压产生的项目目录，而不是匿名准备任务。"""
+        from src.formats.latex.utils import extract_compressed_files
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            archive = root / "2508.18791.zip"
+            with zipfile.ZipFile(archive, "w") as zipped:
+                zipped.writestr("main.tex", "content")
+            events = []
+
+            extract_compressed_files(str(root), log_callback=events.append)
+
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["project_name"], "2508.18791")
 
 
 if __name__ == "__main__":

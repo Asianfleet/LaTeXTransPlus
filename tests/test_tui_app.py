@@ -31,6 +31,7 @@ from src.tui.app import (
     PAGE_ENTRY,
     PAGE_TASKS,
     LaTeXTransTuiApp,
+    _merge_project_log_text,
     build_app_title,
     compact_progress_log_for_display,
 )
@@ -1070,6 +1071,12 @@ class TuiTaskEventTests(TuiAppTests):
 
             refresh_project_list.assert_not_called()
             refresh_task_table.assert_not_called()
+
+    def test_project_log_refresh_preserves_prepare_lines_missing_from_file(self):
+        """项目日志文件刷新时不应覆盖尚未落盘的准备阶段日志。"""
+        merged = _merge_project_log_text("[ParserAgent] parsed\n", ["Downloading paper", "[ParserAgent] parsed"])
+
+        self.assertEqual(merged.splitlines(), ["Downloading paper", "[ParserAgent] parsed"])
 
     async def test_start_current_task_initializes_total_without_run_start(self):
         """确认真实启动路径不依赖 runner 发送 run_start 也会初始化总数。"""

@@ -51,6 +51,7 @@ class TaskViewState:
     completion_notified: bool = False
     notified_project_events: set[tuple[str, str]] = field(default_factory=set)
     events: list[dict[str, Any]] = field(default_factory=list)
+    task_log_lines: list[str] = field(default_factory=list)
     projects: list[ProjectViewState] = field(default_factory=list)
 
     def apply_event(self, event: dict[str, Any]) -> None:
@@ -59,6 +60,12 @@ class TaskViewState:
         event_type = event.get("type")
         if event_type == "run_start":
             self.total = int(event.get("total") or 0)
+            return
+
+        if event_type == "task_log":
+            line = str(event.get("line") or event.get("message") or "")
+            if line:
+                self.task_log_lines.append(line)
             return
 
         if event_type == "project_start":
