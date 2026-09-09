@@ -1160,6 +1160,12 @@ class LaTeXTransTuiApp(App[None]):
         self._refresh_selected_project_log(event_payload)
         self.refresh_project_list()
         self.refresh_task_table()
+        if (
+            event_type == "project_complete"
+            and self.selected_project_name == str(event_payload.get("project_name") or "")
+            and self.selected_task_id == target_task.task_id
+        ):
+            self.refresh_detail_page()
 
     def _refresh_selected_project_log(
         self,

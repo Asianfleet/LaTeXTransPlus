@@ -1993,6 +1993,57 @@ class TuiProjectManagerTests(TuiAppTests):
 class TuiZoteroImportTests(TuiAppTests):
     """验证 Zotero tab 能对选中项目的 PDF 调用 adapter 并反馈状态。"""
 
+    async def test_project_completion_shows_import_controls_on_first_zotero_tab_activation(self):
+        """确认项目完成后首次打开 Zotero 页会显示新生成 PDF 的导入控件。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-1", total=1)
+        task.projects.append(ProjectViewState(project_name="2508.18791", status=ProjectStatus.RUNNING))
+
+        async with app.run_test() as pilot:
+            app.current_task = task
+            app.tasks = [task]
+            app.select_project("2508.18791", task.task_id)
+            self.assertFalse(app.query_one("#import-zotero-button", Button).display)
+
+            app.handle_runtime_event(
+                {
+                    "type": "project_complete",
+                    "project_name": "2508.18791",
+                    "pdf_path": "paper.pdf",
+                },
+                task,
+            )
+            with patch.object(app, "load_zotero_libraries"):
+                app.query_one("#detail-tabs", TabbedContent).active = "zotero-tab"
+                await pilot.pause()
+
+            self.assertTrue(app.query_one("#zotero-import-rule", Rule).display)
+            self.assertTrue(app.query_one("#import-zotero-button", Button).display)
+
+    async def test_other_project_completion_does_not_refresh_selected_detail(self):
+        """确认其他项目完成时不会重绘当前选中的项目详情。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["selected", "other"], task_id="task-1", total=2)
+        task.projects.extend(
+            [
+                ProjectViewState(project_name="selected", status=ProjectStatus.RUNNING),
+                ProjectViewState(project_name="other", status=ProjectStatus.RUNNING),
+            ]
+        )
+
+        async with app.run_test():
+            app.current_task = task
+            app.tasks = [task]
+            app.select_project("selected", task.task_id)
+
+            with patch.object(app, "refresh_detail_page") as refresh_detail:
+                app.handle_runtime_event(
+                    {"type": "project_complete", "project_name": "other", "pdf_path": "other.pdf"},
+                    task,
+                )
+
+            refresh_detail.assert_not_called()
+
     async def test_refresh_detail_page_hides_import_controls_without_pdf(self):
         """确认没有 PDF 的项目不显示竖向 Rule 和导入按钮。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
