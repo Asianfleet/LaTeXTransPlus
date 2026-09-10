@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import csv
 import json
 import os
@@ -10,6 +11,7 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import Sequence
 
 import toml
 from rich.cells import cell_len
@@ -21,6 +23,7 @@ from textual.binding import Binding
 from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
 from textual.containers import Horizontal, Vertical, VerticalScroll
+from textual.widget import Widget
 from textual.widgets import (
     Button,
     ContentSwitcher,
@@ -41,9 +44,9 @@ from textual.widgets import (
 
 from src.tui.config import UI_CONFIG_PATH, load_ui_config, save_ui_config
 from src.tui.config_schema import (
-    CONFIG_FIELDS,
     ConfigField,
     bool_for_field,
+    config_fields_for_engine,
     form_text_for_field,
     grouped_config_fields,
     normalized_config_from_form,
@@ -51,8 +54,13 @@ from src.tui.config_schema import (
     parse_textarea_value,
     select_value_for_field,
 )
+from src.engines.base import normalize_engine
 from src.tui.history import load_output_history, write_project_metadata
-from src.tui.input_parser import parse_input_items, validate_input_items
+from src.tui.input_parser import (
+    parse_input_items,
+    validate_input_items,
+    validate_lite_input,
+)
 from src.tui.process_runner import (
     TuiTaskProcess,
     drain_process_messages,
@@ -119,6 +127,14 @@ APP_TITLE_LINE_STYLES = (
     "bold #3b82f6",
     "bold #1d4ed8",
 )
+APP_TITLE_LITE_LINE_STYLES = (
+    "bold bright_white",
+    "bold #e5e7eb",
+    "bold #d1d5db",
+    "bold #9ca3af",
+    "bold #6b7280",
+    "bold #4b5563",
+)
 
 
 def app_title_art_width(art: str) -> int:
@@ -126,28 +142,33 @@ def app_title_art_width(art: str) -> int:
     return max(cell_len(line) for line in art.splitlines())
 
 
-def build_art_title(art: str) -> Text:
+def build_art_title(art: str, line_styles: tuple[str, ...] = APP_TITLE_LINE_STYLES) -> Text:
     """用入口页标题样式构建指定艺术字文本。"""
     title = Text()
     for index, line in enumerate(art.splitlines()):
         if index:
             title.append("\n")
-        title.append(line, style=APP_TITLE_LINE_STYLES[index])
+        title.append(line, style=line_styles[index])
     return title
 
 
-def build_app_title() -> Text:
+def build_app_title(engine: str = "heavy") -> Text:
     """构建入口页宽屏蓝白色多行艺术字标题。"""
-    return build_art_title(APP_TITLE_ART)
+    return build_art_title(APP_TITLE_ART, _title_line_styles(engine))
 
 
-def build_app_title_for_width(width: int) -> Text:
+def build_app_title_for_width(width: int, engine: str = "heavy") -> Text:
     """根据可用宽度构建入口页标题，避免艺术字被终端换行错位。"""
     if width >= app_title_art_width(APP_TITLE_ART):
-        return build_art_title(APP_TITLE_ART)
+        return build_art_title(APP_TITLE_ART, _title_line_styles(engine))
     if width >= app_title_art_width(APP_TITLE_ART_COMPACT):
-        return build_art_title(APP_TITLE_ART_COMPACT)
-    return Text(APP_TITLE_PLAIN, style=APP_TITLE_LINE_STYLES[2])
+        return build_art_title(APP_TITLE_ART_COMPACT, _title_line_styles(engine))
+    return Text(APP_TITLE_PLAIN, style=_title_line_styles(engine)[2])
+
+
+def _title_line_styles(engine: str) -> tuple[str, ...]:
+    """Return the title palette for one validated TUI engine."""
+    return APP_TITLE_LITE_LINE_STYLES if normalize_engine(engine) == "lite" else APP_TITLE_LINE_STYLES
 
 
 class ResponsiveAppTitle(Static):
@@ -156,6 +177,12 @@ class ResponsiveAppTitle(Static):
     def __init__(self, *args: object, **kwargs: object) -> None:
         """初始化时先使用普通标题，等待布局完成后再按实际宽度刷新。"""
         super().__init__(build_app_title_for_width(0), *args, **kwargs)
+        self._engine = "heavy"
+
+    def set_engine(self, engine: str) -> None:
+        """Apply the selected engine's title palette without changing layout."""
+        self._engine = normalize_engine(engine)
+        self._refresh_for_width(self.size.width)
 
     def on_mount(self) -> None:
         """控件挂载后按当前宽度刷新标题。"""
@@ -167,8 +194,8 @@ class ResponsiveAppTitle(Static):
 
     def _refresh_for_width(self, width: int) -> None:
         """按给定宽度更新标题内容。"""
-        next_title = build_app_title_for_width(width)
-        if isinstance(self.content, Text) and self.content.plain == next_title.plain:
+        next_title = build_app_title_for_width(width, self._engine)
+        if self.content == next_title:
             return
         self.update(next_title, layout=False)
 
@@ -373,7 +400,12 @@ class DetailTabbedContent(TabbedContent):
 
     def action_show_tab(self, tab_id: str) -> None:
         """切换到指定项目详情 tab。"""
-        self.active = tab_id
+        try:
+            tab = self.get_tab(tab_id)
+        except (NoMatches, ValueError):
+            return
+        if not tab.has_class("-hidden"):
+            self.active = tab_id
 
 
 class LaTeXTransTuiApp(App[None]):
@@ -434,7 +466,17 @@ class LaTeXTransTuiApp(App[None]):
         height: 1fr;
     }
 
+    #source-markdown-preview-scroll,
+    #translated-markdown-preview-scroll {
+        height: 1fr;
+    }
+
     #tex-preview {
+        width: 100%;
+    }
+
+    #source-markdown-preview,
+    #translated-markdown-preview {
         width: 100%;
     }
 
@@ -467,7 +509,7 @@ class LaTeXTransTuiApp(App[None]):
     }
 
     #entry-bottom-offset {
-        height: 6;
+        height: 3;
     }
 
     #app-title {
@@ -488,6 +530,16 @@ class LaTeXTransTuiApp(App[None]):
         width: 100%;
         height: 3;
         padding: 0 4;
+    }
+
+    #engine-mode-control {
+        height: 3;
+        align-horizontal: center;
+    }
+
+    #engine-mode-label {
+        width: auto;
+        padding: 1 0 0 1;
     }
 
     #input-type-select {
@@ -611,9 +663,10 @@ class LaTeXTransTuiApp(App[None]):
         ("s", "settings", "设置"),
     ]
 
-    def __init__(self, load_history_on_mount: bool = True) -> None:
+    def __init__(self, load_history_on_mount: bool = True, initial_engine: str = "heavy") -> None:
         """Initialize in-memory task history for the terminal UI."""
         super().__init__()
+        self.effective_engine = normalize_engine(initial_engine)
         self.current_task = None
         self.tasks = []
         self.selected_project_name = None
@@ -621,7 +674,7 @@ class LaTeXTransTuiApp(App[None]):
         self.selected_project_keys = set()
         self.load_history_on_mount = load_history_on_mount
         self.current_config: dict[str, object] = {}
-        self.loading_config_form = False
+        self.loading_config_form = True
         self.zotero_libraries: list[dict[str, object]] = []
         self.zotero_results: list[dict[str, object]] = []
         self.zotero_selected_keys: set[str] = set()
@@ -644,16 +697,18 @@ class LaTeXTransTuiApp(App[None]):
                         yield ResponsiveAppTitle(id="app-title")
                         with Horizontal(id="entry-actions"):
                             yield Select(
-                                [
-                                    ("arXiv ID / URL", "arxiv"),
-                                    ("本地项目/压缩包", "local"),
-                                    ("远程压缩包 URL", "remote"),
-                                ],
+                                self._entry_input_options(),
                                 id="input-type-select",
-                                value="arxiv",
+                                value=self._entry_input_type(),
                             )
                             yield EntryBatchTextArea(id="batch-input")
                             yield Button("发送", id="start-task-button", flat=True)
+                        with Horizontal(id="engine-mode-control"):
+                            yield Switch(
+                                self.effective_engine == "lite",
+                                id="engine-mode-switch",
+                            )
+                            yield Static("Lite 引擎", id="engine-mode-label")
                         yield Static("", id="entry-error")
                         yield Static("", id="entry-bottom-offset")
                         yield Static("", id="entry-bottom-spacer")
@@ -662,6 +717,12 @@ class LaTeXTransTuiApp(App[None]):
                         with TabPane("TeX", id="tex-tab"):
                             with VerticalScroll(id="tex-preview-scroll"):
                                 yield Static("", id="tex-preview")
+                        with TabPane("源 Markdown", id="source-markdown-tab"):
+                            with VerticalScroll(id="source-markdown-preview-scroll"):
+                                yield Static("", id="source-markdown-preview")
+                        with TabPane("译文 Markdown", id="translated-markdown-tab"):
+                            with VerticalScroll(id="translated-markdown-preview-scroll"):
+                                yield Static("", id="translated-markdown-preview")
                         with TabPane("术语表", id="terms-tab"):
                             yield DataTable(id="terms-table")
                         with TabPane("错误记录", id="errors-tab"):
@@ -687,10 +748,8 @@ class LaTeXTransTuiApp(App[None]):
                     with ConfigTabbedContent(initial="config-form-tab", id="config-tabs"):
                         with TabPane("配置", id="config-form-tab"):
                             with VerticalScroll(id="config-form"):
-                                for section, fields in grouped_config_fields():
-                                    yield Static(section, classes="config-section-title")
-                                    for field in fields:
-                                        yield from self._compose_config_field(field)
+                                with Vertical(id="config-fields"):
+                                    yield from self._config_form_widgets()
                                 yield Static("", id="config-error")
                         with TabPane("预览", id="config-preview-tab"):
                             preview = TextArea(id="config-preview", language="toml")
@@ -701,10 +760,119 @@ class LaTeXTransTuiApp(App[None]):
     def on_mount(self) -> None:
         """Load existing output projects into the sidebar when the app starts."""
         self._initialize_zotero_results_table()
+        self._apply_engine_view(rebuild_config_form=False)
+        self.call_after_refresh(self._enable_config_persistence)
         if not self.load_history_on_mount:
             return
         self.theme = "nord"
         self.load_output_history()
+
+    def set_engine(self, engine: str, persist: bool = False) -> None:
+        """Select the engine for this UI session and optionally save a future default."""
+        self.effective_engine = normalize_engine(engine)
+        if not self.is_mounted:
+            return
+        self._apply_engine_view(rebuild_config_form=True)
+        if self.load_history_on_mount:
+            self.load_output_history()
+        if persist:
+            config = dict(self.current_config) or load_ui_config(Path.cwd())
+            config["engine"] = self.effective_engine
+            save_ui_config(Path.cwd(), config)
+            self.current_config = config
+
+    def _apply_engine_view(self, rebuild_config_form: bool) -> None:
+        """Synchronize visible TUI controls with the current session engine."""
+        title = self.query_one("#app-title", ResponsiveAppTitle)
+        title.set_engine(self.effective_engine)
+        mode_switch = self.query_one("#engine-mode-switch", Switch)
+        with self.prevent(Switch.Changed):
+            mode_switch.value = self.effective_engine == "lite"
+        self.query_one("#engine-mode-label", Static).update(
+            "Lite 引擎" if self.effective_engine == "lite" else "Heavy 引擎"
+        )
+
+        input_type_select = self.query_one("#input-type-select", Select)
+        input_type_select.set_options(self._entry_input_options())
+        input_type_select.value = self._entry_input_type()
+        self._refresh_detail_tabs()
+        self._clear_incompatible_selected_project()
+        if rebuild_config_form:
+            self._rebuild_config_fields()
+        self.refresh_project_list()
+        self.refresh_task_table()
+        self.refresh_detail_page()
+
+    def _entry_input_options(self) -> list[tuple[str, str]]:
+        """Return mode-specific input choices for the entry form."""
+        if self.effective_engine == "lite":
+            return [("PDF / arXiv", "pdf")]
+        return [
+            ("arXiv ID / URL", "arxiv"),
+            ("本地项目/压缩包", "local"),
+            ("远程压缩包 URL", "remote"),
+        ]
+
+    def _entry_input_type(self) -> str:
+        """Return the current mode's sole default entry type."""
+        return "pdf" if self.effective_engine == "lite" else "arxiv"
+
+    def _refresh_detail_tabs(self) -> None:
+        """Show only the current engine's compatible project-detail tabs."""
+        tabs = self.query_one("#detail-tabs", DetailTabbedContent)
+        visible_ids = (
+            {"source-markdown-tab", "translated-markdown-tab", "terms-tab", "log-tab", "zotero-tab"}
+            if self.effective_engine == "lite"
+            else {"tex-tab", "terms-tab", "errors-tab", "log-tab", "zotero-tab"}
+        )
+        all_ids = {
+            "tex-tab",
+            "source-markdown-tab",
+            "translated-markdown-tab",
+            "terms-tab",
+            "errors-tab",
+            "log-tab",
+            "zotero-tab",
+        }
+        for tab_id in all_ids:
+            if tab_id in visible_ids:
+                tabs.show_tab(tab_id)
+            else:
+                tabs.hide_tab(tab_id)
+        preferred_tab = "source-markdown-tab" if self.effective_engine == "lite" else "tex-tab"
+        if tabs.active not in visible_ids:
+            tabs.active = preferred_tab
+
+    def _clear_incompatible_selected_project(self) -> None:
+        """Clear selection when a mode switch hides its task's project details."""
+        if self.selected_task_id is None:
+            return
+        selected_task = next(
+            (task for task in self.tasks if task.task_id == self.selected_task_id),
+            None,
+        )
+        if selected_task is not None and selected_task.engine != self.effective_engine:
+            self.selected_project_name = None
+            self.selected_task_id = None
+            self.clear_zotero_results()
+
+    @work(group="config-form", exclusive=True)
+    async def _rebuild_config_fields(self) -> None:
+        """Replace and populate settings fields after their Textual mounts complete."""
+        fields = self.query_one("#config-fields", Vertical)
+        self.loading_config_form = True
+        try:
+            await fields.remove_children()
+            await fields.mount(*self._config_form_widgets())
+            self._populate_config_form(dict(self.current_config))
+        except Exception:
+            self.loading_config_form = False
+            raise
+        self.call_after_refresh(self._enable_config_persistence)
+
+    def _enable_config_persistence(self) -> None:
+        """Re-enable immediate settings persistence after a mode-driven rebuild."""
+        self.loading_config_form = False
 
     def switch_page(self, page_id: str) -> None:
         """Switch the right-side content area to the given page."""
@@ -712,14 +880,16 @@ class LaTeXTransTuiApp(App[None]):
 
     def load_output_history(self) -> None:
         """Load output directory history into task state and refresh project views."""
-        history_tasks = load_output_history(self._history_output_root())
+        history_tasks = load_output_history(
+            self._history_output_root(),
+            engine=self.effective_engine,
+        )
         if not history_tasks:
             self.refresh_project_list()
             self.refresh_task_table()
             return
 
-        current_tasks = [task for task in self.tasks if task is self.current_task]
-        self.tasks = self._merge_history_tasks(history_tasks, current_tasks)
+        self.tasks = self._merge_history_tasks(history_tasks, self.tasks)
         self.refresh_project_list()
         self.refresh_task_table()
 
@@ -758,14 +928,17 @@ class LaTeXTransTuiApp(App[None]):
         if project is None:
             return
 
-        self._refresh_tex_preview(project)
+        if project.engine == "lite":
+            self._refresh_markdown_previews(project)
+        else:
+            self._refresh_tex_preview(project)
+            self._refresh_errors_table(project)
         task_log_lines: list[str] | None = None
         for task, candidate in self._iter_project_states():
             if candidate is project:
                 task_log_lines = task.task_log_lines
                 break
         self._refresh_project_log(project, task_log_lines)
-        self._refresh_errors_table(project)
         self._refresh_terms_table(project)
         self._refresh_zotero_controls()
 
@@ -821,9 +994,10 @@ class LaTeXTransTuiApp(App[None]):
         has_selection = bool(selected)
         all_running = has_selection and all(project.status == ProjectStatus.RUNNING for _, project in selected)
         all_stopped = has_selection and all(project.status != ProjectStatus.RUNNING for _, project in selected)
+        lite_batch_retry = bool(selected) and selected[0][0].engine == "lite" and len(selected) > 1
         terminate.disabled = not all_running
         delete.disabled = not all_stopped
-        retry.disabled = not all_stopped
+        retry.disabled = not all_stopped or lite_batch_retry
 
     def _terminate_selected_projects(self) -> None:
         """强制终止所有选中项目所属的翻译任务。"""
@@ -878,6 +1052,8 @@ class LaTeXTransTuiApp(App[None]):
     ) -> tuple[str, str]:
         """解析项目重译所需的输入类型和原始输入项。"""
         input_type = str(task.input_type or "")
+        if task.engine == "lite":
+            return "pdf", str(task.inputs[0]) if task.inputs else project.project_name
         for item in task.inputs:
             candidate = str(item)
             if candidate == project.project_name or Path(candidate).name == project.project_name:
@@ -926,6 +1102,7 @@ class LaTeXTransTuiApp(App[None]):
             inputs=retry_inputs,
             task_id=self._next_task_id(),
             total=len(retry_inputs),
+            engine=selected[0][0].engine,
         )
         self.current_task = retry_task
         self.tasks.append(retry_task)
@@ -1003,6 +1180,9 @@ class LaTeXTransTuiApp(App[None]):
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         """配置开关变化时立即保存并刷新预览。"""
+        if event.switch.id == "engine-mode-switch":
+            self.set_engine("lite" if event.value else "heavy")
+            return
         if self._is_config_widget(event.switch.id):
             self.persist_config_form_change()
 
@@ -1059,33 +1239,51 @@ class LaTeXTransTuiApp(App[None]):
 
     def _compose_config_field(self, field: ConfigField) -> ComposeResult:
         """组合单个设置项的标签和编辑控件。"""
-        with Horizontal(classes="config-field-row"):
-            yield Static(field.label, classes="config-field-label")
-            if field.kind == "select":
-                yield Select(field.options, id=field.widget_id)
-            elif field.kind == "switch":
-                yield Switch(id=field.widget_id)
-            elif field.kind == "textarea":
-                yield TextArea(id=field.widget_id)
-            else:
-                yield Input(id=field.widget_id)
+        yield self._config_field_row(field)
+
+    def _config_form_widgets(self) -> list[Widget]:
+        """Build settings section widgets for the current session engine."""
+        widgets: list[Widget] = []
+        for section, fields in grouped_config_fields(self.effective_engine):
+            widgets.append(Static(section, classes="config-section-title"))
+            widgets.extend(self._config_field_row(field) for field in fields)
+        return widgets
+
+    def _config_field_row(self, field: ConfigField) -> Horizontal:
+        """Create one labeled configuration row from a schema field."""
+        return Horizontal(
+            Static(field.label, classes="config-field-label"),
+            self._config_field_input(field),
+            classes="config-field-row",
+        )
+
+    def _config_field_input(self, field: ConfigField) -> Widget:
+        """Create the Textual input widget required by one configuration field."""
+        if field.kind == "select":
+            return Select(field.options, id=field.widget_id)
+        if field.kind == "switch":
+            return Switch(id=field.widget_id)
+        if field.kind == "textarea":
+            return TextArea(id=field.widget_id)
+        return Input(id=field.widget_id)
 
     def _populate_config_form(self, config: dict[str, object]) -> None:
         """把配置值填入设置页表单控件。"""
-        for field in CONFIG_FIELDS:
-            if field.kind == "select":
-                self.query_one(f"#{field.widget_id}", Select).value = select_value_for_field(field, config)
-            elif field.kind == "switch":
-                self.query_one(f"#{field.widget_id}", Switch).value = bool_for_field(field, config)
-            elif field.kind == "textarea":
-                self.query_one(f"#{field.widget_id}", TextArea).text = form_text_for_field(field, config)
-            else:
-                self.query_one(f"#{field.widget_id}", Input).value = form_text_for_field(field, config)
+        with self.prevent(Input.Changed, Select.Changed, Switch.Changed, TextArea.Changed):
+            for field in config_fields_for_engine(self.effective_engine):
+                if field.kind == "select":
+                    self.query_one(f"#{field.widget_id}", Select).value = select_value_for_field(field, config)
+                elif field.kind == "switch":
+                    self.query_one(f"#{field.widget_id}", Switch).value = bool_for_field(field, config)
+                elif field.kind == "textarea":
+                    self.query_one(f"#{field.widget_id}", TextArea).text = form_text_for_field(field, config)
+                else:
+                    self.query_one(f"#{field.widget_id}", Input).value = form_text_for_field(field, config)
 
     def _collect_config_form_values(self) -> dict[tuple[str, ...], object]:
         """从设置页表单控件读取并校验配置值。"""
         values: dict[tuple[str, ...], object] = {}
-        for field in CONFIG_FIELDS:
+        for field in config_fields_for_engine(self.effective_engine):
             if field.kind == "select":
                 select = self.query_one(f"#{field.widget_id}", Select)
                 values[field.path] = "" if select.is_blank() else str(select.value)
@@ -1113,8 +1311,13 @@ class LaTeXTransTuiApp(App[None]):
         input_type_select = self.query_one("#input-type-select", Select)
         input_type = "" if input_type_select.is_blank() else str(input_type_select.value)
         input_text = self.query_one("#batch-input", TextArea).text
-        items = parse_input_items(input_type, input_text)
-        errors = validate_input_items(input_type, items)
+        if self.effective_engine == "lite":
+            input_type = "pdf"
+            items = [input_text.strip()] if input_text.strip() else []
+            errors = validate_lite_input(input_text)
+        else:
+            items = parse_input_items(input_type, input_text)
+            errors = validate_input_items(input_type, items)
         error_widget = self.query_one("#entry-error", Static)
 
         if not input_type or not items:
@@ -1125,7 +1328,12 @@ class LaTeXTransTuiApp(App[None]):
             return
 
         error_widget.update("")
-        self.current_task = TaskViewState(input_type=input_type, inputs=items, task_id=self._next_task_id())
+        self.current_task = TaskViewState(
+            input_type=input_type,
+            inputs=items,
+            task_id=self._next_task_id(),
+            engine=self.effective_engine,
+        )
         self.tasks.append(self.current_task)
         self.query_one("#batch-input", TextArea).text = ""
         self.switch_page(PAGE_ENTRY)
@@ -1262,7 +1470,12 @@ class LaTeXTransTuiApp(App[None]):
         tasks = self.tasks
         if not tasks and self.current_task is not None:
             tasks = [self.current_task]
-        return [(task, project) for task in tasks for project in task.projects]
+        return [
+            (task, project)
+            for task in tasks
+            if task.engine == self.effective_engine
+            for project in task.projects
+        ]
 
     def _task_is_finished(self, task: TaskViewState) -> bool:
         """返回任务是否所有已知条目都已完成或失败。"""
@@ -1290,8 +1503,17 @@ class LaTeXTransTuiApp(App[None]):
 
     def _history_output_root(self) -> Path:
         """Return the output root used for loading historical projects."""
-        config = load_ui_config(Path.cwd())
-        configured_output = config.get("output_dir", "outputs")
+        config = self.current_config or load_ui_config(Path.cwd())
+        engine_config = config.get(self.effective_engine, {}) if isinstance(config, dict) else {}
+        configured_output = (
+            engine_config.get("output_dir")
+            if isinstance(engine_config, dict)
+            else None
+        )
+        if not configured_output and isinstance(config, dict):
+            configured_output = config.get("output_dir")
+        if not configured_output:
+            configured_output = "output-lite" if self.effective_engine == "lite" else "outputs"
         return Path(str(configured_output))
 
     def _merge_history_tasks(
@@ -1363,6 +1585,13 @@ class LaTeXTransTuiApp(App[None]):
             input_item=input_item,
             project_name=project_name,
             status=status,
+            engine=task.engine,
+            source_markdown_path=(
+                project.source_markdown_path if project is not None else None
+            ),
+            translated_markdown_path=(
+                project.translated_markdown_path if project is not None else None
+            ),
         )
 
     def _input_item_for_project(self, task: TaskViewState, project_name: str) -> str:
@@ -1384,6 +1613,47 @@ class LaTeXTransTuiApp(App[None]):
             tex_preview.update(self._latex_syntax(tex_path.read_text(encoding="utf-8")))
         except OSError as exc:
             tex_preview.update(f"无法读取 TeX 文件：{exc}")
+
+    def _refresh_markdown_previews(self, project: ProjectViewState) -> None:
+        """Render source and translated Markdown artifacts for a lite project."""
+        self._refresh_markdown_preview(
+            "#source-markdown-preview",
+            project.source_markdown_path,
+            "源",
+        )
+        self._refresh_markdown_preview(
+            "#translated-markdown-preview",
+            project.translated_markdown_path,
+            "译文",
+        )
+
+    def _refresh_markdown_preview(
+        self,
+        widget_id: str,
+        markdown_path: str | None,
+        label: str,
+    ) -> None:
+        """Render one Markdown artifact or a clear unavailable-artifact message."""
+        preview = self.query_one(widget_id, Static)
+        if not markdown_path:
+            preview.update(f"没有可用的{label} Markdown 文件。")
+            return
+        path = Path(markdown_path)
+        if not path.is_file():
+            preview.update(f"Markdown 文件不存在：{path}")
+            return
+        try:
+            preview.update(
+                Syntax(
+                    path.read_text(encoding="utf-8"),
+                    "markdown",
+                    theme="ansi_dark",
+                    line_numbers=True,
+                    word_wrap=True,
+                )
+            )
+        except OSError as exc:
+            preview.update(f"无法读取 Markdown 文件：{exc}")
 
     def _latex_syntax(self, source: str) -> Syntax:
         """把 TeX 源码转换为离线 Rich LaTeX 高亮对象。"""
@@ -2020,6 +2290,7 @@ class LaTeXTransTuiApp(App[None]):
                     items=task.inputs,
                     overrides={},
                     event_callback=callback,
+                    engine=task.engine,
                 )
             except Exception as exc:
                 if task.input_type == "remote" and task.total == 0:
@@ -2039,6 +2310,7 @@ class LaTeXTransTuiApp(App[None]):
             input_type=task.input_type,
             items=task.inputs,
             overrides={},
+            engine=task.engine,
         )
         self.task_processes[task_id] = process_handle
 
@@ -2137,6 +2409,20 @@ class LaTeXTransTuiApp(App[None]):
         self.load_config_page()
 
 
-def run() -> None:
-    """Run the LaTeXTransPlus terminal UI."""
-    LaTeXTransTuiApp().run()
+def _startup_engine(cli_engine: str | None) -> str:
+    """Resolve startup mode with CLI selection ahead of saved UI settings."""
+    if cli_engine is not None:
+        return normalize_engine(cli_engine)
+    try:
+        config = load_ui_config(Path.cwd())
+        return normalize_engine(config.get("engine", "heavy"))
+    except (OSError, ValueError):
+        return "heavy"
+
+
+def run(argv: Sequence[str] | None = None) -> None:
+    """Run the LaTeXTransPlus terminal UI with an optional session engine override."""
+    parser = argparse.ArgumentParser(prog="latextrans-tui")
+    parser.add_argument("--engine", "-e", choices=("heavy", "lite"), default=None)
+    args = parser.parse_args(argv)
+    LaTeXTransTuiApp(initial_engine=_startup_engine(args.engine)).run()

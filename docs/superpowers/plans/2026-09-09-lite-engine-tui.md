@@ -635,7 +635,7 @@ git commit -m "feat(tui): persist engine-specific task state"
 - Add `validate_lite_input(value: str) -> list[str]` and keep existing heavy validation behavior unchanged.
 - Add `config_fields_for_engine` usage to compose/populate/collect the settings form.
 
-- [ ] **Step 1: Write failing tests for entry parsing, startup precedence, and mode changes.**
+- [x] **Step 1: Write failing tests for entry parsing, startup precedence, and mode changes.**
 
 ```python
 class LiteInputParserTests(unittest.TestCase):
@@ -662,37 +662,39 @@ class TuiEngineModeTests(unittest.IsolatedAsyncioTestCase):
                 save.assert_not_called()
 ```
 
-- [ ] **Step 2: Run TUI tests and verify failure.**
+- [x] **Step 2: Run TUI tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_tui_input_parser tests.test_tui_app`
 
 Expected: FAIL because the TUI has no engine argument, mode switch, or dynamic detail layout.
 
-- [ ] **Step 3: Implement startup parsing and session engine state.**
+- [x] **Step 3: Implement startup parsing and session engine state.**
 
 Parse `--engine/-e` with `argparse`; if absent, load `ui.toml.engine`, otherwise default to heavy. Keep `ui.toml` unchanged for command-line overrides. Add a `Switch` below the entry action row and a label to its right. Use heavy as the switch-off state and lite as the switch-on state. Switch events call `set_engine` without persistence.
 
 When switching engines, update the title palette from the existing white-blue colors to white-light-gray for lite, refresh the input controls, reload the current engine history root, filter task/project tables, clear an incompatible selected project, refresh settings fields, and update detail tabs. Do not cancel or alter task processes; each task retains its creation engine.
 
-- [ ] **Step 4: Implement dynamic input and settings forms.**
+- [x] **Step 4: Implement dynamic input and settings forms.**
 
 Heavy keeps the current three input types and batch input. Lite displays one unified input option and rejects newline/comma batch input before task creation. New lite tasks use `input_type="pdf"`, one input item, and the current engine.
 
 Compose the settings form from `grouped_config_fields(self.effective_engine)`. Always show editable `engine`; show heavy-only `tex_sources_dir`, `paper_list`, `retranslate_with_terms`, and `heavy.validation.*` only in heavy mode; show only `lite.output_dir` for lite-specific fields. Saving form changes updates `ui.toml`, including engine, but does not call `set_engine` automatically.
 
-- [ ] **Step 5: Implement engine-specific detail views and project filtering.**
+- [x] **Step 5: Implement engine-specific detail views and project filtering.**
 
 Add read-only scrollable `source-markdown-tab` and `translated-markdown-tab` using Rich `Syntax(..., "markdown", ...)`. Keep the existing TeX preview and errors table widgets in the DOM if needed for stable Textual composition, but set their tab/display state according to the current engine. Lite detail tabs are source Markdown, translated Markdown, terms, log, and Zotero; heavy detail tabs remain TeX, terms, errors, log, and Zotero.
 
 Update project iteration, history root selection, selection clearing, retry input handling, and metadata writes to respect task engine. Lite project deletion removes only its own output directory. Lite retry starts a complete new PDF workflow with a fresh timestamped project directory.
 
-- [ ] **Step 6: Run TUI tests and verify success.**
+- [x] **Step 6: Run TUI tests and verify success.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_tui_input_parser tests.test_tui_app`
 
 Expected: PASS. Also run existing tests that exercise configuration widgets with mocked `save_ui_config` for the full `run_test()` lifecycle.
 
-- [ ] **Step 7: Commit the main TUI adaptation.**
+- [x] **Step 7: Commit the main TUI adaptation.**
+
+Implementation note: Added session-only engine switching, startup precedence, engine-specific entry/forms/details, Markdown previews, engine filtering, and initialization-event persistence protection.
 
 ```bash
 git add src/tui/app.py src/tui/input_parser.py tests/test_tui_input_parser.py tests/test_tui_app.py

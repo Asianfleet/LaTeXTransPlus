@@ -1,3 +1,4 @@
+import hashlib
 import json
 import unittest
 from pathlib import Path
@@ -5,6 +6,7 @@ from tempfile import TemporaryDirectory
 from unittest.mock import Mock, patch
 
 from rich.cells import cell_len
+from rich.syntax import Syntax
 from rich.text import Text
 from textual.css.query import NoMatches
 from textual.widgets import (
@@ -34,9 +36,16 @@ from src.tui.app import (
     _merge_project_log_text,
     build_app_title,
     compact_progress_log_for_display,
+    run,
 )
 from src.tui.history import TUI_PROJECT_METADATA_FILENAME
+from src.tui.config import UI_CONFIG_PATH
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
+
+
+def _file_sha256(path: Path) -> str:
+    """Return a file digest without exposing its contents in test output."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class TuiPackagingTests(unittest.TestCase):
@@ -53,18 +62,195 @@ class TuiPackagingTests(unittest.TestCase):
 
         self.assertTrue(callable(run))
 
+    def test_run_short_engine_flag_overrides_persisted_default(self):
+        """The short CLI engine flag must win without persisting a configuration change."""
+        with patch("src.tui.app.load_ui_config", return_value={"engine": "heavy"}), patch(
+            "src.tui.app.LaTeXTransTuiApp"
+        ) as app_class:
+            run(["-e", "lite"])
+
+        app_class.assert_called_once_with(initial_engine="lite")
+        app_class.return_value.run.assert_called_once_with()
+
+    def test_run_uses_persisted_engine_when_cli_does_not_override_it(self):
+        """The saved UI engine is the startup default when CLI omits --engine."""
+        with patch("src.tui.app.load_ui_config", return_value={"engine": "lite"}), patch(
+            "src.tui.app.LaTeXTransTuiApp"
+        ) as app_class:
+            run([])
+
+        app_class.assert_called_once_with(initial_engine="lite")
+
 
 class TuiAppTests(unittest.IsolatedAsyncioTestCase):
     """为所有 TUI 测试隔离真实项目配置文件。"""
 
     async def asyncSetUp(self) -> None:
         """在整个异步测试生命周期内拦截 UI 配置保存。"""
+        self._ui_config_hash = _file_sha256(Path.cwd() / UI_CONFIG_PATH)
         self._save_ui_config_patcher = patch("src.tui.app.save_ui_config")
         self.save_ui_config = self._save_ui_config_patcher.start()
 
     async def asyncTearDown(self) -> None:
         """在异步测试完成后恢复 UI 配置保存函数。"""
-        self._save_ui_config_patcher.stop()
+        try:
+            self.assertEqual(
+                _file_sha256(Path.cwd() / UI_CONFIG_PATH),
+                self._ui_config_hash,
+                "TUI 测试不得修改真实 UI 配置文件。",
+            )
+        finally:
+            self._save_ui_config_patcher.stop()
+
+
+class TuiEngineModeTests(TuiAppTests):
+    """Verify the TUI keeps heavy and lite session state isolated."""
+
+    async def test_initial_engine_mount_does_not_persist_configuration(self):
+        """Mounting an engine-specific form must not overwrite the saved UI default."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+        self.save_ui_config.assert_not_called()
+
+    async def test_settings_default_engine_persists_without_changing_active_session(self):
+        """Changing the saved default engine must leave the current Heavy session intact."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        with patch("src.tui.app.load_ui_config", return_value={"engine": "heavy"}):
+            async with app.run_test() as pilot:
+                await pilot.pause()
+                app.load_config_page()
+                await pilot.pause()
+                self.save_ui_config.reset_mock()
+
+                app.query_one("#config-engine", Select).value = "lite"
+                await pilot.pause()
+
+                saved_config = self.save_ui_config.call_args.args[1]
+                self.assertEqual(saved_config["engine"], "lite")
+                self.assertEqual(app.effective_engine, "heavy")
+                self.assertFalse(app.query_one("#engine-mode-switch", Switch).value)
+                self.assertEqual(app.query_one("#input-type-select", Select).value, "arxiv")
+
+    async def test_lite_mode_hides_heavy_tabs_and_shows_markdown_tabs(self):
+        """Lite mode must expose Markdown details instead of TeX validation details."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertFalse(app.query_one("#tex-tab").display)
+            self.assertFalse(app.query_one("#errors-tab").display)
+            tabs = app.query_one("#detail-tabs", TabbedContent)
+            self.assertFalse(tabs.get_tab("source-markdown-tab").has_class("-hidden"))
+            self.assertFalse(tabs.get_tab("translated-markdown-tab").has_class("-hidden"))
+
+    async def test_mode_switch_is_session_only_and_preserves_existing_task_engine(self):
+        """Changing the mode must not write config or alter an already-created task."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        existing_task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], engine="heavy")
+        app.tasks = [existing_task]
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.save_ui_config.reset_mock()
+            app.set_engine("lite")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            self.assertEqual(app.effective_engine, "lite")
+            self.assertEqual(existing_task.engine, "heavy")
+            self.save_ui_config.assert_not_called()
+
+    async def test_lite_mode_submits_one_pdf_task_and_rejects_batch_text(self):
+        """Lite entry creates a PDF task only after its single value validates."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test():
+            input_area = app.query_one("#batch-input", TextArea)
+            input_area.text = "first.pdf, second.pdf"
+            app.submit_entry_form()
+            self.assertIsNone(app.current_task)
+            self.assertIn("exactly one", str(app.query_one("#entry-error", Static).content))
+
+            input_area.text = "paper.pdf"
+            with patch.object(app, "start_current_task"), patch.object(app, "notify"):
+                app.submit_entry_form()
+
+            self.assertIsNotNone(app.current_task)
+            self.assertEqual(app.current_task.engine, "lite")
+            self.assertEqual(app.current_task.input_type, "pdf")
+            self.assertEqual(app.current_task.inputs, ["paper.pdf"])
+
+    async def test_lite_settings_only_show_shared_and_lite_fields(self):
+        """The settings form must not show heavy-only runtime controls in lite mode."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertIsNotNone(app.query_one("#config-engine", Select))
+            self.assertIsNotNone(app.query_one("#config-lite-output_dir", Input))
+            with self.assertRaises(NoMatches):
+                app.query_one("#config-heavy-tex_sources_dir", Input)
+            with self.assertRaises(NoMatches):
+                app.query_one("#config-heavy-validation-retry-max_attempts", Input)
+
+    async def test_switching_to_lite_rebuilds_settings_fields(self):
+        """Mode changes replace heavy settings fields with lite settings fields."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        async with app.run_test() as pilot:
+            app.set_engine("lite")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            self.assertIsNotNone(app.query_one("#config-lite-output_dir", Input))
+            with self.assertRaises(NoMatches):
+                app.query_one("#config-heavy-tex_sources_dir", Input)
+
+    async def test_mode_switch_filters_project_views_by_task_engine(self):
+        """Sidebar and management rows only show tasks created in the active mode."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        heavy_task = TaskViewState(input_type="arxiv", inputs=["heavy"], engine="heavy")
+        heavy_task.projects.append(ProjectViewState(project_name="heavy-project", engine="heavy"))
+        lite_task = TaskViewState(input_type="pdf", inputs=["lite.pdf"], engine="lite")
+        lite_task.projects.append(ProjectViewState(project_name="lite-project", engine="lite"))
+        app.tasks = [heavy_task, lite_task]
+        async with app.run_test() as pilot:
+            app.refresh_project_list()
+            self.assertIn(
+                "heavy-project",
+                str(app.query_one("#project-list", ListView).children[0].query_one(Static).content),
+            )
+
+            app.set_engine("lite")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            labels = [
+                str(item.query_one(Static).content)
+                for item in app.query_one("#project-list", ListView).children
+            ]
+            self.assertEqual(labels, ["lite-project"])
+
+    async def test_lite_detail_renders_markdown_and_reports_missing_artifact(self):
+        """Lite detail tabs render Markdown syntax and make a missing file explicit."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        with TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "source.md"
+            source_path.write_text("## Source\ntext", encoding="utf-8")
+            async with app.run_test() as pilot:
+                task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+                project = ProjectViewState(
+                    project_name="paper",
+                    engine="lite",
+                    source_markdown_path=str(source_path),
+                    translated_markdown_path=str(Path(temp_dir) / "translated.md"),
+                )
+                task.projects.append(project)
+                app.tasks = [task]
+                app.select_project("paper", task.task_id)
+                await pilot.pause()
+
+                source_preview = app.query_one("#source-markdown-preview", Static)
+                translated_preview = app.query_one("#translated-markdown-preview", Static)
+                self.assertIsInstance(source_preview.content, Syntax)
+                self.assertIn("## Source", source_preview.content.code)
+                self.assertIn("Markdown 文件不存在", str(translated_preview.content))
 
 
 class TuiLayoutTests(TuiAppTests):
@@ -262,6 +448,7 @@ class TuiEntryPageTests(TuiAppTests):
                     "entry-top-spacer",
                     "app-title",
                     "entry-actions",
+                    "engine-mode-control",
                     "entry-error",
                     "entry-bottom-offset",
                     "entry-bottom-spacer",
@@ -657,11 +844,9 @@ class TuiConfigPageTests(TuiAppTests):
         config = {
             "sys_name": "LaTeXTransPlus",
             "version": "0.1.0",
+            "engine": "heavy",
             "source_language": "en",
             "target_language": "ja",
-            "paper_list": ["2508.18791", "2407.01648"],
-            "tex_sources_dir": "tex source",
-            "output_dir": "outputs",
             "category": {"cs": ["cs.LG"]},
             "update_term": "True",
             "mode": "plain",
@@ -671,18 +856,24 @@ class TuiConfigPageTests(TuiAppTests):
                 "review_before_translate": False,
                 "max_llm_candidates": 30,
             },
-            "validation": {
-                "retry": {
-                    "max_attempts": 3,
-                    "generate_pdf_on_error": True,
-                    "fail_on_error": True,
-                },
-                "issues": {
-                    "command_mismatch": {"severity": "error", "retryable": True},
-                    "placeholder_mismatch": {"severity": "warning", "retryable": False},
-                    "bracket_mismatch": {"severity": "error", "retryable": True},
+            "heavy": {
+                "paper_list": ["2508.18791", "2407.01648"],
+                "tex_sources_dir": "tex source",
+                "output_dir": "outputs",
+                "validation": {
+                    "retry": {
+                        "max_attempts": 3,
+                        "generate_pdf_on_error": True,
+                        "fail_on_error": True,
+                    },
+                    "issues": {
+                        "command_mismatch": {"severity": "error", "retryable": True},
+                        "placeholder_mismatch": {"severity": "warning", "retryable": False},
+                        "bracket_mismatch": {"severity": "error", "retryable": True},
+                    },
                 },
             },
+            "lite": {"output_dir": "output-lite"},
             "llm_config": {
                 "profile": "deepseek",
             },
@@ -703,10 +894,10 @@ class TuiConfigPageTests(TuiAppTests):
                 self.assertEqual(app.query_one("#config-source_language", Select).value, "en")
                 self.assertTrue(app.query_one("#config-update_term", Switch).value)
                 self.assertEqual(
-                    app.query_one("#config-validation-issues-placeholder_mismatch-severity", Select).value,
+                    app.query_one("#config-heavy-validation-issues-placeholder_mismatch-severity", Select).value,
                     "warning",
                 )
-                self.assertFalse(app.query_one("#config-validation-issues-placeholder_mismatch-retryable", Switch).value)
+                self.assertFalse(app.query_one("#config-heavy-validation-issues-placeholder_mismatch-retryable", Switch).value)
                 self.assertEqual(
                     app.query_one("#config-zotero-local_api_base", Input).value,
                     "http://127.0.0.1:23119/api",
@@ -830,24 +1021,28 @@ class TuiConfigPageTests(TuiAppTests):
         config = {
             "sys_name": "LaTeXTransPlus",
             "version": "0.1.0",
+            "engine": "heavy",
             "source_language": "en",
             "target_language": "ja",
-            "paper_list": ["2508.18791"],
-            "tex_sources_dir": "tex source",
-            "output_dir": "outputs",
             "category": {},
             "update_term": "False",
             "mode": "plain",
             "user_term": "",
             "terminology": {"enabled": True, "review_before_translate": False, "max_llm_candidates": 30},
-            "validation": {
-                "retry": {"max_attempts": 3, "generate_pdf_on_error": True, "fail_on_error": True},
-                "issues": {
-                    "command_mismatch": {"severity": "error", "retryable": True},
-                    "placeholder_mismatch": {"severity": "error", "retryable": True},
-                    "bracket_mismatch": {"severity": "error", "retryable": True},
+            "heavy": {
+                "paper_list": ["2508.18791"],
+                "tex_sources_dir": "tex source",
+                "output_dir": "outputs",
+                "validation": {
+                    "retry": {"max_attempts": 3, "generate_pdf_on_error": True, "fail_on_error": True},
+                    "issues": {
+                        "command_mismatch": {"severity": "error", "retryable": True},
+                        "placeholder_mismatch": {"severity": "error", "retryable": True},
+                        "bracket_mismatch": {"severity": "error", "retryable": True},
+                    },
                 },
             },
+            "lite": {"output_dir": "output-lite"},
             "llm_config": {
                 "profile": "deepseek",
             },
@@ -866,9 +1061,9 @@ class TuiConfigPageTests(TuiAppTests):
                 app.query_one("#config-category", TextArea).text = '{"cs": ["cs.LG"]}'
                 app.query_one("#config-update_term", Switch).value = True
                 app.query_one("#config-terminology-max_llm_candidates", Input).value = "12"
-                app.query_one("#config-validation-retry-max_attempts", Input).value = "2"
-                app.query_one("#config-validation-issues-command_mismatch-severity", Select).value = "warning"
-                app.query_one("#config-validation-issues-command_mismatch-retryable", Switch).value = False
+                app.query_one("#config-heavy-validation-retry-max_attempts", Input).value = "2"
+                app.query_one("#config-heavy-validation-issues-command_mismatch-severity", Select).value = "warning"
+                app.query_one("#config-heavy-validation-issues-command_mismatch-retryable", Switch).value = False
                 app.query_one("#config-llm_config-profile", Input).value = "profile-x"
                 app.query_one("#config-zotero-local_api_base", Input).value = "http://localhost:23119/api"
                 app.query_one("#config-zotero-web_api_key_env", Input).value = "MY_ZOTERO_API_KEY"
@@ -880,13 +1075,13 @@ class TuiConfigPageTests(TuiAppTests):
             self.assertEqual(saved["version"], "0.1.0")
             self.assertEqual(saved["target_language"], "fr")
             self.assertEqual(saved["source_language"], "de")
-            self.assertEqual(saved["paper_list"], ["2508.18791"])
+            self.assertEqual(saved["heavy"]["paper_list"], ["2508.18791"])
             self.assertEqual(saved["category"], {"cs": ["cs.LG"]})
             self.assertEqual(saved["update_term"], "True")
             self.assertEqual(saved["terminology"]["max_llm_candidates"], 12)
-            self.assertEqual(saved["validation"]["retry"]["max_attempts"], 2)
-            self.assertEqual(saved["validation"]["issues"]["command_mismatch"]["severity"], "warning")
-            self.assertFalse(saved["validation"]["issues"]["command_mismatch"]["retryable"])
+            self.assertEqual(saved["heavy"]["validation"]["retry"]["max_attempts"], 2)
+            self.assertEqual(saved["heavy"]["validation"]["issues"]["command_mismatch"]["severity"], "warning")
+            self.assertFalse(saved["heavy"]["validation"]["issues"]["command_mismatch"]["retryable"])
             self.assertEqual(saved["llm_config"]["profile"], "profile-x")
             self.assertEqual(saved["zotero"]["local_api_base"], "http://localhost:23119/api")
             self.assertEqual(saved["zotero"]["web_api_key_env"], "MY_ZOTERO_API_KEY")
