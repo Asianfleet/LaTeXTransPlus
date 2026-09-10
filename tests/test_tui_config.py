@@ -4,7 +4,7 @@ from pathlib import Path
 
 import toml
 
-from src.tui.config import ensure_ui_config, load_ui_config, save_ui_config
+from src.tui.config import ensure_ui_config, load_ui_config, migrate_ui_config, save_ui_config
 
 
 class TuiConfigTests(unittest.TestCase):
@@ -56,6 +56,87 @@ class TuiConfigTests(unittest.TestCase):
         template = Path("config/template.toml").read_text(encoding="utf-8")
 
         self.assertIn('profile = "default"', template)
+
+    def test_legacy_config_moves_heavy_fields_and_adds_lite_defaults(self):
+        """Legacy heavy fields should migrate without losing user values."""
+        legacy = {
+            "source_language": "en",
+            "tex_sources_dir": "old-tex",
+            "output_dir": "old-output",
+            "paper_list": ["2508.18791"],
+            "retranslate_with_terms": True,
+            "validation": {"retry": {"max_attempts": 4}},
+        }
+
+        migrated = migrate_ui_config(legacy)
+
+        self.assertEqual(migrated["engine"], "heavy")
+        self.assertEqual(migrated["heavy"]["tex_sources_dir"], "old-tex")
+        self.assertEqual(migrated["heavy"]["output_dir"], "old-output")
+        self.assertEqual(migrated["heavy"]["paper_list"], ["2508.18791"])
+        self.assertTrue(migrated["heavy"]["retranslate_with_terms"])
+        self.assertEqual(migrated["heavy"]["validation"]["retry"]["max_attempts"], 4)
+        self.assertEqual(migrated["lite"]["output_dir"], "output-lite")
+        self.assertEqual(legacy["output_dir"], "old-output")
+        for key in ("tex_sources_dir", "output_dir", "paper_list", "retranslate_with_terms", "validation"):
+            self.assertNotIn(key, migrated)
+
+    def test_migration_preserves_existing_nested_engine_values(self):
+        """Existing engine sections should win over legacy duplicates and defaults."""
+        legacy = {
+            "output_dir": "legacy-output",
+            "heavy": {"output_dir": "nested-output", "tex_sources_dir": "nested-tex"},
+            "lite": {"output_dir": "nested-lite"},
+        }
+
+        migrated = migrate_ui_config(legacy)
+
+        self.assertEqual(migrated["heavy"]["output_dir"], "nested-output")
+        self.assertEqual(migrated["heavy"]["tex_sources_dir"], "nested-tex")
+        self.assertEqual(migrated["lite"]["output_dir"], "nested-lite")
+
+    def test_load_ui_config_persists_legacy_migration(self):
+        """Loading a legacy UI file should migrate and persist it once."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            ui_path = config_dir / "ui.toml"
+            ui_path.write_text(
+                'source_language = "en"\noutput_dir = "kept-output"\ntex_sources_dir = "kept-tex"\n',
+                encoding="utf-8",
+            )
+
+            loaded = load_ui_config(root)
+            persisted = toml.load(ui_path)
+
+            self.assertEqual(loaded["heavy"]["output_dir"], "kept-output")
+            self.assertEqual(loaded["heavy"]["tex_sources_dir"], "kept-tex")
+            self.assertEqual(persisted, loaded)
+
+    def test_ensure_ui_config_does_not_rewrite_modern_file(self):
+        """A modern UI config should retain its exact formatting and comments."""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            config_dir = root / "config"
+            config_dir.mkdir()
+            ui_path = config_dir / "ui.toml"
+            original = '# retain this comment\nengine = "lite"\n\n[heavy]\noutput_dir = "h"\n\n[lite]\noutput_dir = "l"\n'
+            ui_path.write_text(original, encoding="utf-8")
+
+            self.assertEqual(ensure_ui_config(root), ui_path)
+            self.assertEqual(ui_path.read_text(encoding="utf-8"), original)
+
+    def test_project_configs_use_nested_engine_sections(self):
+        """Default and template configs should expose the same engine layout."""
+        for path in (Path("config/default.toml"), Path("config/template.toml")):
+            with self.subTest(path=path):
+                config = toml.load(path)
+                self.assertEqual(config["engine"], "heavy")
+                self.assertIn("validation", config["heavy"])
+                self.assertEqual(config["lite"]["output_dir"], "output-lite")
+                for key in ("tex_sources_dir", "output_dir", "paper_list", "retranslate_with_terms", "validation"):
+                    self.assertNotIn(key, config)
 
 
 if __name__ == "__main__":

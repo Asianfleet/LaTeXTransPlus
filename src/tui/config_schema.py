@@ -7,6 +7,8 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from src.engines.base import normalize_engine
+
 
 FieldKind = Literal["input", "textarea", "select", "switch", "integer"]
 
@@ -46,40 +48,66 @@ SEVERITY_OPTIONS: tuple[tuple[str, str], ...] = (
     ("warning", "warning"),
 )
 
-CONFIG_FIELDS: tuple[ConfigField, ...] = (
+ENGINE_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("Heavy", "heavy"),
+    ("Lite", "lite"),
+)
+
+SHARED_CONFIG_FIELDS: tuple[ConfigField, ...] = (
+    ConfigField(("engine",), "默认引擎", "select", "基础", "heavy", ENGINE_OPTIONS),
     ConfigField(("source_language",), "源语言", "select", "基础", "en", LANGUAGE_OPTIONS),
     ConfigField(("target_language",), "目标语言", "select", "基础", "ch", LANGUAGE_OPTIONS),
-    ConfigField(("tex_sources_dir",), "TeX 源目录", "input", "基础", "tex source"),
-    ConfigField(("output_dir",), "输出目录", "input", "基础", "outputs"),
     ConfigField(("category",), "术语领域", "textarea", "基础", {}),
     ConfigField(("update_term",), "动态术语更新", "switch", "基础", "False"),
     ConfigField(("mode",), "翻译模式", "select", "基础", "plain", MODE_OPTIONS),
     ConfigField(("user_term",), "用户术语文件", "input", "基础", ""),
-    ConfigField(("retranslate_with_terms",), "使用已有术语重译", "switch", "基础", False),
     ConfigField(("terminology", "enabled"), "启用项目术语", "switch", "术语", True),
     ConfigField(("terminology", "review_before_translate"), "术语审核后再翻译", "switch", "术语", False),
     ConfigField(("terminology", "max_llm_candidates"), "候选术语上限", "integer", "术语", 30),
-    ConfigField(("validation", "retry", "max_attempts"), "校验重试次数", "integer", "校验", 3),
-    ConfigField(("validation", "retry", "generate_pdf_on_error"), "错误时仍生成 PDF", "switch", "校验", True),
-    ConfigField(("validation", "retry", "fail_on_error"), "校验错误标记失败", "switch", "校验", True),
-    ConfigField(("validation", "issues", "command_mismatch", "severity"), "命令不匹配级别", "select", "校验", "error", SEVERITY_OPTIONS),
-    ConfigField(("validation", "issues", "command_mismatch", "retryable"), "命令不匹配可重试", "switch", "校验", True),
-    ConfigField(("validation", "issues", "placeholder_mismatch", "severity"), "占位符不匹配级别", "select", "校验", "error", SEVERITY_OPTIONS),
-    ConfigField(("validation", "issues", "placeholder_mismatch", "retryable"), "占位符不匹配可重试", "switch", "校验", True),
-    ConfigField(("validation", "issues", "bracket_mismatch", "severity"), "括号不匹配级别", "select", "校验", "error", SEVERITY_OPTIONS),
-    ConfigField(("validation", "issues", "bracket_mismatch", "retryable"), "括号不匹配可重试", "switch", "校验", True),
     ConfigField(("llm_config", "profile"), "LLM 配置 profile", "input", "LLM", ""),
     ConfigField(("zotero", "local_api_base"), "Zotero 本地 API", "input", "Zotero", "http://127.0.0.1:23119/api"),
     ConfigField(("zotero", "web_api_key_env"), "Zotero Web API key 环境变量", "input", "Zotero", "ZOTERO_API_KEY"),
 )
 
+HEAVY_CONFIG_FIELDS: tuple[ConfigField, ...] = (
+    ConfigField(("heavy", "tex_sources_dir"), "TeX 源目录", "input", "基础", "tex source"),
+    ConfigField(("heavy", "output_dir"), "输出目录", "input", "基础", "outputs"),
+    ConfigField(("heavy", "paper_list"), "论文列表", "textarea", "基础", []),
+    ConfigField(("heavy", "retranslate_with_terms"), "使用已有术语重译", "switch", "基础", False),
+    ConfigField(("heavy", "validation", "retry", "max_attempts"), "校验重试次数", "integer", "校验", 3),
+    ConfigField(("heavy", "validation", "retry", "generate_pdf_on_error"), "错误时仍生成 PDF", "switch", "校验", True),
+    ConfigField(("heavy", "validation", "retry", "fail_on_error"), "校验错误标记失败", "switch", "校验", True),
+    ConfigField(("heavy", "validation", "issues", "command_mismatch", "severity"), "命令不匹配级别", "select", "校验", "error", SEVERITY_OPTIONS),
+    ConfigField(("heavy", "validation", "issues", "command_mismatch", "retryable"), "命令不匹配可重试", "switch", "校验", True),
+    ConfigField(("heavy", "validation", "issues", "placeholder_mismatch", "severity"), "占位符不匹配级别", "select", "校验", "error", SEVERITY_OPTIONS),
+    ConfigField(("heavy", "validation", "issues", "placeholder_mismatch", "retryable"), "占位符不匹配可重试", "switch", "校验", True),
+    ConfigField(("heavy", "validation", "issues", "bracket_mismatch", "severity"), "括号不匹配级别", "select", "校验", "error", SEVERITY_OPTIONS),
+    ConfigField(("heavy", "validation", "issues", "bracket_mismatch", "retryable"), "括号不匹配可重试", "switch", "校验", True),
+)
 
-def grouped_config_fields() -> list[tuple[str, list[ConfigField]]]:
+LITE_CONFIG_FIELDS: tuple[ConfigField, ...] = (
+    ConfigField(("lite", "output_dir"), "输出目录", "input", "基础", "output-lite"),
+)
+
+# 保留旧调用方的默认 heavy 字段集；动态表单应使用 config_fields_for_engine。
+CONFIG_FIELDS: tuple[ConfigField, ...] = SHARED_CONFIG_FIELDS + HEAVY_CONFIG_FIELDS
+
+
+def config_fields_for_engine(engine: str) -> tuple[ConfigField, ...]:
+    """Return shared fields plus only the selected engine's settings."""
+    selected = normalize_engine(engine)
+    engine_fields = HEAVY_CONFIG_FIELDS if selected == "heavy" else LITE_CONFIG_FIELDS
+    return SHARED_CONFIG_FIELDS + engine_fields
+
+
+def grouped_config_fields(engine: str = "heavy") -> list[tuple[str, list[ConfigField]]]:
     """按设置页展示顺序返回字段分组。"""
     sections = ["基础", "术语", "校验", "LLM", "Zotero"]
+    visible_fields = config_fields_for_engine(engine)
     return [
-        (section, [field for field in CONFIG_FIELDS if field.section == section])
+        (section, fields)
         for section in sections
+        if (fields := [field for field in visible_fields if field.section == section])
     ]
 
 
@@ -110,6 +138,8 @@ def form_text_for_field(field: ConfigField, config: dict[str, Any]) -> str:
     value = get_config_value(config, field.path, field.default)
     if field.path == ("category",):
         return json.dumps(value or {}, ensure_ascii=False)
+    if field.path[-1] == "paper_list":
+        return json.dumps(value or [], ensure_ascii=False)
     return "" if value is None else str(value)
 
 
@@ -134,10 +164,10 @@ def normalized_config_from_form(
 ) -> dict[str, Any]:
     """把表单字段值合并回配置副本，保留不可编辑元数据。"""
     config = copy.deepcopy(base_config)
-    if "llm_config" in config:
+    if any(path[0] == "llm_config" for path in values):
         config["llm_config"] = {}
-    for field in CONFIG_FIELDS:
-        set_config_value(config, field.path, values[field.path])
+    for path, value in values.items():
+        set_config_value(config, path, value)
     return config
 
 
@@ -150,6 +180,14 @@ def parse_textarea_value(field: ConfigField, text: str) -> Any:
         value = json.loads(stripped)
         if not isinstance(value, dict):
             raise ValueError("category 必须是 JSON object。")
+        return value
+    if field.path[-1] == "paper_list":
+        stripped = text.strip()
+        if not stripped:
+            return []
+        value = json.loads(stripped)
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise ValueError("paper_list 必须是 JSON string array。")
         return value
     return text
 

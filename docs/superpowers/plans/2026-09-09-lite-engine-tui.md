@@ -85,7 +85,7 @@ Modify or add tests under `tests/`, keeping the existing standard-library `unitt
 - Produce `load_ui_config(project_root: Path) -> dict[str, Any]` that initializes and migrates the file while preserving user paths.
 - Produce `config_fields_for_engine(engine: str) -> tuple[ConfigField, ...]` and `grouped_config_fields(engine: str) -> list[tuple[str, list[ConfigField]]]`.
 
-- [ ] **Step 1: Write failing tests for engine normalization and migration.**
+- [x] **Step 1: Write failing tests for engine normalization and migration.**
 
 ```python
 class EngineConfigTests(unittest.TestCase):
@@ -112,13 +112,13 @@ class EngineConfigTests(unittest.TestCase):
         self.assertEqual(migrated["lite"]["output_dir"], "output-lite")
 ```
 
-- [ ] **Step 2: Run focused tests and verify they fail.**
+- [x] **Step 2: Run focused tests and verify they fail.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_engine_config tests.test_tui_config tests.test_tui_config_schema`
 
 Expected: FAIL because the engine helpers and migration behavior do not exist.
 
-- [ ] **Step 3: Implement the new config layout and migration.**
+- [x] **Step 3: Implement the new config layout and migration.**
 
 Use this effective file shape:
 
@@ -156,13 +156,15 @@ Keep a migration function separate from file I/O so it can be tested with dictio
 
 `engine_config` must merge selected `[heavy]` or `[lite]` values into a new runtime-facing dictionary. Heavy callers receive `tex_sources_dir`, `output_dir`, `paper_list`, `retranslate_with_terms`, and `validation`; lite callers receive `output_dir` plus `engine="lite"` and no heavy validation fields.
 
-- [ ] **Step 4: Run focused tests and verify they pass.**
+- [x] **Step 4: Run focused tests and verify they pass.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_engine_config tests.test_tui_config tests.test_tui_config_schema`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the configuration foundation.**
+- [x] **Step 5: Commit the configuration foundation.**
+
+Implementation note: Added engine normalization, effective engine config merging, legacy UI configuration migration, and engine-scoped settings fields. Focused configuration tests pass.
 
 ```bash
 git add src/engines src/tui/config.py src/tui/config_schema.py config/default.toml config/template.toml config/ui.toml tests/test_engine_config.py tests/test_tui_config.py tests/test_tui_config_schema.py
@@ -186,7 +188,7 @@ git commit -m "feat(config): add heavy and lite engine settings"
 - Produce `prepare_lite_project(spec: LiteInputSpec, output_root: Path, http_get: Callable[..., Any] | None = None, now: datetime | None = None) -> PreparedLiteProject`.
 - `PreparedLiteProject` must expose `project_dir: Path`, `source_pdf: Path`, `project_name: str`, `input_item: str`, and `input_type: str`.
 
-- [ ] **Step 1: Write failing tests for all accepted input forms.**
+- [x] **Step 1: Write failing tests for all accepted input forms.**
 
 ```python
 class LiteInputTests(unittest.TestCase):
@@ -217,13 +219,13 @@ class LiteInputTests(unittest.TestCase):
         self.assertEqual(prepared.source_pdf.name, "source.pdf")
 ```
 
-- [ ] **Step 2: Run the focused input tests and verify failure.**
+- [x] **Step 2: Run the focused input tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_inputs`
 
 Expected: FAIL because lite input parsing and preparation are not implemented.
 
-- [ ] **Step 3: Implement input parsing and preparation.**
+- [x] **Step 3: Implement input parsing and preparation.**
 
 Recognize versioned arXiv IDs with the existing project convention. For arXiv abstract URLs, derive `https://arxiv.org/pdf/<id>.pdf`; for arXiv PDF URLs, preserve the normalized PDF URL. For non-arXiv HTTP/HTTPS inputs, download the URL into the timestamped project directory as `source.pdf`. For local PDF inputs, copy the source to `source.pdf` and reject missing, non-file, or non-PDF paths.
 
@@ -231,13 +233,15 @@ Sanitize stable names to safe path components while retaining alphanumeric chara
 
 Make the HTTP download dependency injectable and ensure partial files are removed on network or `OSError` failures.
 
-- [ ] **Step 4: Run focused tests and verify success.**
+- [x] **Step 4: Run focused tests and verify success.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_inputs`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the lite input module.**
+- [x] **Step 5: Commit the lite input module.**
+
+Implementation note: Added Lite PDF/arXiv/local input parsing, self-contained source PDF preparation, safe project names, and failure cleanup.
 
 ```bash
 git add src/engines/lite_inputs.py tests/test_lite_inputs.py
@@ -260,7 +264,7 @@ git commit -m "feat(lite): add pdf input acquisition"
 - Produce `protect_markdown(text: str) -> ProtectedMarkdown` and `restore_markdown(text: str, protected: ProtectedMarkdown) -> str`.
 - `ProtectedMarkdown` must contain the protected-token mapping and the protected text.
 
-- [ ] **Step 1: Write failing tests for the `##` scanner.**
+- [x] **Step 1: Write failing tests for the `##` scanner.**
 
 ```python
 class MarkdownBlockTests(unittest.TestCase):
@@ -286,13 +290,13 @@ class MarkdownBlockTests(unittest.TestCase):
         self.assertEqual(rebuild_markdown(blocks), "## A\n翻译A\n## B\n翻译B")
 ```
 
-- [ ] **Step 2: Run the Markdown tests and verify failure.**
+- [x] **Step 2: Run the Markdown tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_markdown`
 
 Expected: FAIL because the scanner and reconstruction functions do not exist.
 
-- [ ] **Step 3: Implement the stateful scanner and protected-region codec.**
+- [x] **Step 3: Implement the stateful scanner and protected-region codec.**
 
 Scan line by line with fenced-code state. Recognize only a line whose first non-whitespace characters are exactly `##` followed by whitespace or end-of-line; do not recognize `###`, indented code, or headings inside fences. Preserve all original separators in block text so concatenation does not change Markdown layout.
 
@@ -300,13 +304,15 @@ The protection codec must replace and restore code fences, inline code, math spa
 
 Ensure `rebuild_markdown` sorts by block index and rejects duplicate or missing indices rather than silently producing corrupt output.
 
-- [ ] **Step 4: Run focused tests and add protection regression cases.**
+- [x] **Step 4: Run focused tests and add protection regression cases.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_markdown`
 
 Expected: PASS, including tests that code, formulas, URLs, table separators, front-matter, and footnote structures survive protect/restore unchanged.
 
-- [ ] **Step 5: Commit the Markdown module.**
+- [x] **Step 5: Commit the Markdown module.**
+
+Implementation note: Added fenced-heading splitting, protected Markdown reconstruction, and regression coverage for links, code, tables, footnotes, and references.
 
 ```bash
 git add src/engines/lite_markdown.py tests/test_lite_markdown.py
@@ -329,7 +335,7 @@ git commit -m "feat(lite): split and protect markdown blocks"
 - Produce `class PandocPdfGenerator` with `generate(markdown_path: Path, pdf_path: Path, target_language: str) -> Path`.
 - Both adapters must accept injected runner/client factories for tests.
 
-- [ ] **Step 1: Write failing adapter tests using fakes.**
+- [x] **Step 1: Write failing adapter tests using fakes.**
 
 ```python
 class LiteAdapterTests(unittest.TestCase):
@@ -350,25 +356,27 @@ class LiteAdapterTests(unittest.TestCase):
         self.assertIn("xelatex", runner.command)
 ```
 
-- [ ] **Step 2: Run adapter tests and verify failure.**
+- [x] **Step 2: Run adapter tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_adapters`
 
 Expected: FAIL because the adapters do not exist.
 
-- [ ] **Step 3: Add and use the documented MinerU SDK dependency.**
+- [x] **Step 3: Add and use the documented MinerU SDK dependency.**
 
 Add the SDK package selected from the current MinerU SDK documentation (`mineru-open-sdk`) to `requirements.txt` with a compatible version constraint. Import it lazily inside the adapter so heavy users do not fail during module import when lite is unused. Normalize the SDK result through a small internal protocol that can obtain Markdown text and associated resources, then write `source.md` and resource files under the project directory. Reject missing or empty Markdown and remove partial resources on write failure.
 
 Implement Pandoc execution with `subprocess.run(..., check=True, capture_output=True, text=True)`. Use `pandoc <markdown> -o <pdf> --pdf-engine=xelatex`; add a CJK-capable geometry/font configuration only through explicit arguments/configuration rather than hard-coded platform-specific paths. Log stdout/stderr through the existing project log callback at the orchestration layer. Require an existing, nonempty PDF after the process returns.
 
-- [ ] **Step 4: Run adapter tests and verify success.**
+- [x] **Step 4: Run adapter tests and verify success.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_adapters`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit the external-tool adapters.**
+- [x] **Step 5: Commit the external-tool adapters.**
+
+Implementation note: Added lazy MinerU SDK and Pandoc/XeLaTeX adapters with injected test doubles and artifact cleanup.
 
 ```bash
 git add src/engines/lite_mineru.py src/engines/lite_pdf.py requirements.txt tests/test_lite_adapters.py
@@ -392,7 +400,7 @@ git commit -m "feat(lite): add MinerU and Pandoc adapters"
 - Produce `MarkdownTranslatorAgent(config: dict[str, Any], source_markdown: Path, output_dir: Path, blocks: Sequence[MarkdownBlock])` with `async execute() -> Path`.
 - The translator must expose an injectable async `request_translation(text: str, glossary: dict[str, str], block_index: int) -> str` callback for tests.
 
-- [ ] **Step 1: Write failing terminology tests.**
+- [x] **Step 1: Write failing terminology tests.**
 
 ```python
 class MarkdownTerminologyTests(unittest.TestCase):
@@ -406,17 +414,17 @@ class MarkdownTerminologyTests(unittest.TestCase):
         self.assertEqual(read_terms(output_dir / "project_terms.csv")["neural representation"], "神经表示")
 ```
 
-- [ ] **Step 2: Run terminology tests and verify failure.**
+- [x] **Step 2: Run terminology tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_markdown_terminology_agent`
 
 Expected: FAIL because the Markdown terminology agent does not exist.
 
-- [ ] **Step 3: Implement Markdown terminology collection.**
+- [x] **Step 3: Implement Markdown terminology collection.**
 
 Reuse the existing terminology candidate filtering, batching, language labels, merge precedence, CSV format, and decision JSON schema. Replace LaTeX map collection with Markdown text collection. Include source Markdown context around candidates and document-level title/abstract context when present. If the source language is not English, preserve the existing multilingual behavior rather than forcing English-only candidate rules. If the candidate list is empty, write a valid empty CSV and decision JSON and return success. Any LLM request failure raises and lets the lite workflow mark the project failed; `review_before_translate` is ignored for lite.
 
-- [ ] **Step 4: Write failing translator tests for concurrency, ordering, glossary, and failure.**
+- [x] **Step 4: Write failing translator tests for concurrency, ordering, glossary, and failure.**
 
 ```python
 class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
@@ -440,23 +448,25 @@ class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
             ).execute()
 ```
 
-- [ ] **Step 5: Run translator tests and verify failure.**
+- [x] **Step 5: Run translator tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_markdown_translator_agent`
 
 Expected: FAIL because the translator agent does not exist.
 
-- [ ] **Step 6: Implement asynchronous block translation.**
+- [x] **Step 6: Implement asynchronous block translation.**
 
 Load `project_terms.csv` with the existing terminology loader. Protect each block before calling the LLM, include the glossary in the system prompt when nonempty, and restore protected tokens after the response. Use an `asyncio.Semaphore` from lite configuration or a default of 10. Gather all block tasks with their original indices, sort by index, and write `translated.md` atomically only after every block succeeds. Keep the pre-heading block translatable unless it consists only of protected/non-text content. Do not retry at the workflow level; the request helper may use the existing bounded provider retry behavior, but final failure must raise.
 
-- [ ] **Step 7: Run both focused agent test modules and verify success.**
+- [x] **Step 7: Run both focused agent test modules and verify success.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_markdown_terminology_agent tests.test_markdown_translator_agent`
 
 Expected: PASS.
 
-- [ ] **Step 8: Commit the Markdown agents.**
+- [x] **Step 8: Commit the Markdown agents.**
+
+Implementation note: Added Markdown terminology generation and concurrent protected block translation with glossary and multilingual regression coverage.
 
 ```bash
 git add src/agents/tool_agents/markdown_terminology_agent.py src/agents/tool_agents/markdown_translator_agent.py tests/test_markdown_terminology_agent.py tests/test_markdown_translator_agent.py
