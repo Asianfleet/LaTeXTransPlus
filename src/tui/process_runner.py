@@ -91,12 +91,15 @@ def _process_entry(
     items: list[str],
     overrides: dict[str, Any],
     message_queue: Queue,
+    engine: str = "heavy",
 ) -> None:
     """Execute one TUI task and publish events, result, or failure to the queue."""
 
     def emit_event(event: dict[str, Any]) -> None:
         """Publish a runtime event tagged for the parent process."""
-        message_queue.put(("event", event))
+        tagged_event = dict(event)
+        tagged_event["engine"] = engine
+        message_queue.put(("event", tagged_event))
 
     def emit_console_line(line: str, level: str) -> None:
         """Publish output from uninstrumented task code as a task-level log."""
@@ -110,6 +113,7 @@ def _process_entry(
                 items=items,
                 overrides=overrides,
                 event_callback=emit_event,
+                engine=engine,
             )
             message_queue.put(("result", result))
         except Exception as exc:  # pragma: no cover - exact exception comes from runtime integrations
@@ -121,6 +125,7 @@ def start_tui_task_process(
     input_type: str,
     items: list[str],
     overrides: dict[str, Any],
+    engine: str = "heavy",
 ) -> TuiTaskProcess:
     """Start a translation task in a fresh process using the spawn context."""
 
@@ -128,7 +133,7 @@ def start_tui_task_process(
     message_queue = context.Queue()
     process = context.Process(
         target=_process_entry,
-        args=(config_path, input_type, list(items), dict(overrides), message_queue),
+        args=(config_path, input_type, list(items), dict(overrides), message_queue, engine),
     )
     process.start()
     return TuiTaskProcess(process=process, queue=message_queue)

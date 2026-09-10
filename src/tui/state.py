@@ -35,6 +35,9 @@ class ProjectViewState:
     error: str | None = None
     zotero_status: str = "not_imported"
     log_lines: list[str] = field(default_factory=list)
+    engine: str = "heavy"
+    source_markdown_path: str | None = None
+    translated_markdown_path: str | None = None
 
 
 @dataclass
@@ -53,6 +56,7 @@ class TaskViewState:
     events: list[dict[str, Any]] = field(default_factory=list)
     task_log_lines: list[str] = field(default_factory=list)
     projects: list[ProjectViewState] = field(default_factory=list)
+    engine: str = "heavy"
 
     def apply_event(self, event: dict[str, Any]) -> None:
         """Merge a runtime event into UI state."""
@@ -96,16 +100,21 @@ class TaskViewState:
         for project in self.projects:
             if project.project_name == project_name:
                 return project
-        project = ProjectViewState(project_name=project_name)
+        project = ProjectViewState(project_name=project_name, engine=self.engine)
         self.projects.append(project)
         return project
 
     def _copy_project_fields(self, project: ProjectViewState, event: dict[str, Any]) -> None:
         """Copy known runtime event fields into a project view state."""
+        event_engine = event.get("engine")
+        if event_engine in {"heavy", "lite"}:
+            project.engine = str(event_engine)
         for key in (
             "project_dir",
             "output_dir",
             "pdf_path",
+            "source_markdown_path",
+            "translated_markdown_path",
             "errors_report_path",
             "project_terms_path",
             "project_terms_decisions_path",

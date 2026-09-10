@@ -6,7 +6,7 @@ import unittest
 from pathlib import Path
 
 from src.tui.history import load_output_history
-from src.tui.state import ProjectStatus, TaskViewState
+from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
 
 
 class TuiStateTests(unittest.TestCase):
@@ -172,6 +172,57 @@ class TuiStateTests(unittest.TestCase):
         self.assertEqual(tasks[0].projects[0].status, ProjectStatus.CANCELLED)
         self.assertEqual(tasks[0].completed, 0)
         self.assertEqual(tasks[0].failed, 0)
+
+
+class TuiStateEngineTests(unittest.TestCase):
+    """Verify engine-specific runtime artifacts remain attached to their task."""
+
+    def test_lite_event_copies_markdown_paths_and_engine(self):
+        """Lite completion events should expose both Markdown artifacts."""
+        task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+
+        task.apply_event(
+            {
+                "type": "project_complete",
+                "engine": "lite",
+                "project_name": "paper_1",
+                "source_markdown_path": "/tmp/source.md",
+                "translated_markdown_path": "/tmp/translated.md",
+            }
+        )
+
+        project = task.projects[0]
+        self.assertEqual(task.engine, "lite")
+        self.assertEqual(project.engine, "lite")
+        self.assertEqual(project.source_markdown_path, "/tmp/source.md")
+        self.assertEqual(project.translated_markdown_path, "/tmp/translated.md")
+
+    def test_project_without_event_engine_inherits_task_engine(self):
+        """A task should keep its creation engine when later events omit it."""
+        task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+
+        task.apply_event({"type": "project_start", "project_name": "paper_1"})
+
+        self.assertEqual(task.projects[0].engine, "lite")
+
+    def test_legacy_task_construction_defaults_to_heavy(self):
+        """Existing callers that omit engine should retain heavy semantics."""
+        task = TaskViewState(input_type="arxiv", inputs=["2508.18791"])
+
+        task.apply_event({"type": "project_start", "project_name": "2508.18791"})
+
+        self.assertEqual(task.engine, "heavy")
+        self.assertEqual(task.projects[0].engine, "heavy")
+
+    def test_new_engine_fields_preserve_legacy_positional_arguments(self):
+        """Appending engine fields should not reinterpret old positional values."""
+        project = ProjectViewState("paper", ProjectStatus.COMPLETED)
+        task = TaskViewState("arxiv", ["paper"], "task-id")
+
+        self.assertEqual(project.status, ProjectStatus.COMPLETED)
+        self.assertEqual(project.engine, "heavy")
+        self.assertEqual(task.task_id, "task-id")
+        self.assertEqual(task.engine, "heavy")
 
 
 if __name__ == "__main__":

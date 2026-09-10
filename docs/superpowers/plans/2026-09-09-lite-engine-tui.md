@@ -569,7 +569,7 @@ git commit -m "feat(runtime): dispatch heavy and lite translation engines"
 - Extend `load_output_history(output_root: Path, engine: str = "heavy") -> list[TaskViewState]`.
 - Extend `write_project_metadata(..., engine: str = "heavy", source_markdown_path: str | None = None, translated_markdown_path: str | None = None)`.
 
-- [ ] **Step 1: Write failing state/history tests.**
+- [x] **Step 1: Write failing state/history tests.**
 
 ```python
 class TuiStateEngineTests(unittest.TestCase):
@@ -591,25 +591,27 @@ class TuiHistoryEngineTests(unittest.TestCase):
         self.assertIsNone(tasks[0].projects[0].errors_report_path)
 ```
 
-- [ ] **Step 2: Run focused TUI state/history tests and verify failure.**
+- [x] **Step 2: Run focused TUI state/history tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_tui_state tests.test_tui_history tests.test_tui_process_runner tests.test_tui_runner`
 
 Expected: FAIL because engine and Markdown fields are not propagated.
 
-- [ ] **Step 3: Implement state, metadata, history, and process propagation.**
+- [x] **Step 3: Implement state, metadata, history, and process propagation.**
 
 Copy `engine`, `source_markdown_path`, and `translated_markdown_path` from events into project state. Persist `schema_version=2`, engine, input metadata, and Markdown paths. For legacy directories, infer heavy from the old artifact set; for lite, recognize `source.md`/`translated.md` and do not infer errors from the absence of `errors_report.json`. History scanning must use the caller-provided engine and its output root.
 
 Pass engine from the task object through `run_tui_task`, spawned process arguments, and runtime overrides. A task created in one mode must continue using that mode even if the UI slider later changes. Keep process termination behavior unchanged.
 
-- [ ] **Step 4: Run focused tests and verify success.**
+- [x] **Step 4: Run focused tests and verify success.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_tui_state tests.test_tui_history tests.test_tui_process_runner tests.test_tui_runner`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit state and runner integration.**
+- [x] **Step 5: Commit state and runner integration.**
+
+Implementation note: Added engine-specific TUI task state, process propagation, schema-v2 history metadata, engine filtering, and runtime error-event coverage.
 
 ```bash
 git add src/tui/runner.py src/tui/process_runner.py src/tui/state.py src/tui/history.py tests/test_tui_state.py tests/test_tui_history.py tests/test_tui_process_runner.py tests/test_tui_runner.py

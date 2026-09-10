@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.tui.runner import run_tui_task
+from src.tui.state import TaskViewState
 
 
 class TuiRunnerTests(unittest.TestCase):
@@ -207,9 +208,121 @@ class TuiRunnerTests(unittest.TestCase):
                             events.append,
                         )
 
-        self.assertEqual([event["type"] for event in events], ["project_error", "project_complete"])
-        self.assertEqual(events[0]["project_name"], r"D:\missing")
-        self.assertIn("准备阶段跳过", events[0]["error"])
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["run_start", "project_complete", "project_error"],
+        )
+        self.assertEqual(events[0]["total"], 2)
+        self.assertEqual(events[2]["project_name"], r"D:\missing")
+        self.assertIn("准备阶段跳过", events[2]["error"])
+
+    def test_run_tui_task_does_not_fabricate_prepare_errors_for_execution_value_error(self):
+        """An execution ValueError must not be presented as failed input preparation."""
+        config = {"target_language": "ch", "paper_list": []}
+        events = []
+
+        def fail_during_execution(**kwargs):
+            """Expose an execution boundary before raising an unrelated ValueError."""
+            kwargs["event_callback"]({"type": "project_start", "project_name": "valid"})
+            raise ValueError("translator payload is invalid")
+
+        with patch("src.tui.runner.ensure_ui_config", return_value=Path("config/ui.toml")):
+            with patch("src.tui.runner.runtime.load_runtime_config", return_value=config):
+                with patch(
+                    "src.tui.runner.runtime.run_engine_task",
+                    side_effect=fail_during_execution,
+                ):
+                    with self.assertRaisesRegex(ValueError, "translator payload"):
+                        run_tui_task(
+                            "config/ui.toml",
+                            "local",
+                            [r"D:\valid"],
+                            {},
+                            events.append,
+                        )
+
+        self.assertFalse(any(event["type"] == "project_error" for event in events))
+
+    def test_run_tui_task_does_not_misclassify_real_runtime_execution_value_error(self):
+        """A post-preparation runtime ValueError must reach the UI without fake skips."""
+        events = []
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            project_dir = root / "prepared-paper"
+            project_dir.mkdir()
+            config = {
+                "target_language": "ch",
+                "paper_list": [],
+                "tex_sources_dir": str(root / "tex-source"),
+                "output_dir": str(root / "outputs"),
+            }
+
+            with patch(
+                "src.tui.runner.ensure_ui_config",
+                return_value=root / "config" / "ui.toml",
+            ):
+                with patch("src.tui.runner.runtime.load_runtime_config", return_value=config):
+                    with patch(
+                        "src.runtime.run_projects",
+                        side_effect=ValueError("coordinator payload is invalid"),
+                    ) as run_projects:
+                        with self.assertRaisesRegex(ValueError, "coordinator payload"):
+                            run_tui_task(
+                                str(root / "config" / "ui.toml"),
+                                "local",
+                                [str(project_dir)],
+                                {},
+                                events.append,
+                            )
+
+        self.assertEqual(run_projects.call_args.kwargs["projects"], [str(project_dir)])
+        self.assertEqual(events, [])
+
+    def test_run_tui_task_counts_all_inputs_before_late_prepare_skip_events(self):
+        """A valid completion must not finish a task before skipped inputs are accounted for."""
+        config = {"target_language": "ch", "paper_list": []}
+        valid_project = r"D:\tex-source\valid"
+        events = []
+
+        def complete_only_prepared_project(**kwargs):
+            """Model one prepared project while another submitted input is skipped."""
+            kwargs["event_callback"](
+                {"type": "project_start", "project_name": "valid", "project_dir": valid_project}
+            )
+            kwargs["event_callback"](
+                {"type": "project_complete", "project_name": "valid", "project_dir": valid_project}
+            )
+            return {"projects": [valid_project], "completed_projects": [], "failed_projects": []}
+
+        with patch("src.tui.runner.ensure_ui_config", return_value=Path("config/ui.toml")):
+            with patch("src.tui.runner.runtime.load_runtime_config", return_value=config):
+                with patch(
+                    "src.tui.runner.runtime.run_engine_task",
+                    side_effect=complete_only_prepared_project,
+                ):
+                    run_tui_task(
+                        "config/ui.toml",
+                        "local",
+                        [r"D:\missing", valid_project],
+                        {},
+                        events.append,
+                    )
+
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["run_start", "project_start", "project_complete", "project_error"],
+        )
+        self.assertEqual(events[0]["total"], 2)
+        state_before_skip = TaskViewState(input_type="local", inputs=[r"D:\missing", valid_project])
+        for event in events[:3]:
+            state_before_skip.apply_event(event)
+        self.assertEqual((state_before_skip.total, state_before_skip.completed, state_before_skip.failed), (2, 1, 0))
+        self.assertLess(state_before_skip.completed + state_before_skip.failed, state_before_skip.total)
+
+        final_state = TaskViewState(input_type="local", inputs=[r"D:\missing", valid_project])
+        for event in events:
+            final_state.apply_event(event)
+        self.assertEqual((final_state.total, final_state.completed, final_state.failed), (2, 1, 1))
 
     def test_run_tui_task_emits_all_prepare_errors_when_prepare_raises(self):
         """All submitted inputs should get project_error events when prepare raises."""
@@ -233,8 +346,15 @@ class TuiRunnerTests(unittest.TestCase):
                             )
 
         run_projects.assert_not_called()
-        self.assertEqual([event["type"] for event in events], ["project_error", "project_error"])
-        self.assertEqual([event["project_name"] for event in events], [r"D:\missing-one", r"D:\missing-two"])
+        self.assertEqual(
+            [event["type"] for event in events],
+            ["run_start", "project_error", "project_error"],
+        )
+        self.assertEqual(events[0]["total"], 2)
+        self.assertEqual(
+            [event["project_name"] for event in events[1:]],
+            [r"D:\missing-one", r"D:\missing-two"],
+        )
 
     def test_run_tui_task_remote_skip_resets_total_without_url_errors(self):
         """Remote skips should reset total without marking a specific URL failed."""
@@ -252,6 +372,7 @@ class TuiRunnerTests(unittest.TestCase):
                         side_effect=lambda **kwargs: kwargs["event_callback"](
                             {
                                 "type": "project_complete",
+                                "total": 1,
                                 "project_name": "renamed-paper",
                                 "project_dir": r"D:\tex-source\renamed-paper",
                             }
@@ -302,7 +423,41 @@ class TuiRunnerTests(unittest.TestCase):
                             events.append,
                         )
 
-        self.assertEqual(events, [{"type": "run_start", "total": 0}])
+        self.assertEqual(events, [{"type": "run_start", "total": 0, "engine": "heavy"}])
+
+    def test_run_tui_task_dispatches_selected_engine_and_tags_events(self):
+        """The runner should freeze the selected engine into runtime dispatch and events."""
+        config = {
+            "engine": "heavy",
+            "heavy": {"output_dir": "outputs"},
+            "lite": {"output_dir": "output-lite"},
+        }
+        events = []
+
+        def fake_run_engine_task(**kwargs):
+            """Emit an untagged event to verify the runner's engine boundary."""
+            kwargs["event_callback"]({"type": "project_start", "project_name": "paper"})
+            return {"completed_projects": [], "failed_projects": []}
+
+        with patch("src.tui.runner.ensure_ui_config", return_value=Path("config/ui.toml")):
+            with patch("src.tui.runner.runtime.load_runtime_config", return_value=config) as load_config:
+                with patch(
+                    "src.tui.runner.runtime.run_engine_task",
+                    side_effect=fake_run_engine_task,
+                ) as dispatch:
+                    run_tui_task(
+                        "config/ui.toml",
+                        "pdf",
+                        ["paper.pdf"],
+                        {"retranslate_with_terms": True},
+                        events.append,
+                        engine="lite",
+                    )
+
+        self.assertNotIn("retranslate_with_terms", load_config.call_args.kwargs["overrides"])
+        self.assertEqual(dispatch.call_args.kwargs["engine"], "lite")
+        self.assertEqual(dispatch.call_args.kwargs["input_type"], "pdf")
+        self.assertEqual(events[0]["engine"], "lite")
 
 
 if __name__ == "__main__":

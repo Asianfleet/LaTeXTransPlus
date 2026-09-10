@@ -19,15 +19,22 @@ class TuiProcessRunnerTests(unittest.TestCase):
         """The child entry point should wrap callback events and its result."""
         messages = multiprocessing.Queue()
 
-        def fake_runner(config_path, input_type, items, overrides, event_callback):
+        def fake_runner(config_path, input_type, items, overrides, event_callback, engine):
             """Emit one fake event without invoking the real runtime."""
+            self.assertEqual(engine, "heavy")
             event_callback({"type": "project_start", "project_name": "paper"})
             return {"completed_projects": ["paper"]}
 
         with patch.object(process_runner, "run_tui_task", side_effect=fake_runner):
             process_runner._process_entry("config.toml", "local", ["paper"], {"x": 1}, messages)
 
-        self.assertEqual(messages.get(timeout=1), ("event", {"type": "project_start", "project_name": "paper"}))
+        self.assertEqual(
+            messages.get(timeout=1),
+            (
+                "event",
+                {"type": "project_start", "project_name": "paper", "engine": "heavy"},
+            ),
+        )
         self.assertEqual(messages.get(timeout=1), ("result", {"completed_projects": ["paper"]}))
 
     def test_process_entry_emits_error_message_when_runner_fails(self):
@@ -46,7 +53,7 @@ class TuiProcessRunnerTests(unittest.TestCase):
         captured_stderr = io.StringIO()
         original_streams = (sys.stdout, sys.stderr, sys.__stdout__, sys.__stderr__)
 
-        def fake_runner(config_path, input_type, items, overrides, event_callback):
+        def fake_runner(config_path, input_type, items, overrides, event_callback, engine):
             """Write through every Python console stream used by task code."""
             print("stdout leak")
             print("stderr leak", file=sys.stderr)
@@ -88,7 +95,7 @@ class TuiProcessRunnerTests(unittest.TestCase):
             os.dup2(stdout_capture.fileno(), 1)
             os.dup2(stderr_capture.fileno(), 2)
             try:
-                def fake_runner(config_path, input_type, items, overrides, event_callback):
+                def fake_runner(config_path, input_type, items, overrides, event_callback, engine):
                     """Write directly to inherited process descriptors."""
                     os.write(1, b"fd stdout leak\n")
                     os.write(2, b"fd stderr leak\n")
@@ -145,6 +152,54 @@ class TuiProcessRunnerTests(unittest.TestCase):
             process_runner.drain_process_messages(handle),
             [("event", {"type": "run_start"}), ("result", {"ok": True})],
         )
+
+    def test_process_entry_passes_engine_and_tags_child_events(self):
+        """The child process should preserve its task engine in calls and events."""
+        messages = multiprocessing.Queue()
+
+        def fake_runner(config_path, input_type, items, overrides, event_callback, engine):
+            """Capture the selected engine through one deliberately untagged event."""
+            self.assertEqual(engine, "lite")
+            event_callback({"type": "project_start", "project_name": "paper"})
+            return {"ok": True}
+
+        with patch.object(process_runner, "run_tui_task", side_effect=fake_runner):
+            process_runner._process_entry(
+                "config.toml",
+                "pdf",
+                ["paper.pdf"],
+                {},
+                messages,
+                engine="lite",
+            )
+
+        self.assertEqual(
+            messages.get(timeout=1),
+            (
+                "event",
+                {"type": "project_start", "project_name": "paper", "engine": "lite"},
+            ),
+        )
+
+    def test_start_process_includes_engine_in_worker_arguments(self):
+        """Spawned worker arguments should include the task's creation engine."""
+        context = MagicMock()
+        process = context.Process.return_value
+        message_queue = context.Queue.return_value
+
+        with patch.object(process_runner.multiprocessing, "get_context", return_value=context):
+            handle = process_runner.start_tui_task_process(
+                "config.toml",
+                "pdf",
+                ["paper.pdf"],
+                {},
+                engine="lite",
+            )
+
+        self.assertIs(handle.process, process)
+        self.assertIs(handle.queue, message_queue)
+        self.assertEqual(context.Process.call_args.kwargs["args"][-1], "lite")
+        process.start.assert_called_once_with()
 
 
 if __name__ == "__main__":
