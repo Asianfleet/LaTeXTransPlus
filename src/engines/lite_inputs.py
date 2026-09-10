@@ -39,6 +39,16 @@ class PreparedLiteProject:
     input_type: LiteInputKind
 
 
+class LiteProjectPreparationError(ValueError):
+    """Report an acquisition failure together with its retained project directory."""
+
+    def __init__(self, message: str, project_dir: Path) -> None:
+        """Store the visible timestamped directory created before the failure."""
+        super().__init__(message)
+        self.project_dir = Path(project_dir)
+        self.project_name = self.project_dir.name
+
+
 def parse_lite_input(value: str) -> LiteInputSpec:
     """Parse exactly one arXiv, remote PDF, or local PDF input value."""
     original = value.strip()
@@ -102,17 +112,18 @@ def prepare_lite_project(
                 download_pdf(spec.url, source_pdf)
             else:
                 _download_pdf(spec.url, source_pdf, http_get or requests.get)
-    except ValueError:
+        if not source_pdf.is_file() or source_pdf.stat().st_size == 0:
+            raise ValueError("Downloaded or copied PDF source is missing or empty.")
+    except ValueError as exc:
         _remove_partial_source(source_pdf)
-        raise
+        raise LiteProjectPreparationError(str(exc), project_dir) from exc
     except (OSError, requests.RequestException) as exc:
         _remove_partial_source(source_pdf)
         action = "copy" if spec.kind == "local_pdf" else "download"
-        raise ValueError(f"Failed to {action} lite PDF input: {exc}") from exc
-
-    if not source_pdf.is_file() or source_pdf.stat().st_size == 0:
-        _remove_partial_source(source_pdf)
-        raise ValueError("Downloaded or copied PDF source is missing or empty.")
+        raise LiteProjectPreparationError(
+            f"Failed to {action} lite PDF input: {exc}",
+            project_dir,
+        ) from exc
 
     return PreparedLiteProject(
         project_dir=project_dir,

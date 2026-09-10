@@ -131,7 +131,11 @@ class LiteInputTests(unittest.TestCase):
 
     def test_download_failure_removes_partial_source_pdf(self):
         """Remove incomplete downloads when the injected downloader raises an error."""
-        from src.engines.lite_inputs import parse_lite_input, prepare_lite_project
+        from src.engines.lite_inputs import (
+            LiteProjectPreparationError,
+            parse_lite_input,
+            prepare_lite_project,
+        )
 
         def fail_after_partial_write(url, destination):
             """Simulate a network interruption after a partial write."""
@@ -139,7 +143,7 @@ class LiteInputTests(unittest.TestCase):
             destination.write_bytes(b"partial")
             raise OSError("connection reset")
 
-        with self.assertRaisesRegex(ValueError, "download"):
+        with self.assertRaisesRegex(LiteProjectPreparationError, "download") as raised:
             prepare_lite_project(
                 parse_lite_input("https://example.org/report.pdf"),
                 self.output_root,
@@ -148,6 +152,8 @@ class LiteInputTests(unittest.TestCase):
             )
 
         project_dir = self.output_root / "report_20260909T203000"
+        self.assertEqual(raised.exception.project_dir, project_dir)
+        self.assertEqual(raised.exception.project_name, project_dir.name)
         self.assertTrue(project_dir.is_dir())
         self.assertFalse((project_dir / "source.pdf").exists())
 
