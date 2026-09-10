@@ -717,7 +717,7 @@ git commit -m "feat(tui): add heavy and lite session modes"
 - Add a lite-only app action `import_selected_project_markdown_to_zotero()`.
 - Keep `attach_pdf` unchanged for heavy and lite PDF import.
 
-- [ ] **Step 1: Write failing adapter and UI tests.**
+- [x] **Step 1: Write failing adapter and UI tests.**
 
 ```python
 class ZoteroNoteTests(unittest.TestCase):
@@ -740,25 +740,27 @@ class ZoteroModeTests(unittest.IsolatedAsyncioTestCase):
             self.assertFalse(heavy.query_one("#import-zotero-markdown-button").display)
 ```
 
-- [ ] **Step 2: Run Zotero tests and verify failure.**
+- [x] **Step 2: Run Zotero tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_tui_zotero_adapter tests.test_tui_app`
 
 Expected: FAIL because note creation and the lite button do not exist.
 
-- [ ] **Step 3: Implement child-note creation and lite UI behavior.**
+- [x] **Step 3: Implement child-note creation and lite UI behavior.**
 
 Create a Zotero child item with `itemType="note"`, `parentItem`, title/content fields in the format accepted by the existing Web API version, tags/relations defaults, and the same library prefix and authorization headers used by attachments. Return the created item key and surface API failures.
 
 In lite mode show separate `导入 PDF` and `导入 Markdown` buttons. The Markdown action reads the selected project's `translated.md`, then creates one child note per selected Zotero item using the project/Markdown filename as title and the complete Markdown text as note content. Do not expose the Markdown button in heavy mode. Reuse existing selection, API-key, and status handling.
 
-- [ ] **Step 4: Run Zotero tests and verify success.**
+- [x] **Step 4: Run Zotero tests and verify success.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_tui_zotero_adapter tests.test_tui_app`
 
 Expected: PASS. Verify tests mock configuration saving and do not modify `config/ui.toml`.
 
-- [ ] **Step 5: Commit Zotero note support.**
+- [x] **Step 5: Commit Zotero note support.**
+
+Implementation note: Added Zotero child-note creation and Lite Markdown import actions with per-item failure handling while preserving Heavy PDF attachment behavior.
 
 ```bash
 git add src/tui/zotero_adapter.py src/tui/app.py tests/test_tui_zotero_adapter.py tests/test_tui_app.py

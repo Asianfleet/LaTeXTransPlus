@@ -610,7 +610,8 @@ class LaTeXTransTuiApp(App[None]):
     }
 
     #zotero-search-button,
-    #import-zotero-button {
+    #import-zotero-button,
+    #import-zotero-markdown-button {
         width: 8;
         min-width: 8;
         height: 3;
@@ -629,8 +630,15 @@ class LaTeXTransTuiApp(App[None]):
     #zotero-auto-match-button:hover,
     #zotero-auto-match-button:focus,
     #import-zotero-button:hover,
-    #import-zotero-button:focus {
+    #import-zotero-button:focus,
+    #import-zotero-markdown-button:hover,
+    #import-zotero-markdown-button:focus {
         border: tall $border;
+    }
+
+    #import-zotero-markdown-button {
+        width: 14;
+        min-width: 14;
     }
 
     #zotero-import-rule {
@@ -736,7 +744,8 @@ class LaTeXTransTuiApp(App[None]):
                                 yield Button("搜索", id="zotero-search-button", flat=True)
                                 yield Button("自动匹配", id="zotero-auto-match-button", flat=True)
                                 yield Rule(orientation="vertical", id="zotero-import-rule")
-                                yield Button("导入", id="import-zotero-button", flat=True)
+                                yield Button("导入 PDF", id="import-zotero-button", flat=True)
+                                yield Button("导入 Markdown", id="import-zotero-markdown-button", flat=True)
                             yield ZoteroResultsTable(id="zotero-results", cursor_type="row")
                 with Vertical(id=PAGE_TASKS):
                     with Horizontal(id="project-actions"):
@@ -1153,6 +1162,8 @@ class LaTeXTransTuiApp(App[None]):
             self.auto_match_zotero_items()
         elif event.button.id == "import-zotero-button":
             self.import_selected_project_to_zotero()
+        elif event.button.id == "import-zotero-markdown-button":
+            self.import_selected_project_markdown_to_zotero()
         elif event.button.id == "terminate-translation-button":
             if hasattr(self, "_terminate_selected_projects"):
                 self._terminate_selected_projects()
@@ -2045,11 +2056,13 @@ class LaTeXTransTuiApp(App[None]):
         table.refresh(layout=True)
 
     def _refresh_zotero_controls(self) -> None:
-        """按当前项目是否已有 PDF 刷新 Zotero 导入控件可见性。"""
+        """按当前项目及其引擎刷新 Zotero 导入控件可见性。"""
         project = self._selected_project()
         has_pdf = bool(project and project.pdf_path)
+        has_markdown = bool(project and project.engine == "lite")
         self.query_one("#zotero-import-rule", Rule).display = has_pdf
         self.query_one("#import-zotero-button", Button).display = has_pdf
+        self.query_one("#import-zotero-markdown-button", Button).display = has_markdown
 
     def load_zotero_libraries(self) -> None:
         """从本地 Zotero API 加载可选库到搜索范围下拉框。"""
@@ -2201,6 +2214,72 @@ class LaTeXTransTuiApp(App[None]):
         if failures:
             project.zotero_status = f"{project.zotero_status} {'; '.join(failures)}"
         self._set_zotero_status(project.zotero_status)
+
+    def import_selected_project_markdown_to_zotero(self) -> None:
+        """Import the selected lite project's translated Markdown as Zotero child notes."""
+        project = self._selected_project()
+        if project is None:
+            self._set_zotero_status("请选择一个项目。")
+            return
+        if project.engine != "lite":
+            project.zotero_status = "失败：Markdown 导入仅支持 Lite 引擎。"
+            self._set_zotero_status(project.zotero_status)
+            return
+
+        selected_items = [
+            item
+            for item in self.zotero_results
+            if str(item.get("item_key") or "") in self.zotero_selected_keys
+        ]
+        if not selected_items:
+            project.zotero_status = "失败：未选择任何条目。"
+            self._set_zotero_status(project.zotero_status)
+            return
+
+        markdown_path = self._translated_markdown_path(project)
+        if markdown_path is None or not markdown_path.is_file():
+            project.zotero_status = "失败：当前项目没有译文 Markdown 文件。"
+            self._set_zotero_status(project.zotero_status)
+            return
+        try:
+            markdown = markdown_path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError) as exc:
+            project.zotero_status = f"失败：无法读取译文 Markdown 文件：{exc}"
+            self._set_zotero_status(project.zotero_status)
+            return
+
+        api_key_env = self._zotero_config().get("web_api_key_env", "ZOTERO_API_KEY")
+        api_key = os.environ.get(str(api_key_env), "").strip()
+        if not api_key:
+            project.zotero_status = f"失败：Web API key 环境变量未设置：{api_key_env}。"
+            self._set_zotero_status(project.zotero_status)
+            return
+
+        adapter = self._zotero_adapter(api_key=api_key)
+        success_count = 0
+        failures: list[str] = []
+        for item in selected_items:
+            item_key = str(item.get("item_key") or "")
+            library_id = str(item.get("library_id") or "")
+            library_type = str(item.get("library_type") or "")
+            try:
+                adapter.create_note(item_key, project.project_name or markdown_path.stem, markdown, library_id, library_type)
+                success_count += 1
+            except Exception as exc:
+                failures.append(f"{item_key}: {exc}")
+
+        project.zotero_status = f"导入完成：成功 {success_count}，失败 {len(failures)}。"
+        if failures:
+            project.zotero_status = f"{project.zotero_status} {'; '.join(failures)}"
+        self._set_zotero_status(project.zotero_status)
+
+    def _translated_markdown_path(self, project: ProjectViewState) -> Path | None:
+        """Return the selected project's translated Markdown artifact when known."""
+        if project.translated_markdown_path:
+            return Path(project.translated_markdown_path)
+        if project.output_dir:
+            return Path(project.output_dir) / "translated.md"
+        return None
 
     def _set_zotero_status(self, message: str) -> None:
         """记录 Zotero 操作状态，并在可见 UI 中发出轻量提示。"""

@@ -2654,6 +2654,257 @@ class TuiZoteroImportTests(TuiAppTests):
 
         import_method.assert_called_once_with()
 
+    async def test_lite_shows_markdown_import_button_and_heavy_hides_it(self):
+        """确认 lite 显示 PDF 与 Markdown 导入，heavy 只显示 PDF 导入。"""
+        lite = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        heavy = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+
+        async with lite.run_test():
+            lite.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+            lite.current_task.projects.append(
+                ProjectViewState(
+                    project_name="paper",
+                    engine="lite",
+                    pdf_path=r"D:\out\paper.pdf",
+                    translated_markdown_path=r"D:\out\translated.md",
+                )
+            )
+            lite.selected_project_name = "paper"
+            lite.refresh_detail_page()
+
+            self.assertTrue(lite.query_one("#import-zotero-button", Button).display)
+            self.assertTrue(lite.query_one("#import-zotero-markdown-button", Button).display)
+
+        async with heavy.run_test():
+            heavy.current_task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], engine="heavy")
+            heavy.current_task.projects.append(
+                ProjectViewState(
+                    project_name="paper",
+                    engine="heavy",
+                    pdf_path=r"D:\out\paper.pdf",
+                    translated_markdown_path=r"D:\out\translated.md",
+                )
+            )
+            heavy.selected_project_name = "paper"
+            heavy.refresh_detail_page()
+
+            self.assertTrue(heavy.query_one("#import-zotero-button", Button).display)
+            self.assertFalse(heavy.query_one("#import-zotero-markdown-button", Button).display)
+
+    async def test_import_markdown_creates_note_for_each_selected_zotero_item(self):
+        """确认 lite 会把完整译文 Markdown 作为每个选中条目的子笔记。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        adapter = Mock()
+        adapter.create_note.side_effect = [{"item_key": "NOTE1"}, {"item_key": "NOTE2"}]
+
+        with TemporaryDirectory() as temp_dir:
+            translated_path = Path(temp_dir) / "translated.md"
+            markdown = "# Title\n\n完整译文内容\n"
+            translated_path.write_text(markdown, encoding="utf-8")
+
+            async with app.run_test():
+                app.zotero_adapter_factory = lambda api_key, local_api_base: adapter
+                app.current_config = {
+                    "zotero": {
+                        "local_api_base": "http://127.0.0.1:23119/api",
+                        "web_api_key_env": "ZOTERO_API_KEY",
+                    }
+                }
+                app.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+                app.current_task.projects.append(
+                    ProjectViewState(
+                        project_name="paper",
+                        engine="lite",
+                        status=ProjectStatus.COMPLETED,
+                        translated_markdown_path=str(translated_path),
+                    )
+                )
+                app.selected_project_name = "paper"
+                app.populate_zotero_results(
+                    [
+                        {
+                            "item_key": "ITEM123",
+                            "title": "Paper 1",
+                            "library_id": "42",
+                            "library_type": "group",
+                            "library_name": "Reading Group",
+                            "collection_names": [],
+                        },
+                        {
+                            "item_key": "ITEM456",
+                            "title": "Paper 2",
+                            "library_id": "7",
+                            "library_type": "user",
+                            "library_name": "Ada",
+                            "collection_names": [],
+                        },
+                    ]
+                )
+                app.toggle_zotero_row_selection(0)
+                app.toggle_zotero_row_selection(1)
+
+                with patch.dict("os.environ", {"ZOTERO_API_KEY": "ui-key"}):
+                    app.import_selected_project_markdown_to_zotero()
+
+        self.assertEqual(adapter.create_note.call_count, 2)
+        adapter.create_note.assert_any_call("ITEM123", "paper", markdown, "42", "group")
+        adapter.create_note.assert_any_call("ITEM456", "paper", markdown, "7", "user")
+        self.assertEqual(app.current_task.projects[0].zotero_status, "导入完成：成功 2，失败 0。")
+
+    async def test_import_markdown_continues_after_one_selected_item_fails(self):
+        """确认首个子笔记失败不会阻止后续选中条目的导入。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        adapter = Mock()
+        adapter.create_note.side_effect = [RuntimeError("first note rejected"), {"item_key": "NOTE2"}]
+
+        with TemporaryDirectory() as temp_dir:
+            translated_path = Path(temp_dir) / "translated.md"
+            translated_path.write_text("# Title\n\n完整译文内容\n", encoding="utf-8")
+
+            async with app.run_test():
+                app.zotero_adapter_factory = lambda api_key, local_api_base: adapter
+                app.current_config = {
+                    "zotero": {
+                        "local_api_base": "http://127.0.0.1:23119/api",
+                        "web_api_key_env": "ZOTERO_API_KEY",
+                    }
+                }
+                app.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+                app.current_task.projects.append(
+                    ProjectViewState(
+                        project_name="paper",
+                        engine="lite",
+                        status=ProjectStatus.COMPLETED,
+                        translated_markdown_path=str(translated_path),
+                    )
+                )
+                app.selected_project_name = "paper"
+                app.populate_zotero_results(
+                    [
+                        {
+                            "item_key": "ITEM123",
+                            "title": "Paper 1",
+                            "library_id": "42",
+                            "library_type": "group",
+                            "library_name": "Reading Group",
+                            "collection_names": [],
+                        },
+                        {
+                            "item_key": "ITEM456",
+                            "title": "Paper 2",
+                            "library_id": "7",
+                            "library_type": "user",
+                            "library_name": "Ada",
+                            "collection_names": [],
+                        },
+                    ]
+                )
+                app.toggle_zotero_row_selection(0)
+                app.toggle_zotero_row_selection(1)
+
+                with patch.dict("os.environ", {"ZOTERO_API_KEY": "ui-key"}):
+                    app.import_selected_project_markdown_to_zotero()
+
+        self.assertEqual(adapter.create_note.call_count, 2)
+        adapter.create_note.assert_any_call("ITEM123", "paper", "# Title\n\n完整译文内容\n", "42", "group")
+        adapter.create_note.assert_any_call("ITEM456", "paper", "# Title\n\n完整译文内容\n", "7", "user")
+        self.assertEqual(
+            app.current_task.projects[0].zotero_status,
+            "导入完成：成功 1，失败 1。 ITEM123: first note rejected",
+        )
+
+    async def test_import_markdown_reports_missing_translated_file(self):
+        """确认 Markdown 导入会明确报告缺失的译文文件。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+
+        async with app.run_test():
+            app.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+            app.current_task.projects.append(
+                ProjectViewState(
+                    project_name="paper",
+                    engine="lite",
+                    status=ProjectStatus.COMPLETED,
+                    translated_markdown_path=r"D:\out\missing-translated.md",
+                )
+            )
+            app.selected_project_name = "paper"
+            app.populate_zotero_results(
+                [
+                    {
+                        "item_key": "ITEM123",
+                        "title": "Paper",
+                        "library_id": "42",
+                        "library_type": "group",
+                        "library_name": "Reading Group",
+                        "collection_names": [],
+                    }
+                ]
+            )
+            app.toggle_zotero_row_selection(0)
+
+            app.import_selected_project_markdown_to_zotero()
+
+        self.assertEqual(app.current_task.projects[0].zotero_status, "失败：当前项目没有译文 Markdown 文件。")
+
+    async def test_import_markdown_reports_missing_api_key(self):
+        """确认 Markdown 导入在 API key 缺失时不创建笔记。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+
+        with TemporaryDirectory() as temp_dir:
+            translated_path = Path(temp_dir) / "translated.md"
+            translated_path.write_text("# content", encoding="utf-8")
+
+            async with app.run_test():
+                app.current_config = {
+                    "zotero": {
+                        "local_api_base": "http://127.0.0.1:23119/api",
+                        "web_api_key_env": "MISSING_ZOTERO_API_KEY",
+                    }
+                }
+                app.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+                app.current_task.projects.append(
+                    ProjectViewState(
+                        project_name="paper",
+                        engine="lite",
+                        status=ProjectStatus.COMPLETED,
+                        translated_markdown_path=str(translated_path),
+                    )
+                )
+                app.selected_project_name = "paper"
+                app.populate_zotero_results(
+                    [
+                        {
+                            "item_key": "ITEM123",
+                            "title": "Paper",
+                            "library_id": "42",
+                            "library_type": "group",
+                            "library_name": "Reading Group",
+                            "collection_names": [],
+                        }
+                    ]
+                )
+                app.toggle_zotero_row_selection(0)
+
+                with patch.dict("os.environ", {}, clear=True):
+                    app.import_selected_project_markdown_to_zotero()
+
+        self.assertEqual(
+            app.current_task.projects[0].zotero_status,
+            "失败：Web API key 环境变量未设置：MISSING_ZOTERO_API_KEY。",
+        )
+
+    async def test_markdown_import_button_branch_calls_markdown_import_method(self):
+        """确认 Zotero Markdown 导入按钮会调用对应动作。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        event = Mock()
+        event.button.id = "import-zotero-markdown-button"
+
+        async with app.run_test():
+            with patch.object(app, "import_selected_project_markdown_to_zotero") as import_method:
+                app.on_button_pressed(event)
+
+        import_method.assert_called_once_with()
+
 
 if __name__ == "__main__":
     unittest.main()
