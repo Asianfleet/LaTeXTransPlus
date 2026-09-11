@@ -29,6 +29,7 @@ retranslate_with_terms = false
 
 [lite]
 output_dir = "output-lite"
+mineru_api_key_env = "MINERU_TOKEN"
 
 [heavy.validation.retry]
 max_attempts = 3

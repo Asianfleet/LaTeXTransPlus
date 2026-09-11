@@ -14,10 +14,20 @@ from src.runtime import run_engine_task
 class _FakeMineru:
     """Write deterministic Markdown without invoking the MinerU SDK."""
 
-    def extract(self, source_pdf: Path, output_dir: Path) -> Path:
+    def __init__(self) -> None:
+        """Record the token environment variable name supplied by orchestration."""
+        self.api_key_env: str | None = None
+
+    def extract(
+        self,
+        source_pdf: Path,
+        output_dir: Path,
+        api_key_env: str | None = None,
+    ) -> Path:
         """Record a valid source Markdown artifact in the project directory."""
         if source_pdf != output_dir / "source.pdf":
             raise AssertionError("MinerU must receive the project-local source PDF")
+        self.api_key_env = api_key_env
         markdown_path = output_dir / "source.md"
         markdown_path.write_text("# Paper\n\n## Method\nSource body.\n", encoding="utf-8")
         return markdown_path
@@ -104,20 +114,26 @@ class _FakePdfGenerator:
 class LiteEngineTests(unittest.TestCase):
     """Verify the complete lite pipeline without network or external tools."""
 
-    def _run_engine(self, root: Path, translator: object | None = None):
+    def _run_engine(
+        self,
+        root: Path,
+        translator: object | None = None,
+        config: dict[str, object] | None = None,
+        mineru: object | None = None,
+    ):
         """Run a lite engine with deterministic injected stage dependencies."""
         source_pdf = root / "paper.pdf"
         source_pdf.write_bytes(b"%PDF-source")
         logs: list[dict[str, object]] = []
         engine = LiteEngine(
-            mineru=_FakeMineru(),
+            mineru=mineru or _FakeMineru(),
             terminology=_FakeTerminology(),
             translator=translator or _FakeTranslator(),
             pdf_generator=_FakePdfGenerator(),
         )
         result = engine.run(
             str(source_pdf),
-            {"source_language": "en", "target_language": "ch"},
+            config or {"source_language": "en", "target_language": "ch"},
             root / "output-lite",
             logs.append,
         )
@@ -151,6 +167,23 @@ class LiteEngineTests(unittest.TestCase):
         log_text = "\n".join(str(event["message"]) for event in logs)
         for milestone in ("input", "MinerU", "terminology", "translation", "PDF"):
             self.assertIn(milestone, log_text)
+
+    def test_run_forwards_the_configured_mineru_api_key_env(self):
+        """Forward ``mineru_api_key_env`` so the adapter resolves the configured token."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            mineru = _FakeMineru()
+            result, _logs = self._run_engine(
+                Path(temp_dir),
+                config={
+                    "source_language": "en",
+                    "target_language": "ch",
+                    "mineru_api_key_env": "CUSTOM_MINERU_TOKEN",
+                },
+                mineru=mineru,
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertEqual(mineru.api_key_env, "CUSTOM_MINERU_TOKEN")
 
     def test_translation_failure_returns_existing_paths_without_validation_fields(self):
         """A failed late stage should retain paths to every earlier artifact."""

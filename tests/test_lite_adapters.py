@@ -80,6 +80,30 @@ class FakePandocRunner:
         return subprocess.CompletedProcess(command, 0, "pandoc output", "")
 
 
+class FakeHttpStatusError(Exception):
+    """Model an httpx-style status error carrying a response status."""
+
+    def __init__(self, status_code: int) -> None:
+        """Store a response object exposing only the status code."""
+        self.response = types.SimpleNamespace(status_code=status_code)
+        super().__init__(
+            f"Client error '{status_code} Unauthorized' for url "
+            "'https://mineru.net/api/v4/file-urls/batch'"
+        )
+
+
+class RejectingMineruClient:
+    """Reject every extraction with a modeled HTTP status error."""
+
+    def __init__(self, status_code: int = 401) -> None:
+        """Store the HTTP status returned by the fake MinerU service."""
+        self.status_code = status_code
+
+    def extract(self, source_pdf: str) -> object:
+        """Raise the configured HTTP status without returning a result."""
+        raise FakeHttpStatusError(self.status_code)
+
+
 class LiteAdapterTests(unittest.TestCase):
     """Exercise adapters through their injected external-service boundaries."""
 
@@ -100,7 +124,7 @@ class LiteAdapterTests(unittest.TestCase):
             markdown="# Title\n![x](images/a.png)",
             resources={"images/a.png": b"png"},
         )
-        result = MineruMarkdownExtractor(client_factory=lambda: client).extract(
+        result = MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
             Path("source.pdf"), self.output_dir
         )
 
@@ -109,18 +133,140 @@ class LiteAdapterTests(unittest.TestCase):
         self.assertEqual((self.output_dir / "images" / "a.png").read_bytes(), b"png")
         self.assertEqual(client.source_pdf, "source.pdf")
 
-    def test_mineru_default_factory_constructs_the_sdk_mineru_client(self) -> None:
-        """Construct the public ``mineru.MinerU`` client exported by SDK 0.2.5."""
+    def test_mineru_default_factory_passes_the_resolved_token_to_the_sdk(self) -> None:
+        """Resolve the configured env var and pass its token to ``mineru.MinerU``."""
         from src.engines.lite_mineru import _create_default_mineru_client
+
+        observed_tokens: list[str | None] = []
 
         class ActualSdkMinerU:
             """Stand in for MinerU Open SDK's public client class."""
+
+            def __init__(self, token: str | None = None) -> None:
+                """Record the token resolved by the lite adapter."""
+                observed_tokens.append(token)
 
         sdk_module = types.ModuleType("mineru")
         sdk_module.MinerU = ActualSdkMinerU
 
         with patch.dict(sys.modules, {"mineru": sdk_module}):
-            self.assertIsInstance(_create_default_mineru_client(), ActualSdkMinerU)
+            with patch.dict("os.environ", {"LATEXTRANS_TEST_MINERU_TOKEN": "secret"}):
+                client = _create_default_mineru_client("LATEXTRANS_TEST_MINERU_TOKEN")
+
+        self.assertIsInstance(client, ActualSdkMinerU)
+        self.assertEqual(observed_tokens, ["secret"])
+
+    def test_mineru_default_factory_rejects_a_missing_token_env(self) -> None:
+        """A missing configured token env var should fail before contacting MinerU."""
+        from src.engines.lite_mineru import _create_default_mineru_client
+
+        with patch.dict("os.environ", {}, clear=True):
+            with self.assertRaisesRegex(ValueError, "MISSING_MINERU_TOKEN") as raised:
+                _create_default_mineru_client("MISSING_MINERU_TOKEN")
+
+        self.assertIn("No MINERU-related environment variable", str(raised.exception))
+        self.assertIn("restart the TUI", str(raised.exception))
+
+    def test_mineru_missing_token_error_lists_related_names_without_values(self) -> None:
+        """Diagnose name mismatches by listing visible MINERU names only."""
+        from src.engines.lite_mineru import _create_default_mineru_client
+
+        with patch.dict("os.environ", {"MINERU_API_KEY": "secret-value"}, clear=True):
+            with self.assertRaises(ValueError) as raised:
+                _create_default_mineru_client("MINERU_TOKEN")
+
+        message = str(raised.exception)
+        self.assertIn("MINERU_API_KEY", message)
+        self.assertNotIn("secret-value", message)
+
+    def test_mineru_adapter_forwards_the_configured_api_key_env(self) -> None:
+        """Pass the lite config's token env var name through to the client factory."""
+        from src.engines.lite_mineru import MineruMarkdownExtractor
+
+        observed_envs: list[str] = []
+        client = FakeMineruClient(markdown="# Title", resources={})
+
+        def record_env(api_key_env: str) -> FakeMineruClient:
+            """Record the configured token env var and return the fake client."""
+            observed_envs.append(api_key_env)
+            return client
+
+        MineruMarkdownExtractor(client_factory=record_env).extract(
+            Path("source.pdf"),
+            self.output_dir,
+            "CUSTOM_MINERU_TOKEN",
+        )
+
+        self.assertEqual(observed_envs, ["CUSTOM_MINERU_TOKEN"])
+
+    def test_mineru_token_sanitizer_removes_shell_quoting_and_bearer_prefix(self) -> None:
+        """Normalize the common Windows and PowerShell token mistakes."""
+        from src.engines.lite_mineru import _sanitize_token
+
+        self.assertEqual(_sanitize_token('"abc"'), "abc")
+        self.assertEqual(_sanitize_token("'abc'"), "abc")
+        self.assertEqual(_sanitize_token("Bearer abc"), "abc")
+        self.assertEqual(_sanitize_token('Bearer "abc"'), "abc")
+        self.assertEqual(_sanitize_token("  abc\n"), "abc")
+        self.assertEqual(_sanitize_token(""), "")
+
+    def test_mineru_default_factory_passes_a_sanitized_token_to_the_sdk(self) -> None:
+        """Quoted environment values must reach the SDK without their quotes."""
+        from src.engines.lite_mineru import _create_default_mineru_client
+
+        observed_tokens: list[str | None] = []
+
+        class ActualSdkMinerU:
+            """Stand in for MinerU Open SDK's public client class."""
+
+            def __init__(self, token: str | None = None) -> None:
+                """Record the sanitized token passed by the lite adapter."""
+                observed_tokens.append(token)
+
+        sdk_module = types.ModuleType("mineru")
+        sdk_module.MinerU = ActualSdkMinerU
+
+        with patch.dict(sys.modules, {"mineru": sdk_module}):
+            with patch.dict(
+                "os.environ",
+                {"LATEXTRANS_TEST_MINERU_TOKEN": '"secret"'},
+                clear=True,
+            ):
+                _create_default_mineru_client("LATEXTRANS_TEST_MINERU_TOKEN")
+
+        self.assertEqual(observed_tokens, ["secret"])
+
+    def test_mineru_adapter_reports_a_rejected_token_with_the_env_var_name(self) -> None:
+        """A 401 from MinerU should name the configured token environment variable."""
+        from src.engines.lite_mineru import MineruMarkdownExtractor
+
+        extractor = MineruMarkdownExtractor(
+            client_factory=lambda _api_key_env: RejectingMineruClient(401)
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "MINERU_TOKEN") as raised:
+            extractor.extract(Path("source.pdf"), self.output_dir, "MINERU_TOKEN")
+
+        self.assertIn("401", str(raised.exception))
+        self.assertFalse((self.output_dir / "source.md").exists())
+
+    def test_mineru_adapter_keeps_non_auth_client_errors_unwrapped(self) -> None:
+        """Non-auth client failures must keep their original type and message."""
+        from src.engines.lite_mineru import MineruMarkdownExtractor
+
+        class FailingClient:
+            """Raise a non-HTTP error from ``extract``."""
+
+            def extract(self, source_pdf: str) -> object:
+                """Simulate an unrelated adapter failure."""
+                raise ValueError("unexpected payload")
+
+        extractor = MineruMarkdownExtractor(
+            client_factory=lambda _api_key_env: FailingClient()
+        )
+
+        with self.assertRaisesRegex(ValueError, "unexpected payload"):
+            extractor.extract(Path("source.pdf"), self.output_dir)
 
     def test_mineru_adapter_passes_a_string_path_to_sdk_extract(self) -> None:
         """Pass local PDF input using the string argument required by SDK ``extract``."""
@@ -131,7 +277,7 @@ class LiteAdapterTests(unittest.TestCase):
             require_string_source=True,
         )
 
-        MineruMarkdownExtractor(client_factory=lambda: client).extract(
+        MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
             Path("source.pdf"), self.output_dir
         )
 
@@ -154,7 +300,7 @@ class LiteAdapterTests(unittest.TestCase):
             )
         )
 
-        MineruMarkdownExtractor(client_factory=lambda: client).extract(
+        MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
             Path("source.pdf"), self.output_dir
         )
 
@@ -168,7 +314,7 @@ class LiteAdapterTests(unittest.TestCase):
 
         client = FakeSdkClient(FakeSdkExtractResult(markdown="# Title", images=[]))
 
-        result = MineruMarkdownExtractor(client_factory=lambda: client).extract(
+        result = MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
             Path("source.pdf"), self.output_dir
         )
 
@@ -186,7 +332,7 @@ class LiteAdapterTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(ValueError, "unsafe"):
-            MineruMarkdownExtractor(client_factory=lambda: client).extract(
+            MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
                 Path("source.pdf"), self.output_dir
             )
 
@@ -205,7 +351,7 @@ class LiteAdapterTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(TypeError, "bytes-like"):
-            MineruMarkdownExtractor(client_factory=lambda: client).extract(
+            MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
                 Path("source.pdf"), self.output_dir
             )
 
@@ -239,7 +385,7 @@ class LiteAdapterTests(unittest.TestCase):
 
         with patch.object(Path, "write_bytes", new=fail_on_second_image):
             with self.assertRaisesRegex(OSError, "disk full"):
-                MineruMarkdownExtractor(client_factory=lambda: client).extract(
+                MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
                     Path("source.pdf"), self.output_dir
                 )
 
@@ -256,7 +402,7 @@ class LiteAdapterTests(unittest.TestCase):
         client = FakeMineruClient(markdown="   \n", resources={"images/a.png": b"png"})
 
         with self.assertRaisesRegex(ValueError, "Markdown"):
-            MineruMarkdownExtractor(client_factory=lambda: client).extract(
+            MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
                 Path("source.pdf"), self.output_dir
             )
 
@@ -282,7 +428,7 @@ class LiteAdapterTests(unittest.TestCase):
 
         with patch.object(Path, "write_bytes", new=fail_on_second_resource):
             with self.assertRaisesRegex(OSError, "disk full"):
-                MineruMarkdownExtractor(client_factory=lambda: client).extract(
+                MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
                     Path("source.pdf"), self.output_dir
                 )
 
@@ -301,7 +447,7 @@ class LiteAdapterTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(TypeError, "bytes-like"):
-            MineruMarkdownExtractor(client_factory=lambda: client).extract(
+            MineruMarkdownExtractor(client_factory=lambda _api_key_env: client).extract(
                 Path("source.pdf"), self.output_dir
             )
 

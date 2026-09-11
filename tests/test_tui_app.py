@@ -240,6 +240,27 @@ class TuiEngineModeTests(TuiAppTests):
             with self.assertRaises(NoMatches):
                 app.query_one("#config-heavy-tex_sources_dir", Input)
 
+    async def test_lite_settings_expose_the_mineru_api_key_env_field(self):
+        """Lite settings must let users change the MinerU token environment variable."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.load_config_page()
+
+            field = app.query_one("#config-lite-mineru_api_key_env", Input)
+
+            self.assertEqual(field.value, "MINERU_TOKEN")
+
+    async def test_heavy_settings_hide_the_lite_mineru_api_key_env_field(self):
+        """The lite MinerU token env field must stay out of the heavy settings form."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.load_config_page()
+
+            with self.assertRaises(NoMatches):
+                app.query_one("#config-lite-mineru_api_key_env", Input)
+
     async def test_mode_switch_filters_project_views_by_task_engine(self):
         """Sidebar and management rows only show tasks created in the active mode."""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")

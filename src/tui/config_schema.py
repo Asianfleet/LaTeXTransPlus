@@ -87,6 +87,7 @@ HEAVY_CONFIG_FIELDS: tuple[ConfigField, ...] = (
 
 LITE_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("lite", "output_dir"), "输出目录", "input", "基础", "output-lite"),
+    ConfigField(("lite", "mineru_api_key_env"), "MinerU API key 环境变量", "input", "基础", "MINERU_TOKEN"),
 )
 
 # 保留旧调用方的默认 heavy 字段集；动态表单应使用 config_fields_for_engine。

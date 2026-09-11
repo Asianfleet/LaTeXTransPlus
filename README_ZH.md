@@ -80,7 +80,7 @@ LaTeXTransPlus 使用 `latexmk` 编译译文项目，并会根据目标语言选
 
 ## 3. Lite 引擎依赖
 
-Lite 引擎使用 Python 依赖 `mineru-open-sdk` 提供的 MinerU SDK，从 PDF 提取 Markdown 和图片资源。最终生成 `translated.pdf` 还需要单独安装 `pandoc` 可执行文件和 XeLaTeX。
+Lite 引擎使用 Python 依赖 `mineru-open-sdk` 提供的 MinerU SDK，从 PDF 提取 Markdown 和图片资源。最终生成 `translated.pdf` 还需要单独安装 `pandoc` 可执行文件和 XeLaTeX。MinerU 请求需要 API token：`[lite].mineru_api_key_env` 指定的环境变量（默认 `MINERU_TOKEN`）必须已设置且非空，否则 Lite 会在访问 MinerU 之前直接失败。请填入 MinerU API token 的原始值；外层引号和 `Bearer ` 前缀会被自动去掉，但 token 无效或过期时 MinerU 会返回 HTTP 401。
 
 ## 可选：使用 Conda 环境
 
@@ -153,6 +153,7 @@ retranslate_with_terms = false
 
 [lite]
 output_dir = "output-lite"
+mineru_api_key_env = "MINERU_TOKEN"
 ```
 
 `source_language` 和 `target_language` 使用 prompt 层支持的短语言代码，例如 `en`、`ch`、`zh`、`ja`、`jp`、`de`、`fr`、`es`、`ko`、`ru`、`pt`、`it` 和 `ar`。默认翻译方向是 English to Chinese。
@@ -173,7 +174,7 @@ latextrans-tui --engine heavy
 latextrans-tui -e lite
 ```
 
-启动优先级为 `--engine`/`-e`、`ui.toml.engine`、`heavy`。Heavy 和 Lite 使用相互独立的输出根目录：`[heavy].output_dir` 默认是 `outputs`，`[lite].output_dir` 默认是 `output-lite`。
+启动优先级为 `--engine`/`-e`、`ui.toml.engine`、`heavy`。Heavy 和 Lite 使用相互独立的输出根目录：`[heavy].output_dir` 默认是 `outputs`，`[lite].output_dir` 默认是 `output-lite`。Lite 还会从 `[lite].mineru_api_key_env` 指定的环境变量读取 MinerU API token，该配置默认是 `MINERU_TOKEN`。
 
 ## LLM 配置
 

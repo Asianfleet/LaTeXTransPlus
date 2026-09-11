@@ -42,7 +42,10 @@ def effective_engine_config(config: Dict[str, Any], engine: str) -> Dict[str, An
     if "heavy" not in config and "lite" not in config:
         return config
     effective = engine_config(config, engine)
-    legacy_fields = _HEAVY_RUNTIME_FIELDS if engine == "heavy" else ("output_dir",)
+    legacy_fields = _HEAVY_RUNTIME_FIELDS if engine == "heavy" else (
+        "output_dir",
+        "mineru_api_key_env",
+    )
     for key in legacy_fields:
         if key in config:
             effective[key] = deepcopy(config[key])

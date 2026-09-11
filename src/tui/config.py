@@ -76,6 +76,7 @@ def migrate_ui_config(config: dict[str, Any]) -> dict[str, Any]:
         lite = {}
         migrated["lite"] = lite
     lite.setdefault("output_dir", "output-lite")
+    lite.setdefault("mineru_api_key_env", "MINERU_TOKEN")
     migrated.setdefault("engine", "heavy")
     return migrated
 

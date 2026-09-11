@@ -72,8 +72,20 @@ class TuiConfigSchemaTests(unittest.TestCase):
         self.assertIn(("engine",), paths)
         self.assertIn(("source_language",), paths)
         self.assertIn(("lite", "output_dir"), paths)
+        self.assertIn(("lite", "mineru_api_key_env"), paths)
         self.assertFalse(any(path[0] == "heavy" for path in paths))
         self.assertFalse(any("validation" in path for path in paths))
+
+    def test_lite_mineru_api_key_env_field_defaults_to_mineru_token(self):
+        """The lite MinerU token env field should default to ``MINERU_TOKEN``."""
+        field = next(
+            field
+            for field in config_fields_for_engine("lite")
+            if field.path == ("lite", "mineru_api_key_env")
+        )
+
+        self.assertEqual(field.kind, "input")
+        self.assertEqual(field.default, "MINERU_TOKEN")
 
     def test_grouped_fields_filter_for_selected_engine(self):
         """Grouped fields should preserve sections after engine filtering."""

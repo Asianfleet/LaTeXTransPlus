@@ -2,22 +2,47 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Callable, Mapping
 from pathlib import Path
 from typing import Any
 
 
+DEFAULT_MINERU_API_KEY_ENV = "MINERU_TOKEN"
+
+
+def normalize_mineru_api_key_env(value: Any) -> str:
+    """Return the configured token environment variable name or the default."""
+    if isinstance(value, str) and value.strip():
+        return value.strip()
+    return DEFAULT_MINERU_API_KEY_ENV
+
+
 class MineruMarkdownExtractor:
     """Extract one PDF into project-local Markdown and referenced resources."""
 
-    def __init__(self, client_factory: Callable[[], Any] | None = None) -> None:
-        """Configure an optional MinerU client factory for integration tests."""
+    def __init__(self, client_factory: Callable[[str], Any] | None = None) -> None:
+        """Configure an optional MinerU client factory for integration tests.
+
+        The factory receives the token environment variable name so injected
+        test doubles can avoid reading the real process environment.
+        """
         self._client_factory = client_factory or _create_default_mineru_client
 
-    def extract(self, source_pdf: Path, output_dir: Path) -> Path:
-        """Extract Markdown from ``source_pdf`` and persist it below ``output_dir``."""
-        client = self._client_factory()
-        result = _call_mineru_client(client, source_pdf)
+    def extract(
+        self,
+        source_pdf: Path,
+        output_dir: Path,
+        api_key_env: str = DEFAULT_MINERU_API_KEY_ENV,
+    ) -> Path:
+        """Extract Markdown from ``source_pdf`` and persist it below ``output_dir``.
+
+        ``api_key_env`` names the environment variable holding the MinerU API
+        token; it is resolved by the default SDK client factory.
+        """
+        env_name = normalize_mineru_api_key_env(api_key_env)
+        client = self._client_factory(env_name)
+        result = _call_mineru_client(client, source_pdf, env_name)
         markdown, resources = _normalize_mineru_result(result)
         if not markdown or not markdown.strip():
             raise ValueError("MinerU did not return usable Markdown.")
@@ -49,23 +74,88 @@ class MineruMarkdownExtractor:
         return markdown_path
 
 
-def _create_default_mineru_client() -> Any:
-    """Lazily construct the MinerU SDK client for a real lite-engine task."""
+def _missing_token_error(env_name: str) -> ValueError:
+    """Build an actionable token error that lists variable names but never values."""
+    related_names = sorted(name for name in os.environ if "MINERU" in name.upper())
+    if related_names:
+        hint = (
+            "Visible MINERU-related environment variable names: "
+            + ", ".join(related_names)
+            + "."
+        )
+    else:
+        hint = "No MINERU-related environment variable is visible to this process."
+    return ValueError(
+        f"Environment variable '{env_name}' is not set or empty. "
+        f"{hint} Set it in the shell that starts the TUI and restart the TUI "
+        "afterwards, because a running process keeps the environment it was started with."
+    )
+
+
+def _sanitize_token(raw: str) -> str:
+    """Remove shell quoting and a stray ``Bearer`` prefix from a token value.
+
+    Windows ``set VAR="value"`` and PowerShell quoting keep literal quotes in the
+    value, and the SDK already adds its own ``Bearer`` prefix.  Both mistakes
+    reach MinerU as an invalid token, so they are normalized here.
+    """
+    token = raw.strip()
+    changed = True
+    while changed and token:
+        changed = False
+        if len(token) >= 2 and token[0] == token[-1] and token[0] in {'"', "'"}:
+            token = token[1:-1].strip()
+            changed = True
+        elif token[:7].lower() == "bearer ":
+            token = token[7:].strip()
+            changed = True
+    return token
+
+
+def _create_default_mineru_client(
+    api_key_env: str = DEFAULT_MINERU_API_KEY_ENV,
+) -> Any:
+    """Lazily construct the MinerU SDK client with the resolved API token."""
     try:
         from mineru import MinerU
     except ImportError as exc:
         raise RuntimeError(
             "Lite PDF extraction requires the optional mineru-open-sdk package."
         ) from exc
-    return MinerU()
+    env_name = normalize_mineru_api_key_env(api_key_env)
+    token = _sanitize_token(os.environ.get(env_name, ""))
+    if not token:
+        raise _missing_token_error(env_name)
+    return MinerU(token=token)
 
 
-def _call_mineru_client(client: Any, source_pdf: Path) -> Any:
+def _call_mineru_client(
+    client: Any,
+    source_pdf: Path,
+    env_name: str = DEFAULT_MINERU_API_KEY_ENV,
+) -> Any:
     """Call the small client protocol isolated from MinerU SDK result types."""
     extract = getattr(client, "extract", None)
     if not callable(extract):
         raise TypeError("MinerU client must provide extract(source_pdf).")
-    return extract(str(source_pdf))
+    try:
+        return extract(str(source_pdf))
+    except Exception as exc:
+        status = _http_status(exc)
+        if status in (401, 403):
+            raise RuntimeError(
+                f"MinerU rejected the API token from environment variable '{env_name}' "
+                f"(HTTP {status}). Verify it is a valid, complete MinerU API token and "
+                "that it has no surrounding quotes or 'Bearer ' prefix."
+            ) from exc
+        raise
+
+
+def _http_status(exc: BaseException) -> Any:
+    """Return the HTTP status carried by a client exception, when present."""
+    response = getattr(exc, "response", None)
+    status = getattr(response, "status_code", None)
+    return status if isinstance(status, int) else None
 
 
 def _normalize_mineru_result(result: Any) -> tuple[str | None, Any]:

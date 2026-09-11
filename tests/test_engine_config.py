@@ -68,6 +68,21 @@ class EngineConfigTests(unittest.TestCase):
         self.assertEqual(effective["output_dir"], "lite-output")
         for key in ("validation", "tex_sources_dir", "paper_list", "retranslate_with_terms"):
             self.assertNotIn(key, effective)
+    def test_engine_config_copies_lite_mineru_api_key_env_but_not_for_heavy(self):
+        """The lite MinerU token env var should reach lite runtime config only."""
+        source = {
+            "heavy": {"output_dir": "heavy-output"},
+            "lite": {
+                "output_dir": "lite-output",
+                "mineru_api_key_env": "CUSTOM_MINERU_TOKEN",
+            },
+        }
+
+        lite_effective = engine_config(source, "lite")
+        heavy_effective = engine_config(source, "heavy")
+
+        self.assertEqual(lite_effective["mineru_api_key_env"], "CUSTOM_MINERU_TOKEN")
+        self.assertNotIn("mineru_api_key_env", heavy_effective)
 
 
 if __name__ == "__main__":

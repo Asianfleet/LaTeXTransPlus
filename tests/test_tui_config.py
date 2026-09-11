@@ -77,6 +77,7 @@ class TuiConfigTests(unittest.TestCase):
         self.assertTrue(migrated["heavy"]["retranslate_with_terms"])
         self.assertEqual(migrated["heavy"]["validation"]["retry"]["max_attempts"], 4)
         self.assertEqual(migrated["lite"]["output_dir"], "output-lite")
+        self.assertEqual(migrated["lite"]["mineru_api_key_env"], "MINERU_TOKEN")
         self.assertEqual(legacy["output_dir"], "old-output")
         for key in ("tex_sources_dir", "output_dir", "paper_list", "retranslate_with_terms", "validation"):
             self.assertNotIn(key, migrated)
@@ -135,6 +136,7 @@ class TuiConfigTests(unittest.TestCase):
                 self.assertEqual(config["engine"], "heavy")
                 self.assertIn("validation", config["heavy"])
                 self.assertEqual(config["lite"]["output_dir"], "output-lite")
+                self.assertEqual(config["lite"]["mineru_api_key_env"], "MINERU_TOKEN")
                 for key in ("tex_sources_dir", "output_dir", "paper_list", "retranslate_with_terms", "validation"):
                     self.assertNotIn(key, config)
 

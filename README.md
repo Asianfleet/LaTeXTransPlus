@@ -80,7 +80,7 @@ LaTeXTransPlus compiles translated projects with `latexmk` and may use `pdflatex
 
 ## 3. Lite Engine Dependencies
 
-The Lite engine uses the MinerU Python SDK, supplied by the `mineru-open-sdk` dependency in `requirements.txt`, to extract Markdown and image resources from a PDF. It also requires a separately installed `pandoc` executable and XeLaTeX for the final `translated.pdf` conversion.
+The Lite engine uses the MinerU Python SDK, supplied by the `mineru-open-sdk` dependency in `requirements.txt`, to extract Markdown and image resources from a PDF. It also requires a separately installed `pandoc` executable and XeLaTeX for the final `translated.pdf` conversion. MinerU requests need an API token: the environment variable named by `[lite].mineru_api_key_env` (default `MINERU_TOKEN`) must be set and non-empty, otherwise Lite fails before contacting MinerU. Set it to the raw MinerU API token; surrounding quotes and a `Bearer ` prefix are stripped automatically, but an invalid or expired token makes MinerU answer with HTTP 401.
 
 ## Optional Conda Environment
 
@@ -153,6 +153,7 @@ retranslate_with_terms = false
 
 [lite]
 output_dir = "output-lite"
+mineru_api_key_env = "MINERU_TOKEN"
 ```
 
 `source_language` and `target_language` accept short language codes used by the prompt layer, such as `en`, `ch`, `zh`, `ja`, `jp`, `de`, `fr`, `es`, `ko`, `ru`, `pt`, `it`, and `ar`. The default is English to Chinese.
@@ -173,7 +174,7 @@ latextrans-tui --engine heavy
 latextrans-tui -e lite
 ```
 
-The startup precedence is `--engine`/`-e`, then `ui.toml.engine`, then `heavy`. Heavy and Lite retain independent output roots: `[heavy].output_dir` defaults to `outputs`, while `[lite].output_dir` defaults to `output-lite`.
+The startup precedence is `--engine`/`-e`, then `ui.toml.engine`, then `heavy`. Heavy and Lite retain independent output roots: `[heavy].output_dir` defaults to `outputs`, while `[lite].output_dir` defaults to `output-lite`. Lite also reads its MinerU API token from the environment variable named by `[lite].mineru_api_key_env`, which defaults to `MINERU_TOKEN`.
 
 ## LLM Configuration
 

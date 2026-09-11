@@ -78,7 +78,11 @@ class LiteEngine:
             self._log("Lite input preparation completed.", "info", result, log_callback)
 
             source_markdown = Path(
-                self._mineru.extract(prepared.source_pdf, prepared.project_dir)
+                self._mineru.extract(
+                    prepared.source_pdf,
+                    prepared.project_dir,
+                    project_config.get("mineru_api_key_env"),
+                )
             )
             result["source_markdown_path"] = str(source_markdown)
             self._log("MinerU extraction completed.", "info", result, log_callback)
