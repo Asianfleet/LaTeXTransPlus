@@ -444,10 +444,10 @@ If a compiler produces a PDF but its `.log` contains hard LaTeX errors, LaTeXTra
 
 ## Lite TUI Outputs
 
-Each Lite task uses its own timestamped directory under `output-lite/`, keeping the acquired PDF and every generated artifact together:
+Each Lite task uses its own date-suffixed directory under `output-lite/`, keeping the acquired PDF and every generated artifact together:
 
 ```text
-output-lite/<stable_name>_YYYYMMDDTHHMMSS/
+output-lite/<stable_name>_YYMMDD/
 ├── source.pdf
 ├── source.md
 ├── translated.md
@@ -457,7 +457,7 @@ output-lite/<stable_name>_YYYYMMDDTHHMMSS/
 └── latextrans.log
 ```
 
-For arXiv input, `<stable_name>` is the arXiv ID. For a PDF URL or local path, it is the PDF filename without `.pdf`. Lite does not create a validation report; an acquisition, Markdown, translation, or Pandoc/XeLaTeX failure leaves available intermediate files in this same directory and marks the project failed.
+For arXiv input, `<stable_name>` is the arXiv ID. For a PDF URL or local path, it is the PDF filename without `.pdf`. Translating the same source twice on the same day appends `_1`, `_2`, and so on. Lite does not create a validation report; an acquisition, Markdown, translation, or Pandoc/XeLaTeX failure leaves available intermediate files in this same directory and marks the project failed.
 
 <!-- # 🖼️ Translation Examples
 

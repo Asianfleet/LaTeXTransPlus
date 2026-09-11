@@ -43,7 +43,7 @@ class LiteProjectPreparationError(ValueError):
     """Report an acquisition failure together with its retained project directory."""
 
     def __init__(self, message: str, project_dir: Path) -> None:
-        """Store the visible timestamped directory created before the failure."""
+        """Store the visible date-suffixed directory created before the failure."""
         super().__init__(message)
         self.project_dir = Path(project_dir)
         self.project_name = self.project_dir.name
@@ -92,7 +92,7 @@ def prepare_lite_project(
     now: datetime | None = None,
     download_pdf: Callable[[str, Path], Any] | None = None,
 ) -> PreparedLiteProject:
-    """Create one timestamped project directory and place its source at source.pdf."""
+    """Create one date-suffixed project directory and place its source at source.pdf."""
     timestamp = now or datetime.now()
     project_dir = _create_project_directory(output_root, spec.stable_name, timestamp)
     source_pdf = project_dir / "source.pdf"
@@ -175,9 +175,10 @@ def _safe_stable_name(value: str) -> str:
 
 
 def _create_project_directory(output_root: Path, stable_name: str, timestamp: datetime) -> Path:
-    """Create a unique timestamped directory without overwriting an existing project."""
+    """Create a unique date-suffixed directory without overwriting an existing project."""
     output_root.mkdir(parents=True, exist_ok=True)
-    base_name = f"{_safe_stable_name(stable_name)}_{timestamp.strftime('%Y%m%dT%H%M%S')}"
+    # Only the date is part of the directory name; same-day repeats get the counter suffix below.
+    base_name = f"{_safe_stable_name(stable_name)}_{timestamp.strftime('%y%m%d')}"
     candidate = output_root / base_name
     index = 1
     while True:

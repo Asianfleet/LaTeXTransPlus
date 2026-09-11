@@ -56,8 +56,8 @@ class LiteInputTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 parse_lite_input(value)
 
-    def test_project_directory_uses_stable_name_timestamp_and_source_name(self):
-        """Create a timestamped project directory for downloaded arXiv PDFs."""
+    def test_project_directory_uses_stable_name_date_and_source_name(self):
+        """Create a date-suffixed project directory for downloaded arXiv PDFs."""
         from src.engines.lite_inputs import parse_lite_input, prepare_lite_project
 
         prepared = prepare_lite_project(
@@ -67,15 +67,15 @@ class LiteInputTests(unittest.TestCase):
             download_pdf=lambda url, destination: destination.write_bytes(b"%PDF-1.7"),
         )
 
-        self.assertEqual(prepared.project_dir.name, "2508.18791_20260909T203000")
-        self.assertEqual(prepared.project_name, "2508.18791_20260909T203000")
+        self.assertEqual(prepared.project_dir.name, "2508.18791_260909")
+        self.assertEqual(prepared.project_name, "2508.18791_260909")
         self.assertEqual(prepared.source_pdf.name, "source.pdf")
         self.assertEqual(prepared.source_pdf.read_bytes(), b"%PDF-1.7")
         self.assertEqual(prepared.input_item, "2508.18791")
         self.assertEqual(prepared.input_type, "arxiv")
 
-    def test_existing_timestamped_project_gets_numeric_suffix(self):
-        """Avoid overwriting an already-created timestamped project directory."""
+    def test_same_day_project_gets_numeric_suffix(self):
+        """Avoid overwriting an already-created same-day project directory."""
         from src.engines.lite_inputs import parse_lite_input, prepare_lite_project
 
         spec = parse_lite_input("2508.18791")
@@ -93,8 +93,8 @@ class LiteInputTests(unittest.TestCase):
             download_pdf=lambda url, destination: destination.write_bytes(b"second"),
         )
 
-        self.assertEqual(first.project_dir.name, "2508.18791_20260909T203000")
-        self.assertEqual(second.project_dir.name, "2508.18791_20260909T203000_1")
+        self.assertEqual(first.project_dir.name, "2508.18791_260909")
+        self.assertEqual(second.project_dir.name, "2508.18791_260909_1")
         self.assertEqual(first.source_pdf.read_bytes(), b"first")
         self.assertEqual(second.source_pdf.read_bytes(), b"second")
 
@@ -111,7 +111,7 @@ class LiteInputTests(unittest.TestCase):
             now=datetime(2026, 9, 9, 20, 30, 0),
         )
 
-        self.assertEqual(prepared.project_dir.name, "论文_文件_20260909T203000")
+        self.assertEqual(prepared.project_dir.name, "论文_文件_260909")
         self.assertEqual(prepared.source_pdf.read_bytes(), b"%PDF-local")
         self.assertEqual(prepared.input_type, "local_pdf")
 
@@ -151,7 +151,7 @@ class LiteInputTests(unittest.TestCase):
                 download_pdf=fail_after_partial_write,
             )
 
-        project_dir = self.output_root / "report_20260909T203000"
+        project_dir = self.output_root / "report_260909"
         self.assertEqual(raised.exception.project_dir, project_dir)
         self.assertEqual(raised.exception.project_name, project_dir.name)
         self.assertTrue(project_dir.is_dir())
