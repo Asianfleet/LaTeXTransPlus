@@ -88,8 +88,13 @@ class TuiAppTests(unittest.IsolatedAsyncioTestCase):
     async def asyncSetUp(self) -> None:
         """在整个异步测试生命周期内拦截 UI 配置保存。"""
         self._ui_config_hash = _file_sha256(Path.cwd() / UI_CONFIG_PATH)
-        self._save_ui_config_patcher = patch("src.tui.app.save_ui_config")
-        self.save_ui_config = self._save_ui_config_patcher.start()
+        self.save_ui_config = Mock()
+        self._save_ui_config_patchers = [
+            patch("src.tui.app.save_ui_config", self.save_ui_config),
+            patch("src.tui.config.save_ui_config", self.save_ui_config),
+        ]
+        for save_ui_config_patcher in self._save_ui_config_patchers:
+            save_ui_config_patcher.start()
 
     async def asyncTearDown(self) -> None:
         """在异步测试完成后恢复 UI 配置保存函数。"""
@@ -100,7 +105,8 @@ class TuiAppTests(unittest.IsolatedAsyncioTestCase):
                 "TUI 测试不得修改真实 UI 配置文件。",
             )
         finally:
-            self._save_ui_config_patcher.stop()
+            for save_ui_config_patcher in reversed(self._save_ui_config_patchers):
+                save_ui_config_patcher.stop()
 
 
 class TuiEngineModeTests(TuiAppTests):
@@ -119,9 +125,12 @@ class TuiEngineModeTests(TuiAppTests):
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
         with patch("src.tui.app.load_ui_config", return_value={"engine": "heavy"}):
             async with app.run_test() as pilot:
+                await app.workers.wait_for_complete()
                 await pilot.pause()
                 app.load_config_page()
+                await app.workers.wait_for_complete()
                 await pilot.pause()
+                self.assertFalse(app.loading_config_form)
                 self.save_ui_config.reset_mock()
 
                 app.query_one("#config-engine", Select).value = "lite"
@@ -333,6 +342,7 @@ class TuiLayoutTests(TuiAppTests):
                     "zotero-auto-match-button",
                     "zotero-import-rule",
                     "import-zotero-button",
+                    "import-zotero-markdown-button",
                 ],
             )
             self.assertIsNotNone(app.query_one("#zotero-library-select", Select))
@@ -341,6 +351,7 @@ class TuiLayoutTests(TuiAppTests):
             self.assertIsNotNone(app.query_one("#zotero-auto-match-button", Button))
             self.assertIsNotNone(app.query_one("#zotero-import-rule", Rule))
             self.assertIsNotNone(app.query_one("#import-zotero-button", Button))
+            self.assertIsNotNone(app.query_one("#import-zotero-markdown-button", Button))
             self.assertIsNotNone(app.query_one("#zotero-results", DataTable))
             with self.assertRaises(NoMatches):
                 app.query_one("#detail-paths")
@@ -1007,13 +1018,17 @@ class TuiConfigPageTests(TuiAppTests):
         async with app.run_test() as pilot:
             with patch("src.tui.app.load_ui_config", return_value={"llm_config": {"profile": "profile-ja"}}):
                 app.load_config_page()
+            await app.workers.wait_for_complete()
             await pilot.pause()
 
-            self.save_ui_config.reset_mock()
+            self.assertFalse(app.loading_config_form)
+            self.save_ui_config.assert_not_called()
             app.query_one("#config-llm_config-profile", Input).value = "profile-fr"
-            await pilot.pause()
+            await pilot.pause(delay=0.1)
 
-            self.save_ui_config.assert_called()
+            self.save_ui_config.assert_called_once()
+            saved_config = self.save_ui_config.call_args.args[1]
+            self.assertEqual(saved_config["llm_config"]["profile"], "profile-fr")
 
     async def test_config_change_collects_form_fields_and_preserves_metadata(self):
         """确认即时保存会从结构化表单写回配置并保留不可编辑元数据。"""

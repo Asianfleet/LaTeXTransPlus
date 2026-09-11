@@ -31,7 +31,7 @@ LaTeXTransPlus 是一个基于原 LaTeXTrans 项目开发的 LaTeX 论文翻译�
 
 当前实现会协调 Parser、Terminology Generator、Translator、Validator 和 PDF Generator 完成工作流。项目支持从 arXiv 下载源码、处理本地 LaTeX 项目、处理压缩源码包、生成项目级术语表、配置源语言与目标语言、基于校验结果自动重译，并为每个项目保存 workflow 日志。
 
-LaTeXTransPlus 也提供基于 Textual 的终端 UI，可通过 `latextrans-tui` 启动。TUI 支持新建任务、项目管理、设置调整、进度跟踪，并能在同一个终端界面中查看生成结果。
+LaTeXTransPlus 也提供基于 Textual 的终端 UI，可通过 `latextrans-tui` 启动。TUI 支持新建任务、项目管理、设置调整、进度跟踪，并能在同一个终端界面中查看生成结果；它分别支持处理 LaTeX 源码的 Heavy 引擎和 PDF 转 Markdown 的 Lite 引擎。
 
 ## 终端 UI 预览
 
@@ -77,6 +77,10 @@ latextrans-tui
 如果使用 MiKTeX，建议启用缺失宏包的自动安装。Windows 下部分 LaTeX 工具链还可能需要 Strawberry Perl。
 
 LaTeXTransPlus 使用 `latexmk` 编译译文项目，并会根据目标语言选择 `pdflatex`、`xelatex` 或 `lualatex`。请确保 TeX 发行版中已经安装所需引擎和语言宏包。中文输出会按需使用 `ctex`，日文输出使用 `luatexja`，韩文输出使用 `kotex`。
+
+## 3. Lite 引擎依赖
+
+Lite 引擎使用 Python 依赖 `mineru-open-sdk` 提供的 MinerU SDK，从 PDF 提取 Markdown 和图片资源。最终生成 `translated.pdf` 还需要单独安装 `pandoc` 可执行文件和 XeLaTeX。
 
 ## 可选：使用 Conda 环境
 
@@ -136,12 +140,19 @@ sys_name = "LaTeXTrans"
 version = "0.1.0"
 source_language = "en"
 target_language = "ch"
-paper_list = []
-tex_sources_dir = "tex source"
-output_dir = "outputs"
 update_term = "False"
 mode = "plain"
 user_term = ""
+engine = "heavy"
+
+[heavy]
+paper_list = []
+tex_sources_dir = "tex source"
+output_dir = "outputs"
+retranslate_with_terms = false
+
+[lite]
+output_dir = "output-lite"
 ```
 
 `source_language` 和 `target_language` 使用 prompt 层支持的短语言代码，例如 `en`、`ch`、`zh`、`ja`、`jp`、`de`、`fr`、`es`、`ko`、`ru`、`pt`、`it` 和 `ar`。默认翻译方向是 English to Chinese。
@@ -152,6 +163,17 @@ user_term = ""
 
 - `plain`：使用可用的默认术语、用户术语和项目术语进行翻译。
 - `terms`：强制使用偏 glossary 的翻译 prompt。
+
+## TUI 引擎配置
+
+`engine` 是 TUI 下次启动时使用的默认引擎。设置页会把该值持久化到 `config/ui.toml`，但保存不会切换当前 TUI 会话。启动参数和入口页的引擎切换只影响当前会话，不会写入 `ui.toml`：
+
+```bash
+latextrans-tui --engine heavy
+latextrans-tui -e lite
+```
+
+启动优先级为 `--engine`/`-e`、`ui.toml.engine`、`heavy`。Heavy 和 Lite 使用相互独立的输出根目录：`[heavy].output_dir` 默认是 `outputs`，`[lite].output_dir` 默认是 `output-lite`。
 
 ## LLM 配置
 
@@ -202,7 +224,7 @@ max_llm_candidates = 30
 - `project_terms.csv`
 - `project_terms_decisions.json`
 
-如果 `review_before_translate = true`，workflow 会在生成项目术语后停止。审核 `project_terms.csv` 后，再使用 `--retranslate-with-terms` 重新运行。
+在 Heavy workflow 中，如果 `review_before_translate = true`，workflow 会在生成项目术语后停止。审核 `project_terms.csv` 后，再使用 `--retranslate-with-terms` 重新运行。
 
 也可以通过 `user_term` 提供自定义 CSV 术语表。CSV 需要使用以下列名：
 
@@ -212,7 +234,7 @@ Source Term,Target Translation
 
 对于 English-to-Chinese 翻译，项目还可能合并 `terms/` 下的默认术语。
 
-## 校验配置
+## Heavy 校验配置
 
 ```toml
 [validation.retry]
@@ -233,7 +255,7 @@ severity = "error"
 retryable = true
 ```
 
-Validator 会检查 command 数量、placeholder 保留情况和括号平衡。可重试的问题会被发送回 Translator 进行定向重译。
+Heavy Validator 会检查 command 数量、placeholder 保留情况和括号平衡。可重试的问题会被发送回 Translator 进行定向重译。
 
 # 📚 使用方法
 
@@ -243,9 +265,13 @@ LaTeXTransPlus 也提供基于 Textual 的终端 UI：
 
 ```bash
 latextrans-tui
+latextrans-tui --engine heavy
+latextrans-tui -e lite
 ```
 
-UI 每次任务只支持一种输入类型：arXiv ID 或 URL、本地项目路径或压缩包、远程压缩包 URL。它会显示项目级进度、结果文件、日志、校验报告和 UI 专用配置。Zotero 集成是可选动作，不会阻断翻译结果。
+Heavy 任务支持 arXiv ID 或 URL、本地 LaTeX 项目路径或压缩包，以及远程源码压缩包 URL。Lite 任务每次只接受一个输入：arXiv ID、arXiv 摘要页或 PDF URL、普通 PDF 直链，或本地 PDF 路径。Lite 会拒绝换行、逗号和批量分隔的输入；需要处理更多 PDF 时，在同一个 TUI 会话中分别创建任务。
+
+`latextrans` 命令行 workflow 仍只处理基于源码的 Heavy 翻译。Lite 通过 `latextrans-tui` 启动，不从 `main.py` 启动。TUI 会显示项目级进度、结果文件、日志和与当前引擎匹配的详情。Zotero 集成是可选动作，不会阻断翻译结果。
 
 ## 根据 arXiv ID 翻译
 
@@ -273,7 +299,7 @@ latextrans --arxiv 2508.18791 --json-events stdout --json-events-file outputs/ev
 - `project_error`
 - `run_complete`
 
-每条事件都包含 `schema_version`、`type` 和 `timestamp`。项目事件还包含 `project_name`、`project_dir`、`output_dir` 和 `log_path`；完成与失败事件还包含 `pdf_path`、`errors_report_path`、`validation_summary` 和 `error`。
+这套 JSON Lines schema 仅由 Heavy CLI workflow 输出。每条事件都包含 `schema_version`、`type` 和 `timestamp`。Heavy 项目事件还包含 `project_name`、`project_dir`、`output_dir` 和 `log_path`；Heavy 的完成与失败事件还包含 `pdf_path`、`errors_report_path`、`validation_summary` 和 `error`。Lite TUI 任务不会输出这些 JSON Lines 事件，也没有 `errors_report_path` 或 `validation_summary`。
 
 支持带版本号的 arXiv ID：
 
@@ -367,7 +393,7 @@ latextrans --model deepseek-chat --url https://api.deepseek.com/chat/completions
 
 真实 API key 建议优先放在环境变量中，不建议直接通过命令行传入。
 
-## 翻译前审核术语
+## Heavy 翻译前审核术语
 
 在配置中设置：
 
@@ -391,6 +417,8 @@ latextrans --arxiv 2508.18791 --retranslate-with-terms
 
 # 📂 输出结果
 
+## Heavy 输出
+
 每个项目会写入：
 
 ```text
@@ -412,6 +440,23 @@ outputs/<target_language>_<project_name>/
 如果仍有校验错误，是否继续生成 PDF 取决于 `validation.retry.generate_pdf_on_error`。如果 `validation.retry.fail_on_error = true`，即使生成了 PDF，残留的校验错误也会导致 CLI 以失败状态退出。
 
 如果某个编译器生成了 PDF，但对应 `.log` 中存在严重 LaTeX 错误，LaTeXTransPlus 会把该次编译视为失败，并在可用时尝试下一个编译引擎。未生成最终 PDF 时，请优先查看对应的 build 日志目录。
+
+## Lite TUI 输出
+
+每个 Lite 任务在 `output-lite/` 下使用独立的时间戳目录，将获取到的 PDF 和全部产物放在一起：
+
+```text
+output-lite/<stable_name>_YYYYMMDDTHHMMSS/
+├── source.pdf
+├── source.md
+├── translated.md
+├── translated.pdf
+├── project_terms.csv
+├── project_terms_decisions.json
+└── latextrans.log
+```
+
+arXiv 输入的 `<stable_name>` 是 arXiv ID；PDF URL 或本地 PDF 输入使用去掉 `.pdf` 后的文件名。Lite 不生成校验报告；输入获取、Markdown、翻译或 Pandoc/XeLaTeX 失败时，已经生成的中间产物仍保留在该目录，项目状态会标记为失败。
 
 <!-- # 🖼️ 翻译示例
 

@@ -785,7 +785,7 @@ git commit -m "feat(zotero): import lite markdown as child notes"
 - Document the lite input types, one-input-per-task restriction, output layout, MinerU SDK requirement, and Pandoc/XeLaTeX requirement.
 - Do not document a lite `main.py` CLI mode or `--retranslate-with-terms` support.
 
-- [ ] **Step 1: Write failing launcher/integration assertions for the public workflow.**
+- [x] **Step 1: Write failing launcher/integration assertions for the public workflow.**
 
 ```python
 class LiteIntegrationTests(unittest.TestCase):
@@ -798,23 +798,23 @@ class LiteIntegrationTests(unittest.TestCase):
         self.assertNotIn("errors_report_path", complete)
 ```
 
-- [ ] **Step 2: Run the focused integration tests and verify failure.**
+- [x] **Step 2: Run the focused integration tests and verify failure.**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_integration tests.test_launchers`
 
 Expected: FAIL until the final event contract and documented launcher behavior are covered.
 
-- [ ] **Step 3: Update scripts and documentation.**
+- [x] **Step 3: Update scripts and documentation.**
 
 Keep the current Windows `%*` and Linux `"$@"` forwarding. Add explicit launcher tests that assert arguments are preserved. Update both READMEs with the new configuration sections and example commands, and describe that the entry-page switch is session-only while the settings-page engine value is persisted for the next startup.
 
-- [ ] **Step 4: Run the complete test suite in the required environment.**
+- [x] **Step 4: Run the complete test suite in the required environment.**
 
 Run: `conda run -n latextrans python -m unittest discover tests`
 
 Expected: PASS. If an existing test fails because it assumes the legacy flat config, update that test to assert the documented migration behavior rather than restoring the legacy implementation.
 
-- [ ] **Step 5: Inspect the final diff and generated-file hygiene.**
+- [x] **Step 5: Inspect the final diff and generated-file hygiene.**
 
 Run:
 
@@ -826,7 +826,9 @@ git diff --stat
 
 Expected: only task-related source, tests, configuration, scripts, and documentation changes; no generated PDFs, downloaded archives, cache directories, API keys, or unrelated `config/ui.toml` mutation.
 
-- [ ] **Step 6: Commit final documentation and regression coverage.**
+- [x] **Step 6: Commit final documentation and regression coverage.**
+
+Implementation note: Documented Heavy/Lite TUI modes and event differences, verified launcher forwarding and Lite completion metadata, and completed the 494-test regression suite.
 
 ```bash
 git add scripts README.md README_ZH.md tests/test_launchers.py tests/test_lite_integration.py
