@@ -32,8 +32,14 @@ class MineruMarkdownExtractor:
                 destination = _resource_destination(output_dir, relative_path)
                 parent = destination.parent
                 if not parent.exists():
+                    # Retain every newly created ancestor so a later write failure cleans all of them.
+                    missing_directories: list[Path] = []
+                    ancestor = parent
+                    while ancestor != output_dir and not ancestor.exists():
+                        missing_directories.append(ancestor)
+                        ancestor = ancestor.parent
                     parent.mkdir(parents=True, exist_ok=True)
-                    created_directories.add(parent)
+                    created_directories.update(missing_directories)
                 written_resources.append(destination)
                 destination.write_bytes(_resource_bytes(content))
         except (OSError, TypeError, ValueError):
@@ -46,12 +52,12 @@ class MineruMarkdownExtractor:
 def _create_default_mineru_client() -> Any:
     """Lazily construct the MinerU SDK client for a real lite-engine task."""
     try:
-        from mineru_open_sdk import MinerUClient
+        from mineru import MinerU
     except ImportError as exc:
         raise RuntimeError(
             "Lite PDF extraction requires the optional mineru-open-sdk package."
         ) from exc
-    return MinerUClient()
+    return MinerU()
 
 
 def _call_mineru_client(client: Any, source_pdf: Path) -> Any:
@@ -59,7 +65,7 @@ def _call_mineru_client(client: Any, source_pdf: Path) -> Any:
     extract = getattr(client, "extract", None)
     if not callable(extract):
         raise TypeError("MinerU client must provide extract(source_pdf).")
-    return extract(source_pdf)
+    return extract(str(source_pdf))
 
 
 def _normalize_mineru_result(result: Any) -> tuple[str | None, Any]:
@@ -85,15 +91,23 @@ def _result_value(result: Any, *names: str) -> Any:
 
 
 def _resource_items(resources: Any) -> list[tuple[str, Any]]:
-    """Validate MinerU resources as a mapping of relative paths to content."""
+    """Validate mapping fakes or SDK image lists as paths and byte content."""
     if resources is None:
         return []
-    if not isinstance(resources, Mapping):
-        raise TypeError("MinerU resources must be a mapping of paths to content.")
     items: list[tuple[str, Any]] = []
-    for path, content in resources.items():
+    if isinstance(resources, Mapping):
+        for path, content in resources.items():
+            if not isinstance(path, str):
+                raise TypeError("MinerU resource paths must be strings.")
+            items.append((path, content))
+        return items
+    if not isinstance(resources, list):
+        raise TypeError("MinerU resources must be a mapping or SDK image list.")
+    for image in resources:
+        path = _result_value(image, "path")
+        content = _result_value(image, "data")
         if not isinstance(path, str):
-            raise TypeError("MinerU resource paths must be strings.")
+            raise TypeError("MinerU SDK image paths must be strings.")
         items.append((path, content))
     return items
 

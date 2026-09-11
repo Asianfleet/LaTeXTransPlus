@@ -37,7 +37,7 @@ _HEAVY_RUNTIME_FIELDS = (
 )
 
 
-def _effective_engine_config(config: Dict[str, Any], engine: str) -> Dict[str, Any]:
+def effective_engine_config(config: Dict[str, Any], engine: str) -> Dict[str, Any]:
     """Build an engine view while retaining explicit legacy runtime overrides."""
     if "heavy" not in config and "lite" not in config:
         return config
@@ -173,6 +173,9 @@ def load_runtime_config(
         llm_config["api_key"] = overrides["key"]
     resolve_llm_api_key(config)
 
+    heavy_config = config.get("heavy")
+    heavy_overrides = heavy_config if isinstance(heavy_config, dict) else config
+
     for key in ("source", "output", "source_language", "target_language", "user_term"):
         if overrides.get(key):
             mapped_key = {
@@ -182,19 +185,20 @@ def load_runtime_config(
                 "target_language": "target_language",
                 "user_term": "user_term",
             }[key]
-            config[mapped_key] = overrides[key]
+            target_config = heavy_overrides if key in {"source", "output"} else config
+            target_config[mapped_key] = overrides[key]
 
     if overrides.get("mode") is not None:
         config["mode"] = overrides["mode"]
     if overrides.get("update_term") is not None:
         config["update_term"] = overrides["update_term"]
     if overrides.get("retranslate_with_terms") is not None:
-        config["retranslate_with_terms"] = bool(overrides["retranslate_with_terms"])
+        heavy_overrides["retranslate_with_terms"] = bool(overrides["retranslate_with_terms"])
 
     extra_papers = overrides.get("paper_list") or []
     if extra_papers:
-        config.setdefault("paper_list", [])
-        config["paper_list"].extend(extra_papers)
+        heavy_overrides.setdefault("paper_list", [])
+        heavy_overrides["paper_list"].extend(extra_papers)
 
     return config
 
@@ -706,7 +710,7 @@ def run_engine_task(
 ) -> Dict[str, Any]:
     """Dispatch one TUI task through an isolated effective engine config."""
     selected_engine = normalize_engine(engine or config.get("engine"))
-    effective_config = deepcopy(_effective_engine_config(config, selected_engine))
+    effective_config = deepcopy(effective_engine_config(config, selected_engine))
     effective_config["engine"] = selected_engine
 
     if selected_engine == "lite":
@@ -769,7 +773,7 @@ def run_translation(
 ) -> Dict[str, Any]:
     """Run the legacy CLI through the effective heavy-engine configuration."""
     loaded_config = load_runtime_config(config_path=config_path, overrides=overrides)
-    config = _effective_engine_config(loaded_config, "heavy")
+    config = effective_engine_config(loaded_config, "heavy")
     projects, config, projects_dir, output_dir = prepare_projects(
         config=config,
         project_items=project_items,

@@ -129,7 +129,7 @@ def main():
     arxiv_items = runtime.split_cli_items(args.arxiv)
     project_items = runtime.split_cli_items(args.project)
     project_url_items = runtime.split_cli_items(args.project_url)
-    config = runtime.load_runtime_config(
+    loaded_config = runtime.load_runtime_config(
         config_path=args.config,
         overrides={
             "url": args.url,
@@ -143,6 +143,7 @@ def main():
             "paper_list": arxiv_items,
         },
     )
+    config = runtime.effective_engine_config(loaded_config, "heavy")
     with _redirect_stdout_to_stderr(emit_json_stdout):
         projects, config, _projects_dir, output_dir = runtime.prepare_projects(
             config=config,
