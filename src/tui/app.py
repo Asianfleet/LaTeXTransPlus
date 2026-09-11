@@ -452,6 +452,13 @@ class LaTeXTransTuiApp(App[None]):
         padding-top: 1;
     }
 
+    #config,
+    #config-tabs,
+    #config-form-tab,
+    #config-preview-tab {
+        height: 1fr;
+    }
+
     #project-actions {
         height: auto;
         margin-bottom: 1;
@@ -534,7 +541,9 @@ class LaTeXTransTuiApp(App[None]):
 
     #engine-mode-control {
         height: 3;
-        align-horizontal: center;
+        margin-top: 1;
+        padding: 0 4;
+        align-horizontal: left;
     }
 
     #engine-mode-label {
@@ -564,7 +573,16 @@ class LaTeXTransTuiApp(App[None]):
     }
 
     #config-form {
+        height: 1fr;
         padding: 1 2;
+    }
+
+    #config-fields {
+        height: auto;
+    }
+
+    #config-preview {
+        height: 1fr;
     }
 
     .config-section-title {
@@ -815,7 +833,7 @@ class LaTeXTransTuiApp(App[None]):
     def _entry_input_options(self) -> list[tuple[str, str]]:
         """Return mode-specific input choices for the entry form."""
         if self.effective_engine == "lite":
-            return [("PDF / arXiv", "pdf")]
+            return [("自动识别", "pdf")]
         return [
             ("arXiv ID / URL", "arxiv"),
             ("本地项目/压缩包", "local"),

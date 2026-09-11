@@ -188,6 +188,34 @@ class TuiEngineModeTests(TuiAppTests):
             self.assertEqual(app.current_task.input_type, "pdf")
             self.assertEqual(app.current_task.inputs, ["paper.pdf"])
 
+    async def test_lite_entry_select_is_labeled_as_auto_detection(self):
+        """Lite entry uses one visible input choice labeled for automatic detection."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            select = app.query_one("#input-type-select", Select)
+
+            self.assertEqual(select._options[1], ("自动识别", "pdf"))
+
+    async def test_engine_mode_switch_aligns_with_entry_select(self):
+        """The session mode switch starts at the same x-coordinate as the input select."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            input_select = app.query_one("#input-type-select", Select)
+            mode_switch = app.query_one("#engine-mode-switch", Switch)
+
+            self.assertEqual(mode_switch.region.x, input_select.region.x)
+
+    async def test_engine_mode_control_has_spacing_below_entry_actions(self):
+        """模式开关行与入口操作行之间保留一个终端行的间距。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            mode_control = app.query_one("#engine-mode-control")
+
+            self.assertEqual(mode_control.styles.margin.top, 1)
+
     async def test_lite_settings_only_show_shared_and_lite_fields(self):
         """The settings form must not show heavy-only runtime controls in lite mode."""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
@@ -932,6 +960,24 @@ class TuiConfigPageTests(TuiAppTests):
                 app.query_one("#save-config-button")
             with self.assertRaises(NoMatches):
                 app.query_one("#reload-config-button")
+
+    async def test_config_form_scrolls_in_both_engine_modes(self):
+        """配置表单在 heavy 和 lite 模式的小终端中都必须提供垂直滚动。"""
+        for engine in ("heavy", "lite"):
+            app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine=engine)
+            async with app.run_test(size=(100, 24)) as pilot:
+                app.switch_page(PAGE_CONFIG)
+                await pilot.pause()
+                config_form = app.query_one("#config-form", tui_app.VerticalScroll)
+
+                self.assertGreater(
+                    config_form.max_scroll_y,
+                    0,
+                    f"{engine} 配置表单必须超过视口并可滚动",
+                )
+                config_form.scroll_end(animate=False)
+                await pilot.pause()
+                self.assertGreater(config_form.scroll_y, 0)
 
     async def test_config_page_shortcuts_switch_config_and_preview_tabs(self):
         """确认设置页 c/p 快捷键会切换配置和预览 tab。"""
