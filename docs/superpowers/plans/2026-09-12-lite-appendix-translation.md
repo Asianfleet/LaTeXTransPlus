@@ -206,18 +206,20 @@ Implementation note: 已增加 Lite runtime 字段、旧布局迁移默认值、
 - Consumes: 前三项的完整实现。
 - Produces: 全部步骤状态和每项的 `Implementation note:`。
 
-- [ ] **Step 1: 运行完整相关套件**
+- [x] **Step 1: 运行完整相关套件**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_markdown tests.test_lite_engine tests.test_markdown_terminology_agent tests.test_markdown_translator_agent tests.test_engine_config tests.test_tui_config tests.test_tui_config_schema`
 
 Expected: PASS。
 
-- [ ] **Step 2: 审查差异**
+- [x] **Step 2: 审查差异**
 
 Run: `git diff --check`，然后运行 `git status --short` 与 `git diff --stat HEAD`。
 
 Expected: 无空白错误，且仅出现本计划列出的 Lite 功能、测试、文档和计划文件。
 
-- [ ] **Step 3: 更新计划并提交**
+- [x] **Step 3: 更新计划并提交**
 
 将每项步骤标记为完成，并在每项任务末尾加入实际实现与验证结果。提交命令：`git add docs/superpowers/plans/2026-09-12-lite-appendix-translation.md && git commit -m "docs: record lite appendix translation implementation"`。
+
+Implementation note: `conda run -n latextrans python -m unittest tests.test_lite_markdown tests.test_lite_engine tests.test_markdown_terminology_agent tests.test_markdown_translator_agent tests.test_engine_config tests.test_tui_config tests.test_tui_config_schema` 通过（98 tests）。完整 `unittest discover tests` 运行 589 tests，只有既有 `test_lite_font_fields_list_available_fonts_in_a_collapsed_panel` 失败：实现使用半角括号而断言期待全角括号，未在本任务范围内修改。`config/ui.toml` SHA-256 在测试前后均为 `C9A873F1367BB6A5B4E6E9D3B319B054118D28F980A0DC9A7556C968B29F3B18`，且 `git diff --check` 通过。
