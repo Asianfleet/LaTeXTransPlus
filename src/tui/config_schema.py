@@ -97,6 +97,7 @@ HEAVY_CONFIG_FIELDS: tuple[ConfigField, ...] = (
 LITE_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("lite", "output_dir"), "输出目录", "input", "基础", "output-lite"),
     ConfigField(("lite", "mineru_api_key_env"), "MinerU API key 环境变量", "input", "基础", "MINERU_TOKEN"),
+    ConfigField(("lite", "protected_token_retry_attempts"), "保护标记额外重试次数", "integer", "翻译", 2),
     ConfigField(("lite", "mainfont"), "正文字体 mainfont", "font_family", "PDF", ""),
     ConfigField(
         ("lite", "cjk_mainfont_candidates"),
@@ -121,7 +122,7 @@ def config_fields_for_engine(engine: str) -> tuple[ConfigField, ...]:
 
 def grouped_config_fields(engine: str = "heavy") -> list[tuple[str, list[ConfigField]]]:
     """按设置页展示顺序返回字段分组。"""
-    sections = ["基础", "术语", "校验", "LLM", "PDF", "Zotero"]
+    sections = ["基础", "术语", "翻译", "校验", "LLM", "PDF", "Zotero"]
     visible_fields = config_fields_for_engine(engine)
     return [
         (section, fields)

@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 import re
 from typing import Mapping, Sequence
-from uuid import uuid4
 
 
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
@@ -31,6 +30,7 @@ _BARE_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 _BACKSLASH_MATH_RE = re.compile(
     r"(?<!\\)(?:\\\[(?s:.*?)\\\]|\\\((?s:.*?)\\\))"
 )
+_ProtectionRange = tuple[int, int, str]
 
 
 @dataclass(frozen=True)
@@ -57,18 +57,33 @@ class ProtectedMarkdown:
         return self.tokens
 
 
+class ProtectedTokenValidationError(ValueError):
+    """Describe protected tokens that a translation omitted or duplicated."""
+
+    def __init__(
+        self,
+        missing_tokens: Sequence[str],
+        duplicate_tokens: Sequence[str],
+    ) -> None:
+        """Store invalid token groups and create a concise diagnostic message."""
+        self.missing_tokens = tuple(missing_tokens)
+        self.duplicate_tokens = tuple(duplicate_tokens)
+        diagnostics: list[str] = []
+        if self.missing_tokens:
+            diagnostics.append(f"missing: {', '.join(self.missing_tokens)}")
+        if self.duplicate_tokens:
+            diagnostics.append(f"duplicated: {', '.join(self.duplicate_tokens)}")
+        super().__init__(f"protected token validation failed ({'; '.join(diagnostics)})")
+
+
 class _ProtectionBuilder:
-    """Replace structural spans with collision-resistant opaque tokens."""
+    """Replace structural spans with readable, collision-free typed tokens."""
 
     def __init__(self, source: str) -> None:
-        """Create a token namespace that does not occur in the source."""
-        namespace = uuid4().hex
-        prefix = f"\ue000LTP:{namespace}:"
-        while prefix in source:
-            namespace = uuid4().hex
-            prefix = f"\ue000LTP:{namespace}:"
-        self._prefix = prefix
+        """Keep source text so generated token candidates can avoid collisions."""
+        self._source = source
         self._tokens: dict[str, str] = {}
+        self._next_token_indices: dict[str, int] = {}
         self._shortcut_tokens: dict[str, str] = {}
         self._collapsed_tokens: dict[str, tuple[str, str]] = {}
 
@@ -89,34 +104,39 @@ class _ProtectionBuilder:
 
     def shortcut_token(self, target: str, original_markup: str) -> str:
         """Create an inserted token that can restore a shortcut reference target."""
-        token = self._stash(target)
+        token = self._stash(target, "REF")
         self._shortcut_tokens[token] = original_markup
         return token
 
     def collapsed_token(self, original_markup: str, target: str) -> str:
         """Create a token that expands when a collapsed label is translated."""
-        token = self._stash("[]")
+        token = self._stash("[]", "REF")
         self._collapsed_tokens[token] = (original_markup, target)
         return token
 
-    def replace_ranges(self, text: str, ranges: Sequence[tuple[int, int]]) -> str:
+    def replace_ranges(self, text: str, ranges: Sequence[_ProtectionRange]) -> str:
         """Replace sorted non-overlapping character ranges with opaque tokens."""
-        normalized = _normalize_ranges(ranges, len(text))
+        normalized = _normalize_protection_ranges(ranges, len(text))
         if not normalized:
             return text
 
         parts: list[str] = []
         cursor = 0
-        for start, end in normalized:
+        for start, end, token_type in normalized:
             parts.append(text[cursor:start])
-            parts.append(self._stash(text[start:end]))
+            parts.append(self._stash(text[start:end], token_type))
             cursor = end
         parts.append(text[cursor:])
         return "".join(parts)
 
-    def _stash(self, value: str) -> str:
-        """Save one protected value and return its unique token."""
-        token = f"{self._prefix}{len(self._tokens)}\ue001"
+    def _stash(self, value: str, token_type: str) -> str:
+        """Save one protected value under a readable type-specific token."""
+        index = self._next_token_indices.get(token_type, 0)
+        token = f"[[LTP_{token_type}_{index}]]"
+        while token in self._source or token in self._tokens:
+            index += 1
+            token = f"[[LTP_{token_type}_{index}]]"
+        self._next_token_indices[token_type] = index + 1
         self._tokens[token] = value
         return token
 
@@ -181,21 +201,21 @@ def rebuild_markdown(blocks: Sequence[MarkdownBlock]) -> str:
 def protect_markdown(text: str) -> ProtectedMarkdown:
     """Replace non-translatable Markdown structures with opaque tokens."""
     builder = _ProtectionBuilder(text)
-    ranges: list[tuple[int, int]] = []
+    ranges: list[_ProtectionRange] = []
     front_matter = _front_matter_range(text)
     if front_matter is not None:
-        ranges.append(front_matter)
-    ranges.extend(_fenced_code_ranges(text))
-    ranges.extend(_inline_code_ranges(text))
-    ranges.extend(_backslash_math_ranges(text))
-    ranges.extend(_dollar_math_ranges(text))
-    ranges.extend(_footnote_ranges(text))
-    ranges.extend(_reference_suffix_ranges(text))
-    ranges.extend(_inline_destination_ranges(text))
-    ranges.extend(_regex_ranges(text, _AUTOLINK_RE))
-    ranges.extend(_reference_definition_ranges(text))
-    ranges.extend(_regex_ranges(text, _BARE_URL_RE))
-    ranges.extend(_table_structure_ranges(text))
+        ranges.append((*front_matter, "METADATA"))
+    ranges.extend(_typed_ranges(_fenced_code_ranges(text), "CODE"))
+    ranges.extend(_typed_ranges(_inline_code_ranges(text), "CODE"))
+    ranges.extend(_typed_ranges(_backslash_math_ranges(text), "MATH"))
+    ranges.extend(_typed_ranges(_dollar_math_ranges(text), "MATH"))
+    ranges.extend(_typed_ranges(_footnote_ranges(text), "FOOTNOTE"))
+    ranges.extend(_typed_ranges(_reference_suffix_ranges(text), "REF"))
+    ranges.extend(_typed_ranges(_inline_destination_ranges(text), "LINK"))
+    ranges.extend(_typed_ranges(_regex_ranges(text, _AUTOLINK_RE), "URL"))
+    ranges.extend(_typed_ranges(_reference_definition_ranges(text), "REF"))
+    ranges.extend(_typed_ranges(_regex_ranges(text, _BARE_URL_RE), "URL"))
+    ranges.extend(_typed_ranges(_table_structure_ranges(text), "TABLE"))
 
     definition_ids = _reference_definition_ids(text)
     protected = builder.replace_ranges(text, ranges)
@@ -215,13 +235,19 @@ def protect_markdown(text: str) -> ProtectedMarkdown:
 
 def restore_markdown(text: str, protected: ProtectedMarkdown) -> str:
     """Restore all protected tokens and reject missing or duplicated tokens."""
+    missing_tokens: list[str] = []
+    duplicate_tokens: list[str] = []
+    for token in protected.tokens:
+        occurrences = text.count(token)
+        if occurrences == 0:
+            missing_tokens.append(token)
+        elif occurrences > 1:
+            duplicate_tokens.append(token)
+    if missing_tokens or duplicate_tokens:
+        raise ProtectedTokenValidationError(missing_tokens, duplicate_tokens)
+
     restored = text
     for token, value in protected.tokens.items():
-        occurrences = restored.count(token)
-        if occurrences == 0:
-            raise ValueError(f"protected token is missing: {token!r}")
-        if occurrences > 1:
-            raise ValueError(f"protected token occurs more than once: {token!r}")
         position = restored.find(token)
         replacement = value
         original_markup = protected.shortcut_tokens.get(token)
@@ -299,6 +325,29 @@ def _normalize_ranges(
             continue
         normalized.append((start, end))
     return normalized
+
+
+def _normalize_protection_ranges(
+    ranges: Sequence[_ProtectionRange], text_length: int
+) -> list[_ProtectionRange]:
+    """Sort typed protection ranges and discard overlaps after the first span."""
+    normalized: list[_ProtectionRange] = []
+    for start, end, token_type in sorted(
+        set(ranges), key=lambda item: (item[0], -item[1], item[2])
+    ):
+        if start < 0 or end > text_length or start >= end:
+            raise ValueError("invalid Markdown protection range")
+        if normalized and start < normalized[-1][1]:
+            continue
+        normalized.append((start, end, token_type))
+    return normalized
+
+
+def _typed_ranges(
+    ranges: Sequence[tuple[int, int]], token_type: str
+) -> list[_ProtectionRange]:
+    """Attach one semantic token type to a collection of character ranges."""
+    return [(start, end, token_type) for start, end in ranges]
 
 
 def _front_matter_range(text: str) -> tuple[int, int] | None:

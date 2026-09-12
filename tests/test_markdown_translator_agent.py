@@ -1,4 +1,5 @@
 import asyncio
+import re
 import tempfile
 import unittest
 from pathlib import Path
@@ -170,6 +171,7 @@ class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
         request_payload = fake_session.requests[0]["json"]
         system_prompt = request_payload["messages"][0]["content"]
         self.assertIn("from English to Chinese", system_prompt)
+        self.assertIn("[[LTP_<TYPE>_<N>]]", system_prompt)
         self.assertIn('"body": "正文"', system_prompt)
         self.assertIn("must take priority over all alternative translations", system_prompt)
 
@@ -256,6 +258,77 @@ class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
             translated,
             "```text\nsource code\n```\n## Metadata\nkeep\n## 正文\n内容\n",
         )
+
+    async def test_retries_a_block_when_a_protected_token_is_missing(self) -> None:
+        """Retry only the invalid block and write the result after a valid response."""
+        calls: list[int] = []
+        logs: list[tuple[str, str]] = []
+        config = self._config()
+        config["lite"] = {"max_concurrency": 1, "protected_token_retry_attempts": 1}
+        config["_project_log_callback"] = lambda event: logs.append(
+            (event["level"], event["message"])
+        )
+
+        async def request(text: str, glossary: dict[str, str], block_index: int) -> str:
+            """Omit a protected token once before returning a valid translation."""
+            calls.append(block_index)
+            if len(calls) == 1:
+                return re.sub(r"\[\[LTP_CODE_\d+\]\]", "", text, count=1)
+            return text.replace("body", "正文")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            source_path = output_dir / "source.md"
+            source_path.write_text("## Method\nbody with `code`.\n", encoding="utf-8")
+
+            output = await MarkdownTranslatorAgent(
+                config,
+                source_path,
+                output_dir,
+                split_markdown(source_path.read_text(encoding="utf-8")),
+                request_translation=request,
+            ).execute()
+
+            self.assertEqual(
+                output.read_text(encoding="utf-8"),
+                "## Method\n正文 with `code`.\n",
+            )
+
+        self.assertEqual(calls, [0, 0])
+        self.assertTrue(any(level == "warning" and "retrying" in message for level, message in logs))
+
+    async def test_fails_after_protected_token_retry_budget_is_exhausted(self) -> None:
+        """Keep output atomic after every response duplicates a protected token."""
+        calls: list[int] = []
+        config = self._config()
+        config["lite"] = {"max_concurrency": 1, "protected_token_retry_attempts": 2}
+
+        async def request(text: str, glossary: dict[str, str], block_index: int) -> str:
+            """Return a response with a duplicated typed token on every attempt."""
+            calls.append(block_index)
+            token = re.search(r"\[\[LTP_CODE_\d+\]\]", text)
+            self.assertIsNotNone(token)
+            return text + str(token.group())
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            source_path = output_dir / "source.md"
+            source_path.write_text("## Method\nbody with `code`.\n", encoding="utf-8")
+            agent = MarkdownTranslatorAgent(
+                config,
+                source_path,
+                output_dir,
+                split_markdown(source_path.read_text(encoding="utf-8")),
+                request_translation=request,
+            )
+
+            with self.assertRaisesRegex(ValueError, "duplicated"):
+                await agent.execute()
+
+            self.assertFalse((output_dir / "translated.md").exists())
+            self.assertFalse((output_dir / "translated.md.tmp").exists())
+
+        self.assertEqual(calls, [0, 0, 0])
 
     async def test_failed_block_raises_and_does_not_write_output(self) -> None:
         """Raise provider failures and leave no partially translated artifact."""

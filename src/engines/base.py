@@ -23,6 +23,7 @@ _ENGINE_RUNTIME_FIELDS: dict[EngineName, tuple[str, ...]] = {
         "cjk_mainfont_candidates",
         "mainfont",
         "geometry",
+        "protected_token_retry_attempts",
     ),
 }
 

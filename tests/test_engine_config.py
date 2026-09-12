@@ -108,6 +108,22 @@ class EngineConfigTests(unittest.TestCase):
         self.assertNotIn("mainfont", heavy_effective)
         self.assertNotIn("geometry", heavy_effective)
 
+    def test_engine_config_copies_lite_protected_token_retry_budget_only_for_lite(self):
+        """The protected-token retry budget must not leak into heavy runtime config."""
+        source = {
+            "heavy": {"output_dir": "heavy-output"},
+            "lite": {
+                "output_dir": "lite-output",
+                "protected_token_retry_attempts": 5,
+            },
+        }
+
+        lite_effective = engine_config(source, "lite")
+        heavy_effective = engine_config(source, "heavy")
+
+        self.assertEqual(lite_effective["protected_token_retry_attempts"], 5)
+        self.assertNotIn("protected_token_retry_attempts", heavy_effective)
+
 
 if __name__ == "__main__":
     unittest.main()

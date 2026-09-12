@@ -292,6 +292,9 @@ class TuiEngineModeTests(TuiAppTests):
             await pilot.pause()
 
             self.assertIsNotNone(app.query_one("#config-lite-output_dir", Input))
+            self.assertIsNotNone(
+                app.query_one("#config-lite-protected_token_retry_attempts", Input)
+            )
             with self.assertRaises(NoMatches):
                 app.query_one("#config-heavy-tex_sources_dir", Input)
 

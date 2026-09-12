@@ -4,6 +4,7 @@ import unittest
 
 from src.engines.lite_markdown import (
     MarkdownBlock,
+    ProtectedTokenValidationError,
     protect_markdown,
     rebuild_markdown,
     restore_markdown,
@@ -307,24 +308,31 @@ class MarkdownProtectionTests(unittest.TestCase):
             "Read [论文][paper].\n[paper]: https://example.test/paper",
         )
 
-    def test_restore_rejects_missing_or_duplicate_tokens(self):
-        """Fail loudly when translation removes or duplicates protected data."""
+    def test_restore_reports_missing_or_duplicate_tokens(self):
+        """Report every missing or duplicate protected token for a retry caller."""
         protected = protect_markdown("Text with `code` and $math$.")
         first_token = next(iter(protected.tokens))
 
-        with self.assertRaisesRegex(ValueError, "missing"):
+        with self.assertRaises(ProtectedTokenValidationError) as missing_error:
             restore_markdown(protected.text.replace(first_token, ""), protected)
+        self.assertEqual(missing_error.exception.missing_tokens, (first_token,))
+        self.assertEqual(missing_error.exception.duplicate_tokens, ())
 
-        with self.assertRaisesRegex(ValueError, "more than once"):
+        with self.assertRaises(ProtectedTokenValidationError) as duplicate_error:
             restore_markdown(protected.text + first_token, protected)
+        self.assertEqual(duplicate_error.exception.missing_tokens, ())
+        self.assertEqual(duplicate_error.exception.duplicate_tokens, (first_token,))
 
-    def test_tokens_do_not_collide_with_input_placeholder_like_text(self):
-        """Preserve user text that resembles a conventional placeholder."""
-        source = "Literal __LTP_0__ and `protected`."
+    def test_tokens_are_typed_and_avoid_exact_source_collisions(self):
+        """Use readable typed tokens while preserving literal source lookalikes."""
+        source = "Literal [[LTP_CODE_0]] with `protected`, $math$, and https://example.test."
 
         protected = protect_markdown(source)
 
-        self.assertIn("__LTP_0__", protected.text)
+        self.assertIn("[[LTP_CODE_0]]", protected.text)
+        self.assertIn("[[LTP_CODE_1]]", protected.tokens)
+        self.assertIn("[[LTP_MATH_0]]", protected.tokens)
+        self.assertIn("[[LTP_URL_0]]", protected.tokens)
         self.assertEqual(restore_markdown(protected.text, protected), source)
 
 

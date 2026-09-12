@@ -15,6 +15,7 @@ from src.config import merge_llm_payload, parse_custom_json
 from src.engines.lite_markdown import (
     MarkdownBlock,
     ProtectedMarkdown,
+    ProtectedTokenValidationError,
     protect_markdown,
     rebuild_markdown,
     restore_markdown,
@@ -27,6 +28,7 @@ TranslationRequest = Callable[[str, dict[str, str], int], Awaitable[str]]
 _PROVIDER_ATTEMPTS = 3
 _PROVIDER_RETRY_DELAY = 5
 _PROVIDER_TIMEOUT = 100
+_PROTECTED_TOKEN_RETRY_ATTEMPTS = 2
 
 
 class MarkdownTranslatorAgent(BaseToolAgent):
@@ -56,6 +58,9 @@ class MarkdownTranslatorAgent(BaseToolAgent):
         self.source_language = config.get("source_language", "en")
         self.target_language = config.get("target_language", "ch")
         self.max_concurrency = self._configured_concurrency(config)
+        self.protected_token_retry_attempts = (
+            self._configured_protected_token_retry_attempts(config)
+        )
 
     async def execute(self) -> Path:
         """Translate every eligible block and atomically write ``translated.md``."""
@@ -102,11 +107,17 @@ class MarkdownTranslatorAgent(BaseToolAgent):
         text: str,
         glossary: dict[str, str],
         block_index: int,
+        protected_token_retry: bool = False,
     ) -> str:
         """Invoke the injected callback or the configured chat-completions provider."""
         if self._request_translation_callback is not None:
             return await self._request_translation_callback(text, glossary, block_index)
-        return await self._request_provider_translation(text, glossary, block_index)
+        return await self._request_provider_translation(
+            text,
+            glossary,
+            block_index,
+            protected_token_retry=protected_token_retry,
+        )
 
     async def _translate_all_blocks(
         self, glossary: dict[str, str]
@@ -142,30 +153,47 @@ class MarkdownTranslatorAgent(BaseToolAgent):
             self.log(f"Skipping protected-only Markdown block {block.index}.", level="debug")
             return block
 
-        async with semaphore:
-            self.log(f"Translating Markdown block {block.index}.", level="debug")
-            translated = await self.request_translation(
-                protected.text,
-                glossary,
-                block.index,
+        max_attempts = self.protected_token_retry_attempts + 1
+        for attempt in range(1, max_attempts + 1):
+            async with semaphore:
+                self.log(f"Translating Markdown block {block.index}.", level="debug")
+                translated = await self.request_translation(
+                    protected.text,
+                    glossary,
+                    block.index,
+                    protected_token_retry=attempt > 1,
+                )
+            if not isinstance(translated, str):
+                raise TypeError(
+                    f"Markdown translation for block {block.index} must return a string"
+                )
+            try:
+                restored = restore_markdown(translated, protected)
+            except ProtectedTokenValidationError as exc:
+                if attempt >= max_attempts:
+                    raise
+                self.log(
+                    f"Markdown block {block.index} protected token validation failed "
+                    f"on attempt {attempt}/{max_attempts} "
+                    f"({len(exc.missing_tokens)} missing, "
+                    f"{len(exc.duplicate_tokens)} duplicated); retrying.",
+                    level="warning",
+                )
+                continue
+            self.log(f"Translated Markdown block {block.index}.", level="debug")
+            return MarkdownBlock(
+                index=block.index,
+                text=restored,
+                translatable=block.translatable,
             )
-        if not isinstance(translated, str):
-            raise TypeError(
-                f"Markdown translation for block {block.index} must return a string"
-            )
-        restored = restore_markdown(translated, protected)
-        self.log(f"Translated Markdown block {block.index}.", level="debug")
-        return MarkdownBlock(
-            index=block.index,
-            text=restored,
-            translatable=block.translatable,
-        )
+        raise RuntimeError("protected token retry loop exhausted")
 
     async def _request_provider_translation(
         self,
         text: str,
         glossary: dict[str, str],
         block_index: int,
+        protected_token_retry: bool = False,
     ) -> str:
         """Request one Markdown translation with bounded transport retries."""
         if not self.api_key:
@@ -177,7 +205,8 @@ class MarkdownTranslatorAgent(BaseToolAgent):
         target_label = language_label(self.target_language)
         system_prompt = (
             f"Translate academic Markdown from {source_label} to {target_label}. "
-            "Preserve every opaque protected token exactly and in place. "
+            "Preserve every protected token matching [[LTP_<TYPE>_<N>]] exactly "
+            "once and in place. "
             "Never translate, reorder, or reformat formulas. Keep every mathematical "
             "symbol inside math delimiters: when the source prose contains a bare "
             "symbol such as a lone Greek letter (for example \u03c1), emit it as inline "
@@ -191,12 +220,21 @@ class MarkdownTranslatorAgent(BaseToolAgent):
                 "priority over all alternative translations:\n<Glossary>\n"
                 f"{json.dumps(glossary, ensure_ascii=False)}"
             )
+        user_content = text
+        if protected_token_retry:
+            user_content = (
+                "The previous response failed protected-token validation. Translate "
+                "the Markdown below again from scratch. Every token in the form "
+                "[[LTP_<TYPE>_<N>]] that appears in the Markdown must occur exactly "
+                "once in the response. Return only the translated Markdown.\n\n"
+                f"{text}"
+            )
         payload = merge_llm_payload(
             {
                 "model": self.model,
                 "messages": [
                     {"role": "system", "content": system_prompt},
-                    {"role": "user", "content": text},
+                    {"role": "user", "content": user_content},
                 ],
                 "temperature": 0.7,
                 "max_new_tokens": 8192,
@@ -265,6 +303,22 @@ class MarkdownTranslatorAgent(BaseToolAgent):
         value = lite_config.get("max_concurrency", 10) if isinstance(lite_config, dict) else 10
         if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
             raise ValueError("lite.max_concurrency must be a positive integer")
+        return value
+
+    @staticmethod
+    def _configured_protected_token_retry_attempts(config: dict[str, Any]) -> int:
+        """Read a non-negative extra retry count for invalid protected tokens."""
+        lite_config = config.get("lite") or {}
+        nested_value = (
+            lite_config.get("protected_token_retry_attempts", _PROTECTED_TOKEN_RETRY_ATTEMPTS)
+            if isinstance(lite_config, dict)
+            else _PROTECTED_TOKEN_RETRY_ATTEMPTS
+        )
+        value = config.get("protected_token_retry_attempts", nested_value)
+        if isinstance(value, bool) or not isinstance(value, int) or value < 0:
+            raise ValueError(
+                "lite.protected_token_retry_attempts must be a non-negative integer"
+            )
         return value
 
     @staticmethod
