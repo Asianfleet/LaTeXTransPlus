@@ -9,6 +9,7 @@ from src.engines.lite_markdown import (
     rebuild_markdown,
     restore_markdown,
     split_markdown,
+    translatable_markdown,
 )
 
 
@@ -149,6 +150,66 @@ class MarkdownBlockTests(unittest.TestCase):
 
         self.assertEqual(blocks, [MarkdownBlock(0, "")])
         self.assertEqual(rebuild_markdown(blocks), "")
+
+    def test_disabled_appendix_translation_splits_at_nested_heading(self):
+        """A nested appendix heading should preserve itself and later blocks."""
+        source = (
+            "## Method\nBody\n### Appendix A. Details\nRaw appendix\n"
+            "## References\nRaw references"
+        )
+
+        blocks = split_markdown(
+            source,
+            source_language="en",
+            translate_appendix=False,
+        )
+
+        self.assertEqual([block.translatable for block in blocks], [True, False, False])
+        self.assertEqual(blocks[1].text, "### Appendix A. Details\nRaw appendix\n")
+
+    def test_disabled_appendix_translation_recognizes_supported_languages(self):
+        """The configured source language should select its appendix heading term."""
+        cases = (
+            ("en", "Appendices"),
+            ("ch", "附录 A"),
+            ("ch", "附錄 B"),
+            ("de", "Anhang C"),
+            ("fr", "Annexe : resultats"),
+            ("ja", "付録 A"),
+            ("ko", "부록 A"),
+        )
+
+        for source_language, heading in cases:
+            with self.subTest(source_language=source_language, heading=heading):
+                blocks = split_markdown(
+                    f"## Body\nText\n## {heading}\nRaw appendix",
+                    source_language=source_language,
+                    translate_appendix=False,
+                )
+                self.assertEqual([block.translatable for block in blocks], [True, False])
+
+    def test_disabled_appendix_translation_ignores_fenced_heading_lookalikes(self):
+        """A code fence must not start appendix preservation mode."""
+        source = "## Method\n```text\n## Appendix\n```\nBody\n## Results\nMore body"
+
+        blocks = split_markdown(
+            source,
+            source_language="en",
+            translate_appendix=False,
+        )
+
+        self.assertTrue(all(block.translatable for block in blocks))
+
+    def test_translatable_markdown_excludes_preserved_appendix_blocks(self):
+        """Terminology input should contain only blocks eligible for translation."""
+        blocks = [
+            MarkdownBlock(0, "## Method\nCore text", translatable=True),
+            MarkdownBlock(1, "## Appendix\nRaw appendix", translatable=False),
+        ]
+
+        visible = translatable_markdown(blocks)
+
+        self.assertEqual(visible, "## Method\nCore text")
 
 
 class MarkdownProtectionTests(unittest.TestCase):

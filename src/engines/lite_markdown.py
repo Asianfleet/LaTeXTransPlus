@@ -9,6 +9,9 @@ from typing import Mapping, Sequence
 
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _HEADING_RE = re.compile(r"^ {0,3}##(?:[ \t]+.*)?$")
+_ATX_HEADING_RE = re.compile(
+    r"^ {0,3}#{1,6}[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*$"
+)
 _REFERENCE_HEADING_RE = re.compile(
     r"^ {0,3}##[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*$"
 )
@@ -46,6 +49,20 @@ _REFERENCE_HEADING_TITLES = {
     "참고문헌",
     "참고 문헌",
 }
+_APPENDIX_TITLES_BY_LANGUAGE: dict[str, tuple[str, ...]] = {
+    "en": ("appendix", "appendices"),
+    "ch": ("附录", "附錄"),
+    "cn": ("附录", "附錄"),
+    "zh": ("附录", "附錄"),
+    "de": ("anhang",),
+    "fr": ("annexe",),
+    "ja": ("付録",),
+    "jp": ("付録",),
+    "ko": ("부록",),
+}
+_NUMBERED_HEADING_PREFIX_RE = re.compile(
+    r"^(?:\d+(?:\.\d+)*|[A-Za-z])[.)、:：]\s*"
+)
 
 
 @dataclass(frozen=True)
@@ -157,8 +174,12 @@ class _ProtectionBuilder:
         return token
 
 
-def split_markdown(text: str) -> list[MarkdownBlock]:
-    """Split Markdown at non-fenced second-level ATX headings."""
+def split_markdown(
+    text: str,
+    source_language: str = "en",
+    translate_appendix: bool = True,
+) -> list[MarkdownBlock]:
+    """Split Markdown at sections and optionally preserve appendix blocks."""
     lines = text.splitlines(keepends=True)
     if not lines:
         return [MarkdownBlock(index=0, text="")]
@@ -168,6 +189,7 @@ def split_markdown(text: str) -> list[MarkdownBlock]:
     fence_char: str | None = None
     fence_length = 0
     in_front_matter = _front_matter_range(text) is not None
+    appendix_start: int | None = None
 
     for line_number, line in enumerate(lines):
         content = _line_content(line)
@@ -192,13 +214,23 @@ def split_markdown(text: str) -> list[MarkdownBlock]:
             offset += len(line)
             continue
 
-        if _HEADING_RE.match(content) is not None:
+        is_appendix_heading = (
+            not translate_appendix
+            and _is_appendix_heading(content, source_language)
+        )
+        if _HEADING_RE.match(content) is not None or is_appendix_heading:
             starts.append(offset)
+        if is_appendix_heading and appendix_start is None:
+            appendix_start = offset
         offset += len(line)
 
     boundaries = ([0] if not starts or starts[0] != 0 else []) + starts + [len(text)]
     return [
-        _markdown_block(index, text[start:end])
+        _markdown_block(
+            index,
+            text[start:end],
+            translatable=appendix_start is None or start < appendix_start,
+        )
         for index, (start, end) in enumerate(zip(boundaries, boundaries[1:]))
     ]
 
@@ -221,14 +253,24 @@ def rebuild_markdown(blocks: Sequence[MarkdownBlock]) -> str:
     return "".join(parts)
 
 
-def _markdown_block(index: int, text: str) -> MarkdownBlock:
+def translatable_markdown(blocks: Sequence[MarkdownBlock]) -> str:
+    """Return Markdown content eligible for terminology processing."""
+    return "\n\n".join(block.text for block in blocks if block.translatable)
+
+
+def _markdown_block(
+    index: int,
+    text: str,
+    translatable: bool = True,
+) -> MarkdownBlock:
     """Build a block and retain reference entries outside the translation input."""
     reference_body_start = _reference_body_start(text)
     if reference_body_start is None:
-        return MarkdownBlock(index=index, text=text)
+        return MarkdownBlock(index=index, text=text, translatable=translatable)
     return MarkdownBlock(
         index=index,
         text=text,
+        translatable=translatable,
         preserved_suffix=text[reference_body_start:],
     )
 
@@ -254,6 +296,31 @@ def _is_reference_heading(content: str) -> bool:
         return False
     title = match.group("title").strip().casefold()
     return title in _REFERENCE_HEADING_TITLES
+
+
+def _is_appendix_heading(content: str, source_language: str) -> bool:
+    """Return whether an ATX heading begins an appendix in the source language."""
+    match = _ATX_HEADING_RE.match(content)
+    if match is None:
+        return False
+    title = _NUMBERED_HEADING_PREFIX_RE.sub("", match.group("title").strip())
+    titles = _APPENDIX_TITLES_BY_LANGUAGE.get(source_language.strip().casefold(), ())
+    for appendix_title in titles:
+        if _appendix_title_prefix_matches(title, appendix_title):
+            return True
+    return False
+
+
+def _appendix_title_prefix_matches(title: str, appendix_title: str) -> bool:
+    """Match an appendix term without accepting a longer Latin word prefix."""
+    if not title.casefold().startswith(appendix_title.casefold()):
+        return False
+    suffix = title[len(appendix_title) :]
+    if not suffix:
+        return True
+    if appendix_title.isascii():
+        return not (suffix[0].isalpha() or suffix[0] == "_")
+    return True
 
 
 def protect_markdown(text: str) -> ProtectedMarkdown:
