@@ -3,7 +3,7 @@ import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from rich.cells import cell_len
 from rich.syntax import Syntax
@@ -11,6 +11,7 @@ from rich.text import Text
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
+    Collapsible,
     ContentSwitcher,
     DataTable,
     Footer,
@@ -228,48 +229,59 @@ class TuiEngineModeTests(TuiAppTests):
             with self.assertRaises(NoMatches):
                 app.query_one("#config-heavy-validation-retry-max_attempts", Input)
 
-    async def test_lite_settings_list_available_fonts_below_the_candidate_input(self):
-        """字体候选输入框下方应列出本机检测到的可用字体。"""
+    async def test_lite_font_fields_list_available_fonts_in_a_collapsed_panel(self):
+        """字体字段下方用默认折叠的面板列出可用字体。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        detected = ["SimSun", "宋体", "FandolSong"]
         with patch(
-            "src.tui.app.list_available_font_families",
-            return_value=["SimSun", "宋体", "FandolSong"],
-        ):
+            "src.tui.app.list_available_font_families", return_value=detected
+        ) as lister:
             async with app.run_test():
-                hint = app.query_one(
-                    "#config-lite-cjk_mainfont_candidates-hint", Static
+                panel = app.query_one(
+                    "#config-lite-cjk_mainfont_candidates-hint", Collapsible
                 )
-                text = str(hint.content)
-                self.assertIn("当前可用字体（3）", text)
-                for family in ("SimSun", "宋体", "FandolSong"):
-                    self.assertIn(family, text)
+                self.assertEqual(panel.title, "可用字体（3）")
+                self.assertTrue(panel.collapsed)
+                listed = str(panel.query_one(".config-font-list").content)
+                for family in detected:
+                    self.assertIn(family, listed)
 
-                block = hint.parent
-                self.assertEqual(list(block.children).index(hint), 1)
+                block = panel.parent
+                self.assertEqual(list(block.children).index(panel), 1)
                 self.assertIsNotNone(
                     block.children[0].query_one(
                         "#config-lite-cjk_mainfont_candidates", Input
                     )
                 )
 
+                mainfont_panel = app.query_one("#config-lite-mainfont-hint", Collapsible)
+                self.assertTrue(mainfont_panel.collapsed)
+
+                # CJK 候选只看中文字体，正文字体需要全部字体。
+                self.assertIn(call("zh"), lister.call_args_list)
+                self.assertIn(call(None), lister.call_args_list)
+
     async def test_lite_font_hint_reports_a_missing_font_listing(self):
-        """未检测到字体列表时，提示文字必须说明原因。"""
+        """未检测到字体列表时，提示文字必须说明原因且不出现折叠面板。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
         with patch("src.tui.app.list_available_font_families", return_value=[]):
             async with app.run_test():
-                hint = app.query_one(
-                    "#config-lite-cjk_mainfont_candidates-hint", Static
-                )
+                hint = app.query_one("#config-lite-cjk_mainfont_candidates-hint")
+                self.assertIsInstance(hint, Static)
+                self.assertNotIsInstance(hint, Collapsible)
                 self.assertIn("未检测到可用字体", str(hint.content))
 
     async def test_heavy_settings_have_no_font_candidate_field(self):
         """Heavy 模式不应出现 PDF 字体字段。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
         async with app.run_test():
-            with self.assertRaises(NoMatches):
-                app.query_one("#config-lite-cjk_mainfont_candidates", Input)
-            with self.assertRaises(NoMatches):
-                app.query_one("#config-lite-geometry", Input)
+            for widget_id in (
+                "#config-lite-cjk_mainfont_candidates",
+                "#config-lite-mainfont",
+                "#config-lite-geometry",
+            ):
+                with self.assertRaises(NoMatches):
+                    app.query_one(widget_id, Input)
 
     async def test_switching_to_lite_rebuilds_settings_fields(self):
         """Mode changes replace heavy settings fields with lite settings fields."""
@@ -941,8 +953,8 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
 class TuiConfigPageTests(TuiAppTests):
     """验证配置页会加载、编辑并保存 UI 配置。"""
 
-    async def test_font_candidate_edits_are_normalized_before_saving(self):
-        """中文字体候选保存时应去空格、去重并统一用逗号连接。"""
+    async def test_font_field_edits_are_normalized_before_saving(self):
+        """中文字体候选与正文字体保存时都会被规范化。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
         config = {
             "engine": "lite",
@@ -960,12 +972,15 @@ class TuiConfigPageTests(TuiAppTests):
                 " SimSun ,FandolSong, simsun "
             )
             await pilot.pause(delay=0.1)
+            app.query_one("#config-lite-mainfont", Input).value = " Times  New Roman "
+            await pilot.pause(delay=0.1)
 
             saved_config = self.save_ui_config.call_args.args[1]
             self.assertEqual(
                 saved_config["lite"]["cjk_mainfont_candidates"],
                 "SimSun, FandolSong",
             )
+            self.assertEqual(saved_config["lite"]["mainfont"], "Times New Roman")
 
     async def test_settings_button_loads_structured_config_tabs(self):
         """确认设置按钮会打开配置 tabs 并按字段类型填充表单。"""

@@ -82,7 +82,7 @@ LaTeXTransPlus compiles translated projects with `latexmk` and may use `pdflatex
 
 The Lite engine uses the MinerU Python SDK, supplied by the `mineru-open-sdk` dependency in `requirements.txt`, to extract Markdown and image resources from a PDF. It also requires a separately installed `pandoc` executable and XeLaTeX for the final `translated.pdf` conversion. MinerU requests need an API token: the environment variable named by `[lite].mineru_api_key_env` (default `MINERU_TOKEN`) must be set and non-empty, otherwise Lite fails before contacting MinerU. Set it to the raw MinerU API token; surrounding quotes and a `Bearer ` prefix are stripped automatically, but an invalid or expired token makes MinerU answer with HTTP 401.
 
-Chinese (and Japanese or Korean) targets need a CJK font for Pandoc, otherwise XeLaTeX silently drops every CJK glyph and still reports success. Lite reads candidate fonts from `[lite].cjk_mainfont_candidates` (comma-separated, probed in order), uses fontconfig (`fc-list`, shipped with TeX Live) to keep only names this machine can actually resolve, and logs the selected font. The TUI lists the available fonts below the candidate input; names must match what `fc-list` reports (this machine has `Noto Sans SC`, while `Noto Sans CJK SC` makes XeLaTeX fail outright).
+Chinese (and Japanese or Korean) targets need a CJK font for Pandoc, otherwise XeLaTeX silently drops every CJK glyph and still reports success. Lite reads candidate fonts from `[lite].cjk_mainfont_candidates` (comma-separated, probed in order), uses fontconfig (`fc-list`, shipped with TeX Live) to keep only names this machine can actually resolve, and logs the selected font. Non-Latin symbols in the body text (Greek letters, for example) are controlled by `[lite].mainfont`: when it is blank, Pandoc's default Latin Modern has no Greek coverage and drops those characters silently. Use `[lite].mainfont` for the body font and `[lite].cjk_mainfont_candidates` for CJK text; both must match the names `fc-list` reports (this machine has `Noto Sans SC`, while `Noto Sans CJK SC` makes XeLaTeX fail outright). The TUI shows the detected fonts in a collapsed "available fonts" panel below each font field, listing CJK families for the candidate list and every family for the body font, and the translation prompt asks for bare math symbols in prose to come back as inline math.
 
 ## Optional Conda Environment
 
@@ -157,6 +157,7 @@ retranslate_with_terms = false
 output_dir = "output-lite"
 mineru_api_key_env = "MINERU_TOKEN"
 cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
+mainfont = ""
 geometry = ""
 ```
 

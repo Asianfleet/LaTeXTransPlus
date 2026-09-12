@@ -173,6 +173,38 @@ class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn('"body": "正文"', system_prompt)
         self.assertIn("must take priority over all alternative translations", system_prompt)
 
+    async def test_provider_system_prompt_requires_math_delimiters_for_symbols(self) -> None:
+        """Bare symbols such as a lone Greek letter must come back as inline math."""
+        source = "## Method\nbody\n"
+        fake_session = _FakeProviderSession("## 方法\n正文\n")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            source_path = output_dir / "source.md"
+            source_path.write_text(source, encoding="utf-8")
+            config = self._config()
+            config["llm_config"] = {
+                "api_key": "test-key",
+                "base_url": "https://provider.test/chat/completions",
+                "model": "test-model",
+            }
+
+            with patch(
+                "src.agents.tool_agents.markdown_translator_agent.aiohttp.ClientSession",
+                return_value=fake_session,
+            ):
+                await MarkdownTranslatorAgent(
+                    config,
+                    source_path,
+                    output_dir,
+                    split_markdown(source),
+                ).execute()
+
+        system_prompt = fake_session.requests[0]["json"]["messages"][0]["content"]
+        self.assertIn("Keep every mathematical symbol inside math delimiters", system_prompt)
+        self.assertIn("$\\rho$", system_prompt)
+        self.assertIn("Do not wrap ordinary words in math delimiters", system_prompt)
+
     def test_concurrency_defaults_to_ten_and_rejects_invalid_values(self) -> None:
         """Use the lite default concurrency while rejecting unusable configuration."""
         with tempfile.TemporaryDirectory() as tmp_dir:

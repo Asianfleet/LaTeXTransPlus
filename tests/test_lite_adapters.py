@@ -558,19 +558,32 @@ class LiteAdapterTests(unittest.TestCase):
         )
 
     def test_pandoc_adapter_uses_the_configured_geometry_and_cjk_font(self) -> None:
-        """Explicit geometry and CJK font settings must reach Pandoc as variables."""
+        """Explicit geometry, body font, and CJK font must reach Pandoc as variables."""
         from src.engines.lite_pdf import PandocPdfGenerator
 
         runner = FakePandocRunner()
         PandocPdfGenerator(
             runner=runner,
             cjk_mainfont="FandolSong",
+            mainfont="Times New Roman",
             geometry="margin=2cm",
         ).generate(Path("translated.md"), self.output_dir / "translated.pdf", "ch")
 
         self.assertIn("-V", runner.command)
         self.assertIn("geometry:margin=2cm", runner.command)
         self.assertIn("CJKmainfont:FandolSong", runner.command)
+        self.assertIn("mainfont:Times New Roman", runner.command)
+
+    def test_pandoc_adapter_applies_the_body_font_to_every_target_language(self) -> None:
+        """The body font is not CJK-specific, so a Latin target gets it too."""
+        from src.engines.lite_pdf import PandocPdfGenerator
+
+        runner = FakePandocRunner()
+        PandocPdfGenerator(runner=runner, mainfont="DejaVu Serif").generate(
+            Path("translated.md"), self.output_dir / "translated.pdf", "fr"
+        )
+
+        self.assertIn("mainfont:DejaVu Serif", runner.command)
 
     def test_pandoc_adapter_omits_the_cjk_font_for_non_cjk_targets(self) -> None:
         """A Latin target must not receive the CJK font variable."""

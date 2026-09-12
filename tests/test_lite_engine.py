@@ -353,14 +353,20 @@ class LiteEngineTests(unittest.TestCase):
         return result, logs
 
     def test_run_builds_the_pdf_generator_from_lite_font_and_geometry_settings(self):
-        """Resolved CJK font and geometry must reach the Pandoc generator."""
+        """Resolved body font, CJK font, and geometry must reach the generator."""
         captured: list[dict[str, object]] = []
 
         class _SpyPdfGenerator:
             """Capture constructor settings and write a placeholder PDF."""
 
-            def __init__(self, cjk_mainfont=None, geometry=None) -> None:
-                captured.append({"cjk_mainfont": cjk_mainfont, "geometry": geometry})
+            def __init__(self, cjk_mainfont=None, mainfont=None, geometry=None) -> None:
+                captured.append(
+                    {
+                        "cjk_mainfont": cjk_mainfont,
+                        "mainfont": mainfont,
+                        "geometry": geometry,
+                    }
+                )
 
             def generate(self, markdown_path, pdf_path, target_language):
                 pdf_path.write_bytes(b"%PDF-spy")
@@ -371,23 +377,72 @@ class LiteEngineTests(unittest.TestCase):
                 with patch(
                     "src.engines.lite.resolve_cjk_mainfont", return_value="FandolSong"
                 ):
-                    result, logs = self._run_engine_with_default_pdf_stage(
-                        Path(temp_dir),
-                        {
-                            "source_language": "en",
-                            "target_language": "ch",
-                            "cjk_mainfont_candidates": "SimSun, FandolSong",
-                            "geometry": "margin=2cm",
-                        },
-                    )
+                    with patch(
+                        "src.engines.lite.resolve_mainfont", return_value="Times New Roman"
+                    ):
+                        result, logs = self._run_engine_with_default_pdf_stage(
+                            Path(temp_dir),
+                            {
+                                "source_language": "en",
+                                "target_language": "ch",
+                                "cjk_mainfont_candidates": "SimSun, FandolSong",
+                                "mainfont": "Times New Roman",
+                                "geometry": "margin=2cm",
+                            },
+                        )
 
             self.assertTrue(result["ok"])
 
         self.assertEqual(
-            captured, [{"cjk_mainfont": "FandolSong", "geometry": "margin=2cm"}]
+            captured,
+            [
+                {
+                    "cjk_mainfont": "FandolSong",
+                    "mainfont": "Times New Roman",
+                    "geometry": "margin=2cm",
+                }
+            ],
         )
         self.assertTrue(
             any("CJK font fallback selected: FandolSong" in str(event["message"]) for event in logs)
+        )
+        self.assertTrue(
+            any("Body font selected: Times New Roman" in str(event["message"]) for event in logs)
+        )
+
+    def test_run_warns_and_keeps_the_default_when_mainfont_is_not_installed(self):
+        """An uninstalled body font must not be passed on to Pandoc."""
+        captured: list[dict[str, object]] = []
+
+        class _SpyPdfGenerator:
+            """Capture the mainfont passed by the engine."""
+
+            def __init__(self, cjk_mainfont=None, mainfont=None, geometry=None) -> None:
+                captured.append(mainfont)
+
+            def generate(self, markdown_path, pdf_path, target_language):
+                pdf_path.write_bytes(b"%PDF-spy")
+                return pdf_path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("src.engines.lite.PandocPdfGenerator", _SpyPdfGenerator):
+                with patch("src.engines.lite.resolve_mainfont", return_value=None):
+                    _result, logs = self._run_engine_with_default_pdf_stage(
+                        Path(temp_dir),
+                        {
+                            "source_language": "en",
+                            "target_language": "ch",
+                            "mainfont": "Missing Font",
+                        },
+                    )
+
+        self.assertEqual(captured, [None])
+        self.assertTrue(
+            any(
+                "is not installed" in str(event["message"])
+                for event in logs
+                if event.get("level") == "warning"
+            )
         )
 
     def test_run_warns_when_no_configured_cjk_font_is_installed(self):
@@ -395,7 +450,7 @@ class LiteEngineTests(unittest.TestCase):
         class _SpyPdfGenerator:
             """Write a placeholder PDF for the configured settings."""
 
-            def __init__(self, cjk_mainfont=None, geometry=None) -> None:
+            def __init__(self, cjk_mainfont=None, mainfont=None, geometry=None) -> None:
                 self.cjk_mainfont = cjk_mainfont
 
             def generate(self, markdown_path, pdf_path, target_language):
@@ -428,7 +483,7 @@ class LiteEngineTests(unittest.TestCase):
         class _SpyPdfGenerator:
             """Write a placeholder PDF for the configured settings."""
 
-            def __init__(self, cjk_mainfont=None, geometry=None) -> None:
+            def __init__(self, cjk_mainfont=None, mainfont=None, geometry=None) -> None:
                 self.cjk_mainfont = cjk_mainfont
 
             def generate(self, markdown_path, pdf_path, target_language):
@@ -454,7 +509,7 @@ class LiteEngineTests(unittest.TestCase):
         class _SpyPdfGenerator:
             """Capture the CJK font setting passed by the engine."""
 
-            def __init__(self, cjk_mainfont=None, geometry=None) -> None:
+            def __init__(self, cjk_mainfont=None, mainfont=None, geometry=None) -> None:
                 captured.append({"cjk_mainfont": cjk_mainfont})
 
             def generate(self, markdown_path, pdf_path, target_language):

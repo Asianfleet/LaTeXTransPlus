@@ -42,11 +42,13 @@ class PandocPdfGenerator:
         self,
         runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
         cjk_mainfont: str | None = None,
+        mainfont: str | None = None,
         geometry: str | None = None,
     ) -> None:
         """Configure injectable execution and optional portable Pandoc variables."""
         self._runner = runner or subprocess.run
         self._cjk_mainfont = cjk_mainfont
+        self._mainfont = mainfont
         self._geometry = geometry
         self.last_pdf_warning = ""
 
@@ -72,6 +74,8 @@ class PandocPdfGenerator:
         ]
         if self._geometry:
             command.extend(["-V", f"geometry:{self._geometry}"])
+        if self._mainfont:
+            command.extend(["-V", f"mainfont:{self._mainfont}"])
         if self._cjk_mainfont and language_tag.startswith(_CJK_LANGUAGE_PREFIXES):
             command.extend(["-V", f"CJKmainfont:{self._cjk_mainfont}"])
 

@@ -3,10 +3,12 @@ import unittest
 from src.engines.lite_fonts import DEFAULT_CJK_FONT_CANDIDATES
 from src.tui.config_schema import (
     CONFIG_FIELDS,
+    FONT_HINT_LANGUAGE_BY_KIND,
     config_fields_for_engine,
     form_text_for_field,
     grouped_config_fields,
     normalized_config_from_form,
+    parse_font_family_value,
     parse_font_list_value,
     parse_textarea_value,
 )
@@ -117,22 +119,38 @@ class TuiConfigSchemaTests(unittest.TestCase):
         self.assertEqual(normalized["lite"]["output_dir"], "new-lite")
 
     def test_lite_pdf_fields_use_the_font_list_kind_and_a_pdf_section(self):
-        """Font candidates and geometry belong to lite's PDF settings group."""
+        """Font fields and geometry belong to lite's PDF settings group."""
         fields = {field.path: field for field in config_fields_for_engine("lite")}
 
         font_field = fields[("lite", "cjk_mainfont_candidates")]
         self.assertEqual(font_field.kind, "font_list")
         self.assertEqual(font_field.section, "PDF")
         self.assertEqual(font_field.default, DEFAULT_CJK_FONT_CANDIDATES)
+        self.assertEqual(fields[("lite", "mainfont")].kind, "font_family")
+        self.assertEqual(fields[("lite", "mainfont")].default, "")
         self.assertEqual(fields[("lite", "geometry")].kind, "input")
         self.assertEqual(fields[("lite", "geometry")].default, "")
 
         sections = dict(grouped_config_fields("lite"))
         self.assertEqual(
             [field.path for field in sections["PDF"]],
-            [("lite", "cjk_mainfont_candidates"), ("lite", "geometry")],
+            [
+                ("lite", "mainfont"),
+                ("lite", "cjk_mainfont_candidates"),
+                ("lite", "geometry"),
+            ],
         )
         self.assertNotIn("PDF", dict(grouped_config_fields("heavy")))
+
+    def test_font_fields_declare_which_families_their_hint_lists(self):
+        """The CJK field lists CJK fonts while the body font lists every family."""
+        self.assertEqual(FONT_HINT_LANGUAGE_BY_KIND["font_list"], "zh")
+        self.assertIsNone(FONT_HINT_LANGUAGE_BY_KIND["font_family"])
+        for field in config_fields_for_engine("lite"):
+            self.assertEqual(
+                field.kind in FONT_HINT_LANGUAGE_BY_KIND,
+                field.path[-1] in {"mainfont", "cjk_mainfont_candidates"},
+            )
 
     def test_font_list_values_are_normalized_into_a_comma_separated_string(self):
         """Saving a font list should dedupe and re-join the family names."""
@@ -149,6 +167,19 @@ class TuiConfigSchemaTests(unittest.TestCase):
         self.assertEqual(parse_font_list_value(field, "   "), "")
         with self.assertRaisesRegex(ValueError, "中文字体候选"):
             parse_font_list_value(field, " , ,")
+
+    def test_font_family_values_collapse_whitespace_and_reject_lists(self):
+        """A body font is a single name, not a comma-separated candidate list."""
+        field = next(
+            field
+            for field in config_fields_for_engine("lite")
+            if field.path == ("lite", "mainfont")
+        )
+
+        self.assertEqual(parse_font_family_value(field, "  Times   New Roman "), "Times New Roman")
+        self.assertEqual(parse_font_family_value(field, "   "), "")
+        with self.assertRaisesRegex(ValueError, "正文字体"):
+            parse_font_family_value(field, "Times New Roman, DejaVu Serif")
 
     def test_paper_list_textarea_round_trips_an_empty_list(self):
         """Paper-list text should retain its JSON array type when empty."""

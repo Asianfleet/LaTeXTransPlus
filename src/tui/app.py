@@ -26,6 +26,7 @@ from textual.containers import Horizontal, Vertical, VerticalScroll
 from textual.widget import Widget
 from textual.widgets import (
     Button,
+    Collapsible,
     ContentSwitcher,
     DataTable,
     Footer,
@@ -44,12 +45,14 @@ from textual.widgets import (
 
 from src.tui.config import UI_CONFIG_PATH, load_ui_config, save_ui_config
 from src.tui.config_schema import (
+    FONT_HINT_LANGUAGE_BY_KIND,
     ConfigField,
     bool_for_field,
     config_fields_for_engine,
     form_text_for_field,
     grouped_config_fields,
     normalized_config_from_form,
+    parse_font_family_value,
     parse_font_list_value,
     parse_integer_value,
     parse_textarea_value,
@@ -607,14 +610,26 @@ class LaTeXTransTuiApp(App[None]):
         margin: 0 0 1 0;
     }
 
+    .config-field-block-with-hint .config-field-row {
+        margin-bottom: 0;
+    }
+
     .config-field-block {
         height: auto;
     }
 
     .config-field-hint {
-        width: 100%;
+        width: 1fr;
         height: auto;
-        padding: 0 0 1 25;
+        margin: 0 1 1 25;
+        padding: 0 1 1 0;
+        color: $text-muted;
+    }
+
+    .config-font-list {
+        width: 1fr;
+        height: auto;
+        text-wrap: wrap;
         color: $text-muted;
     }
 
@@ -729,7 +744,7 @@ class LaTeXTransTuiApp(App[None]):
         self.zotero_selected_keys: set[str] = set()
         self.task_processes: dict[str, TuiTaskProcess] = {}
         self.cancelled_task_ids: set[str] = set()
-        self._font_families_cache: list[str] | None = None
+        self._font_families_cache: dict[str | None, list[str]] = {}
 
     def compose(self) -> ComposeResult:
         """Compose the persistent sidebar, content switcher, and footer."""
@@ -1312,30 +1327,38 @@ class LaTeXTransTuiApp(App[None]):
             )
         ]
         hint = self._config_field_hint(field)
-        if hint:
-            children.append(
-                Static(
-                    hint,
-                    id=f"{field.widget_id}-hint",
-                    classes="config-field-hint",
-                )
-            )
-        return Vertical(*children, classes="config-field-block")
+        if hint is not None:
+            children.append(hint)
+        classes = "config-field-block"
+        if hint is not None:
+            classes += " config-field-block-with-hint"
+        return Vertical(*children, classes=classes)
 
-    def _config_field_hint(self, field: ConfigField) -> str:
-        """返回设置项下方的说明文本，字体候选字段会列出本机可用字体。"""
-        if field.kind != "font_list":
-            return ""
-        families = self._available_font_families()
+    def _config_field_hint(self, field: ConfigField) -> Widget | None:
+        """返回设置项下方的可用字体折叠面板；不需要提示时返回 None。"""
+        if field.kind not in FONT_HINT_LANGUAGE_BY_KIND:
+            return None
+        families = self._available_font_families(FONT_HINT_LANGUAGE_BY_KIND[field.kind])
+        hint_id = f"{field.widget_id}-hint"
         if not families:
-            return "未检测到可用字体：需要随 TeX Live 一起安装的 fc-list。"
-        return f"当前可用字体（{len(families)}）：{'、'.join(families)}"
+            return Static(
+                "未检测到可用字体：需要随 TeX Live 一起安装的 fc-list。",
+                id=hint_id,
+                classes="config-field-hint",
+            )
+        return Collapsible(
+            Static(", ".join(families), classes="config-font-list"),
+            title=f"可用字体 ({len(families)})",
+            collapsed=True,
+            id=hint_id,
+            classes="config-field-hint",
+        )
 
-    def _available_font_families(self) -> list[str]:
-        """按会话缓存 fontconfig 报告的可用字体列表。"""
-        if self._font_families_cache is None:
-            self._font_families_cache = list_available_font_families()
-        return self._font_families_cache
+    def _available_font_families(self, language: str | None) -> list[str]:
+        """按语言过滤缓存 fontconfig 报告的可用字体列表。"""
+        if language not in self._font_families_cache:
+            self._font_families_cache[language] = list_available_font_families(language)
+        return self._font_families_cache[language]
 
     def _config_field_input(self, field: ConfigField) -> Widget:
         """Create the Textual input widget required by one configuration field."""
@@ -1381,6 +1404,9 @@ class LaTeXTransTuiApp(App[None]):
             elif field.kind == "font_list":
                 text = self.query_one(f"#{field.widget_id}", Input).value
                 values[field.path] = parse_font_list_value(field, text)
+            elif field.kind == "font_family":
+                text = self.query_one(f"#{field.widget_id}", Input).value
+                values[field.path] = parse_font_family_value(field, text)
             else:
                 values[field.path] = self.query_one(f"#{field.widget_id}", Input).value
         return values

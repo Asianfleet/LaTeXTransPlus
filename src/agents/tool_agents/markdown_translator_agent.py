@@ -178,6 +178,11 @@ class MarkdownTranslatorAgent(BaseToolAgent):
         system_prompt = (
             f"Translate academic Markdown from {source_label} to {target_label}. "
             "Preserve every opaque protected token exactly and in place. "
+            "Never translate, reorder, or reformat formulas. Keep every mathematical "
+            "symbol inside math delimiters: when the source prose contains a bare "
+            "symbol such as a lone Greek letter (for example \u03c1), emit it as inline "
+            "math ($\\rho$) so the PDF can render the glyph. Do not wrap ordinary "
+            "words in math delimiters. "
             "Return only the translated Markdown without code fences or commentary."
         )
         if glossary:

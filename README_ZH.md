@@ -82,7 +82,7 @@ LaTeXTransPlus 使用 `latexmk` 编译译文项目，并会根据目标语言选
 
 Lite 引擎使用 Python 依赖 `mineru-open-sdk` 提供的 MinerU SDK，从 PDF 提取 Markdown 和图片资源。最终生成 `translated.pdf` 还需要单独安装 `pandoc` 可执行文件和 XeLaTeX。MinerU 请求需要 API token：`[lite].mineru_api_key_env` 指定的环境变量（默认 `MINERU_TOKEN`）必须已设置且非空，否则 Lite 会在访问 MinerU 之前直接失败。请填入 MinerU API token 的原始值；外层引号和 `Bearer ` 前缀会被自动去掉，但 token 无效或过期时 MinerU 会返回 HTTP 401。
 
-中文（以及日文、韩文）目标需要给 Pandoc 指定一个 CJK 字体，否则 XeLaTeX 会静默丢弃全部汉字且仍然返回成功。Lite 用 `[lite].cjk_mainfont_candidates` 配置候选字体（逗号分隔，按顺序探测），借助 fontconfig（`fc-list`，随 TeX Live 一起安装）取出本机真实可解析的字体名，选中第一个可用项并把结果写入日志。TUI 设置页的中文字体候选输入框下方会直接列出当前可用字体；字体名必须与 `fc-list` 报告的一致（例如本机实际是 `Noto Sans SC`，写成 `Noto Sans CJK SC` 会让 XeLaTeX 直接失败）。
+中文（以及日文、韩文）目标需要给 Pandoc 指定一个 CJK 字体，否则 XeLaTeX 会静默丢弃全部汉字且仍然返回成功。Lite 用 `[lite].cjk_mainfont_candidates` 配置候选字体（逗号分隔，按顺序探测），借助 fontconfig（`fc-list`，随 TeX Live 一起安装）取出本机真实可解析的字体名，选中第一个可用项并把结果写入日志。正文里的非拉丁符号（例如希腊字母）由 `[lite].mainfont` 决定：留空时使用 Pandoc 默认的 Latin Modern，该字体不含希腊字母，相应字符会被静默丢弃。TUI 设置页在字体字段下方用「可用字体」面板列出检测到的字体，默认折叠：中文字体候选只列中文字体，正文字体列出全部字体。翻译提示词同时要求把 Markdown 正文里孤立的数学符号（例如单独的希腊字母）写成行内公式。字体名必须与 `fc-list` 报告的一致（例如本机实际是 `Noto Sans SC`，写成 `Noto Sans CJK SC` 会让 XeLaTeX 直接失败）。
 
 ## 可选：使用 Conda 环境
 
@@ -157,6 +157,7 @@ retranslate_with_terms = false
 output_dir = "output-lite"
 mineru_api_key_env = "MINERU_TOKEN"
 cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
+mainfont = ""
 geometry = ""
 ```
 

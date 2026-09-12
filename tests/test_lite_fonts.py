@@ -11,6 +11,7 @@ from src.engines.lite_fonts import (
     list_available_font_families,
     parse_font_candidates,
     resolve_cjk_mainfont,
+    resolve_mainfont,
 )
 
 
@@ -79,6 +80,16 @@ class AvailableFontListingTests(unittest.TestCase):
         self.assertEqual(families, sorted(families, key=str.casefold))
         self.assertIn(":lang=zh", runner.command)
 
+    def test_lists_every_family_when_no_language_filter_is_given(self) -> None:
+        """A mainfont listing must not be restricted to CJK-capable families."""
+        runner = FakeFcListRunner("Latin Only\nTimes New Roman\n")
+
+        with patch("src.engines.lite_fonts.shutil.which", return_value="fc-list"):
+            families = list_available_font_families(language=None, runner=runner)
+
+        self.assertEqual(families, ["Latin Only", "Times New Roman"])
+        self.assertEqual(runner.command[-2:], [":", "family"])
+
     def test_returns_empty_list_when_fontconfig_is_unavailable(self) -> None:
         """Missing fc-list, a failing query, and OSErrors all mean "cannot detect"."""
         with patch("src.engines.lite_fonts.shutil.which", return_value=None):
@@ -95,6 +106,32 @@ class AvailableFontListingTests(unittest.TestCase):
                 ),
                 [],
             )
+
+
+class MainFontResolutionTests(unittest.TestCase):
+    """Verify a single body-font name is resolved against the font database."""
+
+    def test_returns_the_canonical_spelling_of_an_installed_family(self) -> None:
+        """Matching is case-insensitive while the reported spelling is used."""
+        with patch(
+            "src.engines.lite_fonts.list_available_font_families",
+            return_value=["Times New Roman", "DejaVu Serif"],
+        ):
+            self.assertEqual(resolve_mainfont("times new roman"), "Times New Roman")
+            self.assertIsNone(resolve_mainfont("Missing Font"))
+
+    def test_blank_values_resolve_to_no_font(self) -> None:
+        """An unset or whitespace-only setting means "keep the Pandoc default"."""
+        self.assertIsNone(resolve_mainfont(""))
+        self.assertIsNone(resolve_mainfont("   "))
+        self.assertIsNone(resolve_mainfont(None))
+
+    def test_keeps_the_configured_name_when_no_font_database_is_available(self) -> None:
+        """Without fontconfig the configured name is passed through unchanged."""
+        with patch(
+            "src.engines.lite_fonts.list_available_font_families", return_value=[]
+        ):
+            self.assertEqual(resolve_mainfont(" Times  New Roman "), "Times New Roman")
 
 
 class CjkFontResolutionTests(unittest.TestCase):

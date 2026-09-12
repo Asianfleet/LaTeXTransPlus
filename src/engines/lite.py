@@ -22,6 +22,7 @@ from src.engines.lite_fonts import (
     DEFAULT_CJK_FONT_CANDIDATES,
     parse_font_candidates,
     resolve_cjk_mainfont,
+    resolve_mainfont,
 )
 from src.engines.lite_math import normalize_markdown_math_file
 from src.engines.lite_mineru import MineruMarkdownExtractor
@@ -217,8 +218,32 @@ class LiteEngine:
             cjk_mainfont=self._resolve_cjk_font(
                 project_config, target_language, result, log_callback
             ),
+            mainfont=self._resolve_mainfont(project_config, result, log_callback),
             geometry=geometry or None,
         )
+
+    def _resolve_mainfont(
+        self,
+        project_config: dict[str, Any],
+        result: dict[str, Any],
+        log_callback: LogCallback | None,
+    ) -> str | None:
+        """Resolve the configured body font, which controls non-CJK glyph coverage."""
+        configured = project_config.get("mainfont")
+        if configured is None or not str(configured).strip():
+            return None
+        font = resolve_mainfont(configured)
+        if font is None:
+            self._log(
+                f"Configured mainfont {configured!r} is not installed; keeping the Pandoc "
+                "default font, which may drop symbols outside Latin.",
+                "warning",
+                result,
+                log_callback,
+            )
+            return None
+        self._log(f"Body font selected: {font}.", "info", result, log_callback)
+        return font
 
     def _resolve_cjk_font(
         self,

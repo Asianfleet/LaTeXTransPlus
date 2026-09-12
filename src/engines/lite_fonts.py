@@ -22,7 +22,6 @@ _DEFAULT_CANDIDATES = (
     "Microsoft YaHei",
 )
 DEFAULT_CJK_FONT_CANDIDATES = ", ".join(_DEFAULT_CANDIDATES)
-_FONT_QUERY = (":lang=zh", "family")
 
 
 def parse_font_candidates(value: object) -> list[str]:
@@ -46,9 +45,15 @@ def parse_font_candidates(value: object) -> list[str]:
 
 
 def list_available_font_families(
+    language: str | None = "zh",
     runner: Callable[..., subprocess.CompletedProcess[str]] | None = None,
 ) -> list[str]:
-    """Return CJK-capable font families reported by fontconfig, sorted.
+    """Return font families reported by fontconfig, sorted.
+
+    Args:
+        language: Optional language filter such as ``"zh"``; ``None`` lists
+            every family so a Latin or Greek body font can be picked as well.
+        runner: Injectable process runner for tests.
 
     Localized aliases (``SimSun,宋体``) are reported as separate families because
     XeTeX resolves either spelling. Machines without ``fc-list`` return an empty
@@ -61,7 +66,7 @@ def list_available_font_families(
     execute = runner or subprocess.run
     try:
         completed = execute(
-            [executable, *_FONT_QUERY],
+            [executable, *_font_query(language)],
             check=False,
             capture_output=True,
             text=True,
@@ -75,11 +80,27 @@ def list_available_font_families(
     return _parse_family_output(_process_output(completed.stdout))
 
 
+def resolve_mainfont(value: object) -> str | None:
+    """Resolve a configured body font against every family fontconfig knows.
+
+    Returns the canonical spelling this machine reports, the configured name
+    unchanged when no font database is available, and ``None`` when the name is
+    blank or not installed.
+    """
+    name = _normalize_family(value) if value is not None else ""
+    if not name:
+        return None
+    families = list_available_font_families(language=None)
+    if not families:
+        return name
+    return _match_family(name, families)
+
+
 def resolve_cjk_mainfont(
     candidates: Sequence[str],
     available: Sequence[str] | None = None,
 ) -> str | None:
-    """Return the first candidate this machine can resolve, or ``None``.
+    """Return the first CJK candidate this machine can resolve, or ``None``.
 
     When no font listing is available at all, the first candidate is returned
     unchanged: a machine without fontconfig is better served by a best-effort
@@ -88,16 +109,27 @@ def resolve_cjk_mainfont(
     if not candidates:
         return None
 
-    families = list_available_font_families() if available is None else list(available)
+    families = list_available_font_families("zh") if available is None else list(available)
     if not families:
         return candidates[0]
 
-    resolvable = {_normalize_family(family).casefold(): family for family in families}
     for candidate in candidates:
-        match = resolvable.get(_normalize_family(candidate).casefold())
+        match = _match_family(candidate, families)
         if match is not None:
             return match
     return None
+
+
+def _match_family(name: str, families: Sequence[str]) -> str | None:
+    """Return the canonical family spelling when ``name`` is installed."""
+    resolvable = {_normalize_family(family).casefold(): family for family in families}
+    return resolvable.get(_normalize_family(name).casefold())
+
+
+def _font_query(language: str | None) -> tuple[str, ...]:
+    """Build the fc-list pattern and format arguments for one listing."""
+    pattern = ":" if language is None else f":lang={language}"
+    return (pattern, "family")
 
 
 def _fc_list_executable() -> str | None:

@@ -142,6 +142,7 @@ class TuiConfigTests(unittest.TestCase):
                     config["lite"]["cjk_mainfont_candidates"],
                     DEFAULT_CJK_FONT_CANDIDATES,
                 )
+                self.assertEqual(config["lite"]["mainfont"], "")
                 self.assertEqual(config["lite"]["geometry"], "")
                 for key in ("tex_sources_dir", "output_dir", "paper_list", "retranslate_with_terms", "validation"):
                     self.assertNotIn(key, config)

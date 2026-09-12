@@ -11,7 +11,15 @@ from src.engines.base import normalize_engine
 from src.engines.lite_fonts import DEFAULT_CJK_FONT_CANDIDATES, parse_font_candidates
 
 
-FieldKind = Literal["input", "textarea", "select", "switch", "integer", "font_list"]
+FieldKind = Literal[
+    "input", "textarea", "select", "switch", "integer", "font_list", "font_family"
+]
+
+# 字体类字段在输入框下方列出可用字体时使用的语言过滤；None 表示列出全部字体。
+FONT_HINT_LANGUAGE_BY_KIND: dict[str, str | None] = {
+    "font_list": "zh",
+    "font_family": None,
+}
 
 
 @dataclass(frozen=True)
@@ -89,6 +97,7 @@ HEAVY_CONFIG_FIELDS: tuple[ConfigField, ...] = (
 LITE_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("lite", "output_dir"), "输出目录", "input", "基础", "output-lite"),
     ConfigField(("lite", "mineru_api_key_env"), "MinerU API key 环境变量", "input", "基础", "MINERU_TOKEN"),
+    ConfigField(("lite", "mainfont"), "正文字体 mainfont", "font_family", "PDF", ""),
     ConfigField(
         ("lite", "cjk_mainfont_candidates"),
         "中文字体候选",
@@ -210,6 +219,14 @@ def parse_font_list_value(field: ConfigField, text: str) -> str:
     if not candidates:
         raise ValueError(f"{field.label} 必须是逗号分隔的字体名。")
     return ", ".join(candidates)
+
+
+def parse_font_family_value(field: ConfigField, text: str) -> str:
+    """规范化单个字体名，并拒绝误填的逗号列表。"""
+    value = " ".join(text.split())
+    if "," in value:
+        raise ValueError(f"{field.label} 只能填一个字体名，逗号列表请填到中文字体候选。")
+    return value
 
 
 def parse_integer_value(field: ConfigField, text: str) -> int:

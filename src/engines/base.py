@@ -17,7 +17,13 @@ _HEAVY_RUNTIME_FIELDS = (
 )
 _ENGINE_RUNTIME_FIELDS: dict[EngineName, tuple[str, ...]] = {
     "heavy": _HEAVY_RUNTIME_FIELDS,
-    "lite": ("output_dir", "mineru_api_key_env", "cjk_mainfont_candidates", "geometry"),
+    "lite": (
+        "output_dir",
+        "mineru_api_key_env",
+        "cjk_mainfont_candidates",
+        "mainfont",
+        "geometry",
+    ),
 }
 
 
