@@ -34,6 +34,24 @@ class _FakeMineru:
         return markdown_path
 
 
+class _AppendixMineru:
+    """Write source Markdown containing a body section and an appendix."""
+
+    def extract(
+        self,
+        source_pdf: Path,
+        output_dir: Path,
+        api_key_env: str | None = None,
+    ) -> Path:
+        """Create deterministic Markdown with an appendix heading."""
+        markdown_path = output_dir / "source.md"
+        markdown_path.write_text(
+            "# Paper\n\n## Method\nSource body.\n\n## Appendix A\nRaw appendix.\n",
+            encoding="utf-8",
+        )
+        return markdown_path
+
+
 class _FakeTerminology:
     """Act as an injectable Markdown terminology-agent factory and instance."""
 
@@ -92,6 +110,16 @@ class _FailingTranslator(_FakeTranslator):
     async def execute(self) -> Path:
         """Simulate a final provider failure for one Markdown block."""
         raise RuntimeError("translation provider failed")
+
+
+class _AppendixTranslator(_FakeTranslator):
+    """Write a deterministic artifact after capturing appendix-aware blocks."""
+
+    async def execute(self) -> Path:
+        """Write a placeholder translated Markdown artifact for orchestration tests."""
+        translated_path = self.output_dir / "translated.md"
+        translated_path.write_text("# 论文\n", encoding="utf-8")
+        return translated_path
 
 
 class _FakePdfGenerator:
@@ -264,6 +292,33 @@ class LiteEngineTests(unittest.TestCase):
 
             self.assertTrue(result["ok"])
             self.assertEqual(mineru.api_key_env, "CUSTOM_MINERU_TOKEN")
+
+    def test_run_marks_appendix_blocks_and_logs_when_disabled(self):
+        """Lite orchestration should pass preserved appendix blocks to translation."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            translator = _AppendixTranslator()
+            result, logs = self._run_engine(
+                Path(temp_dir),
+                translator=translator,
+                mineru=_AppendixMineru(),
+                config={
+                    "source_language": "en",
+                    "target_language": "ch",
+                    "translate_appendix": False,
+                },
+            )
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(
+            [block.translatable for block in translator.blocks], [True, True, False]
+        )
+        self.assertIn("Raw appendix.", translator.blocks[-1].text)
+        self.assertTrue(
+            any(
+                "appendix detected" in str(event["message"]).casefold()
+                for event in logs
+            )
+        )
 
     def test_translation_failure_returns_existing_paths_without_validation_fields(self):
         """A failed late stage should retain paths to every earlier artifact."""

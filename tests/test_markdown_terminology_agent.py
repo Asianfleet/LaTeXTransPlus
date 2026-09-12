@@ -183,6 +183,24 @@ class MarkdownTerminologyTests(unittest.TestCase):
         self.assertEqual(terms_text, "Source Term,Target Translation\n")
         self.assertEqual(decisions["decisions"], [])
 
+    def test_collect_records_excludes_appendix_when_translation_is_disabled(self) -> None:
+        """Appendix-only text must not influence Markdown terminology candidates."""
+        config = self._config()
+        config["lite"] = {"translate_appendix": False}
+        source = "## Method\nCore method\n\n## Appendix\nAppendix-only term\n"
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            markdown_path = output_dir / "source.md"
+            markdown_path.write_text(source, encoding="utf-8")
+            records = MarkdownTerminologyAgent(
+                config, markdown_path, output_dir
+            )._collect_markdown_records(source)
+
+        visible_text = " ".join(record["text"] for record in records)
+        self.assertIn("Core method", visible_text)
+        self.assertNotIn("Appendix-only term", visible_text)
+
     def test_extracts_abstract_context_for_configured_source_language(self) -> None:
         """Recognize a localized abstract heading without assuming English input."""
         for source_language in ("ch", "cn", "zh"):

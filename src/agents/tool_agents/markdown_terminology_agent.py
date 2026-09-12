@@ -10,6 +10,7 @@ from typing import Any
 import requests
 
 from src.agents.tool_agents.terminology_agent import TerminologyAgent
+from src.engines.lite_markdown import MarkdownBlock, split_markdown, translatable_markdown
 from src.terminology import (
     merge_term_pairs,
     project_terms_decisions_path,
@@ -137,7 +138,23 @@ class MarkdownTerminologyAgent(TerminologyAgent):
 
     def _collect_markdown_records(self, markdown: str) -> list[dict[str, str]]:
         """Convert visible Markdown paragraphs into terminology text records."""
-        visible_text = _markdown_visible_text(markdown)
+        markdown_blocks = self.config.get("_markdown_blocks")
+        if isinstance(markdown_blocks, (list, tuple)) and all(
+            isinstance(block, MarkdownBlock) for block in markdown_blocks
+        ):
+            terminology_markdown = translatable_markdown(markdown_blocks)
+        else:
+            lite_config = self.config.get("lite")
+            translate_appendix = self.config.get("translate_appendix")
+            if translate_appendix is None and isinstance(lite_config, dict):
+                translate_appendix = lite_config.get("translate_appendix", True)
+            blocks = split_markdown(
+                markdown,
+                source_language=str(self.source_language),
+                translate_appendix=translate_appendix is not False,
+            )
+            terminology_markdown = translatable_markdown(blocks)
+        visible_text = _markdown_visible_text(terminology_markdown)
         records: list[dict[str, str]] = []
         for index, paragraph in enumerate(re.split(r"\n\s*\n", visible_text)):
             normalized = " ".join(paragraph.split())

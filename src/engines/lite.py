@@ -95,6 +95,23 @@ class LiteEngine:
             self._log("MinerU extraction completed.", "info", result, log_callback)
             self._repair_markdown_math(source_markdown, "source", result, log_callback)
 
+            source_text = source_markdown.read_text(encoding="utf-8")
+            translate_appendix = project_config.get("translate_appendix", True) is not False
+            blocks = split_markdown(
+                source_text,
+                source_language=str(project_config.get("source_language", "en")),
+                translate_appendix=translate_appendix,
+            )
+            project_config["_markdown_blocks"] = blocks
+            skipped_blocks = sum(not block.translatable for block in blocks)
+            if skipped_blocks:
+                self._log(
+                    f"Appendix detected; skipped {skipped_blocks} Markdown block(s).",
+                    "info",
+                    result,
+                    log_callback,
+                )
+
             terminology_agent = self._terminology_factory(
                 project_config,
                 source_markdown,
@@ -108,15 +125,14 @@ class LiteEngine:
             if not terminology_result.get("ok", False):
                 raise RuntimeError(
                     str(terminology_result.get("error") or "Terminology generation failed.")
-                )
+            )
             self._log("Markdown terminology generation completed.", "info", result, log_callback)
 
-            source_text = source_markdown.read_text(encoding="utf-8")
             translator_agent = self._translator_factory(
                 project_config,
                 source_markdown,
                 prepared.project_dir,
-                split_markdown(source_text),
+                blocks,
             )
             translated_markdown = Path(self._await(translator_agent.execute()))
             result["translated_markdown_path"] = str(translated_markdown)
