@@ -10,7 +10,7 @@ import toml
 
 from src.agents.coordinator_agent import CoordinatorAgent
 from src.config import load_llm_profile, parse_custom_json, resolve_llm_api_key
-from src.engines.base import engine_config, normalize_engine
+from src.engines.base import engine_config, engine_runtime_fields, normalize_engine
 from src.engines.heavy import HeavyEngine
 from src.engines.lite import LiteEngine
 from src.formats.latex.utils import (
@@ -28,25 +28,13 @@ ProjectEventCallback = Callable[[Dict[str, Any]], None]
 ProjectContextCallback = Callable[[int, int, str], ContextManager[None]]
 ProjectLogCallback = Callable[[Dict[str, Any]], None]
 
-_HEAVY_RUNTIME_FIELDS = (
-    "tex_sources_dir",
-    "output_dir",
-    "paper_list",
-    "retranslate_with_terms",
-    "validation",
-)
-
 
 def effective_engine_config(config: Dict[str, Any], engine: str) -> Dict[str, Any]:
     """Build an engine view while retaining explicit legacy runtime overrides."""
     if "heavy" not in config and "lite" not in config:
         return config
     effective = engine_config(config, engine)
-    legacy_fields = _HEAVY_RUNTIME_FIELDS if engine == "heavy" else (
-        "output_dir",
-        "mineru_api_key_env",
-    )
-    for key in legacy_fields:
+    for key in engine_runtime_fields(engine):
         if key in config:
             effective[key] = deepcopy(config[key])
     return effective

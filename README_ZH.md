@@ -82,6 +82,8 @@ LaTeXTransPlus 使用 `latexmk` 编译译文项目，并会根据目标语言选
 
 Lite 引擎使用 Python 依赖 `mineru-open-sdk` 提供的 MinerU SDK，从 PDF 提取 Markdown 和图片资源。最终生成 `translated.pdf` 还需要单独安装 `pandoc` 可执行文件和 XeLaTeX。MinerU 请求需要 API token：`[lite].mineru_api_key_env` 指定的环境变量（默认 `MINERU_TOKEN`）必须已设置且非空，否则 Lite 会在访问 MinerU 之前直接失败。请填入 MinerU API token 的原始值；外层引号和 `Bearer ` 前缀会被自动去掉，但 token 无效或过期时 MinerU 会返回 HTTP 401。
 
+中文（以及日文、韩文）目标需要给 Pandoc 指定一个 CJK 字体，否则 XeLaTeX 会静默丢弃全部汉字且仍然返回成功。Lite 用 `[lite].cjk_mainfont_candidates` 配置候选字体（逗号分隔，按顺序探测），借助 fontconfig（`fc-list`，随 TeX Live 一起安装）取出本机真实可解析的字体名，选中第一个可用项并把结果写入日志。TUI 设置页的中文字体候选输入框下方会直接列出当前可用字体；字体名必须与 `fc-list` 报告的一致（例如本机实际是 `Noto Sans SC`，写成 `Noto Sans CJK SC` 会让 XeLaTeX 直接失败）。
+
 ## 可选：使用 Conda 环境
 
 ```bash
@@ -154,6 +156,8 @@ retranslate_with_terms = false
 [lite]
 output_dir = "output-lite"
 mineru_api_key_env = "MINERU_TOKEN"
+cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
+geometry = ""
 ```
 
 `source_language` 和 `target_language` 使用 prompt 层支持的短语言代码，例如 `en`、`ch`、`zh`、`ja`、`jp`、`de`、`fr`、`es`、`ko`、`ru`、`pt`、`it` 和 `ar`。默认翻译方向是 English to Chinese。
@@ -459,7 +463,7 @@ output-lite/<stable_name>_YYMMDD/
 
 arXiv 输入的 `<stable_name>` 是 arXiv ID；PDF URL 或本地 PDF 输入使用去掉 `.pdf` 后的文件名；同一天重复翻译同一来源时依次追加 `_1`、`_2`。Lite 不生成校验报告；输入获取、Markdown 或翻译失败时，已经生成的中间产物仍保留在该目录，项目状态会标记为失败。
 
-Pandoc/XeLaTeX 生成 PDF 失败不会丢弃已完成的 Markdown 译文：项目仍标记为完成，`pdf_error` 记录退出码和 PDF 引擎输出，TUI 发出警告提示并在错误表保留一行，完整内容写入 `latextrans.log`。
+Pandoc/XeLaTeX 生成 PDF 失败不会丢弃已完成的 Markdown 译文：项目仍标记为完成，`pdf_error` 记录退出码和 PDF 引擎输出，TUI 发出警告提示并在错误表保留一行，完整内容写入 `latextrans.log`。Pandoc 退出码为 0 但报告了缺字警告（`Missing character`）时同样写入 `pdf_error`：这类“成功但缺字形”的 PDF 不会被当作正常产物。图片按 Markdown 所在目录解析（`--resource-path`），因此无论从哪里启动都不会丢失插图。
 
 MinerU 抽取的 Markdown 偶尔会包含 `x^{\prime}^{(i)}` 这类链式上标，XeLaTeX 会直接以 “Double superscript” 失败。Lite 在写出 `source.md` 和 `translated.md` 后（只限数学区间内）合并这类上标，并把修复数量写入日志。
 

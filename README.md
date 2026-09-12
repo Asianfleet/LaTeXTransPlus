@@ -82,6 +82,8 @@ LaTeXTransPlus compiles translated projects with `latexmk` and may use `pdflatex
 
 The Lite engine uses the MinerU Python SDK, supplied by the `mineru-open-sdk` dependency in `requirements.txt`, to extract Markdown and image resources from a PDF. It also requires a separately installed `pandoc` executable and XeLaTeX for the final `translated.pdf` conversion. MinerU requests need an API token: the environment variable named by `[lite].mineru_api_key_env` (default `MINERU_TOKEN`) must be set and non-empty, otherwise Lite fails before contacting MinerU. Set it to the raw MinerU API token; surrounding quotes and a `Bearer ` prefix are stripped automatically, but an invalid or expired token makes MinerU answer with HTTP 401.
 
+Chinese (and Japanese or Korean) targets need a CJK font for Pandoc, otherwise XeLaTeX silently drops every CJK glyph and still reports success. Lite reads candidate fonts from `[lite].cjk_mainfont_candidates` (comma-separated, probed in order), uses fontconfig (`fc-list`, shipped with TeX Live) to keep only names this machine can actually resolve, and logs the selected font. The TUI lists the available fonts below the candidate input; names must match what `fc-list` reports (this machine has `Noto Sans SC`, while `Noto Sans CJK SC` makes XeLaTeX fail outright).
+
 ## Optional Conda Environment
 
 ```bash
@@ -154,6 +156,8 @@ retranslate_with_terms = false
 [lite]
 output_dir = "output-lite"
 mineru_api_key_env = "MINERU_TOKEN"
+cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
+geometry = ""
 ```
 
 `source_language` and `target_language` accept short language codes used by the prompt layer, such as `en`, `ch`, `zh`, `ja`, `jp`, `de`, `fr`, `es`, `ko`, `ru`, `pt`, `it`, and `ar`. The default is English to Chinese.
@@ -460,7 +464,7 @@ output-lite/<stable_name>_YYMMDD/
 
 For arXiv input, `<stable_name>` is the arXiv ID. For a PDF URL or local path, it is the PDF filename without `.pdf`. Translating the same source twice on the same day appends `_1`, `_2`, and so on. Lite does not create a validation report; an acquisition, Markdown, or translation failure leaves available intermediate files in this same directory and marks the project failed.
 
-A Pandoc/XeLaTeX failure does not discard the finished Markdown translation: the project still completes, `pdf_error` records the exit code and PDF engine output, the TUI raises a warning notification with a warning row in the errors table, and the full text is written to `latextrans.log`.
+A Pandoc/XeLaTeX failure does not discard the finished Markdown translation: the project still completes, `pdf_error` records the exit code and PDF engine output, the TUI raises a warning notification with a warning row in the errors table, and the full text is written to `latextrans.log`. A zero exit code with `Missing character` warnings is recorded the same way, so a PDF that dropped glyphs is never reported as clean. Figures resolve against the Markdown directory (`--resource-path`), so the extracted images are embedded no matter which directory the run started from.
 
 Markdown extracted by MinerU occasionally contains chained superscripts such as `x^{\prime}^{(i)}`, which XeLaTeX rejects with "Double superscript". After writing `source.md` and `translated.md`, Lite merges those chains inside math spans only and logs how many it repaired.
 

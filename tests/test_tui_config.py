@@ -4,6 +4,7 @@ from pathlib import Path
 
 import toml
 
+from src.engines.lite_fonts import DEFAULT_CJK_FONT_CANDIDATES
 from src.tui.config import ensure_ui_config, load_ui_config, migrate_ui_config, save_ui_config
 
 
@@ -137,6 +138,11 @@ class TuiConfigTests(unittest.TestCase):
                 self.assertIn("validation", config["heavy"])
                 self.assertEqual(config["lite"]["output_dir"], "output-lite")
                 self.assertEqual(config["lite"]["mineru_api_key_env"], "MINERU_TOKEN")
+                self.assertEqual(
+                    config["lite"]["cjk_mainfont_candidates"],
+                    DEFAULT_CJK_FONT_CANDIDATES,
+                )
+                self.assertEqual(config["lite"]["geometry"], "")
                 for key in ("tex_sources_dir", "output_dir", "paper_list", "retranslate_with_terms", "validation"):
                     self.assertNotIn(key, config)
 

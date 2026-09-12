@@ -17,8 +17,13 @@ _HEAVY_RUNTIME_FIELDS = (
 )
 _ENGINE_RUNTIME_FIELDS: dict[EngineName, tuple[str, ...]] = {
     "heavy": _HEAVY_RUNTIME_FIELDS,
-    "lite": ("output_dir", "mineru_api_key_env"),
+    "lite": ("output_dir", "mineru_api_key_env", "cjk_mainfont_candidates", "geometry"),
 }
+
+
+def engine_runtime_fields(engine: str) -> tuple[str, ...]:
+    """Return the configuration keys the selected engine may read at runtime."""
+    return _ENGINE_RUNTIME_FIELDS[cast(EngineName, normalize_engine(engine))]
 
 
 def normalize_engine(value: object, default: str = "heavy") -> str:
@@ -44,7 +49,7 @@ def engine_config(config: dict[str, Any], engine: str) -> dict[str, Any]:
     selected = sections[selected_engine]
     if not isinstance(selected, dict):
         raise ValueError(f"Configuration section [{selected_engine}] must be a table.")
-    for key in _ENGINE_RUNTIME_FIELDS[cast(EngineName, selected_engine)]:
+    for key in engine_runtime_fields(selected_engine):
         if key in selected:
             effective[key] = copy.deepcopy(selected[key])
     effective["engine"] = selected_engine

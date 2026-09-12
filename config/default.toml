@@ -30,6 +30,10 @@ retranslate_with_terms = false
 [lite]
 output_dir = "output-lite"
 mineru_api_key_env = "MINERU_TOKEN"
+# CJK 字体候选，逗号分隔，按顺序取第一个本机可解析的字体；留空表示不指定。
+cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
+# Pandoc geometry 变量，例如 "margin=2cm"；留空使用 Pandoc 默认版式。
+geometry = ""
 
 [heavy.validation.retry]
 max_attempts = 3

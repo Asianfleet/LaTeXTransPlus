@@ -8,9 +8,10 @@ from dataclasses import dataclass
 from typing import Any, Literal
 
 from src.engines.base import normalize_engine
+from src.engines.lite_fonts import DEFAULT_CJK_FONT_CANDIDATES, parse_font_candidates
 
 
-FieldKind = Literal["input", "textarea", "select", "switch", "integer"]
+FieldKind = Literal["input", "textarea", "select", "switch", "integer", "font_list"]
 
 
 @dataclass(frozen=True)
@@ -88,6 +89,14 @@ HEAVY_CONFIG_FIELDS: tuple[ConfigField, ...] = (
 LITE_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("lite", "output_dir"), "输出目录", "input", "基础", "output-lite"),
     ConfigField(("lite", "mineru_api_key_env"), "MinerU API key 环境变量", "input", "基础", "MINERU_TOKEN"),
+    ConfigField(
+        ("lite", "cjk_mainfont_candidates"),
+        "中文字体候选",
+        "font_list",
+        "PDF",
+        DEFAULT_CJK_FONT_CANDIDATES,
+    ),
+    ConfigField(("lite", "geometry"), "页面边距 geometry", "input", "PDF", ""),
 )
 
 # 保留旧调用方的默认 heavy 字段集；动态表单应使用 config_fields_for_engine。
@@ -103,7 +112,7 @@ def config_fields_for_engine(engine: str) -> tuple[ConfigField, ...]:
 
 def grouped_config_fields(engine: str = "heavy") -> list[tuple[str, list[ConfigField]]]:
     """按设置页展示顺序返回字段分组。"""
-    sections = ["基础", "术语", "校验", "LLM", "Zotero"]
+    sections = ["基础", "术语", "校验", "LLM", "PDF", "Zotero"]
     visible_fields = config_fields_for_engine(engine)
     return [
         (section, fields)
@@ -191,6 +200,16 @@ def parse_textarea_value(field: ConfigField, text: str) -> Any:
             raise ValueError("paper_list 必须是 JSON string array。")
         return value
     return text
+
+
+def parse_font_list_value(field: ConfigField, text: str) -> str:
+    """把逗号分隔的字体候选文本规范化为去重后的逗号列表。"""
+    if not text.strip():
+        return ""
+    candidates = parse_font_candidates(text)
+    if not candidates:
+        raise ValueError(f"{field.label} 必须是逗号分隔的字体名。")
+    return ", ".join(candidates)
 
 
 def parse_integer_value(field: ConfigField, text: str) -> int:

@@ -8,6 +8,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 from src.engines.lite import LiteEngine
+from src.engines.lite_fonts import DEFAULT_CJK_FONT_CANDIDATES, parse_font_candidates
 from src.runtime import run_engine_task
 
 
@@ -125,6 +126,24 @@ class _FailingPdfGenerator:
             "Pandoc PDF generation failed with exit code 43. PDF engine output:\n"
             "! Double superscript."
         )
+
+
+class _WarnedPdfGenerator(_FakePdfGenerator):
+    """Succeed at PDF generation while reporting dropped glyphs."""
+
+    last_pdf_warning = ""
+
+    def generate(
+        self,
+        markdown_path: Path,
+        pdf_path: Path,
+        target_language: str,
+    ) -> Path:
+        """Write a placeholder PDF and expose the quality warning of a real run."""
+        self.last_pdf_warning = (
+            "PDF engine reported 10818 missing character warning(s); the PDF may omit glyphs."
+        )
+        return super().generate(markdown_path, pdf_path, target_language)
 
 
 class _BadMathMineru:
@@ -305,6 +324,158 @@ class LiteEngineTests(unittest.TestCase):
         self.assertEqual(logs[-1]["level"], "warning")
         self.assertIn("[WARNING]", str(logs[-1]["line"]))
         self.assertIn("! Double superscript.", str(logs[-1]["line"]))
+
+    def test_pdf_dropped_glyphs_become_a_warning_on_a_successful_project(self):
+        """A successful PDF run that dropped glyphs must report a project warning."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result, logs = self._run_engine(
+                Path(temp_dir), pdf_generator=_WarnedPdfGenerator()
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertIsNotNone(result["pdf_path"])
+            self.assertIn("missing character warning", result["pdf_error"])
+
+        self.assertEqual(logs[-1]["level"], "warning")
+        self.assertIn("PDF generation warning", str(logs[-1]["message"]))
+
+    def _run_engine_with_default_pdf_stage(self, root: Path, config: dict[str, object]):
+        """Run a lite engine that builds its own Pandoc PDF generator."""
+        source_pdf = root / "paper.pdf"
+        source_pdf.write_bytes(b"%PDF-source")
+        logs: list[dict[str, object]] = []
+        engine = LiteEngine(
+            mineru=_FakeMineru(),
+            terminology=_FakeTerminology(),
+            translator=_FakeTranslator(),
+        )
+        result = engine.run(str(source_pdf), config, root / "output-lite", logs.append)
+        return result, logs
+
+    def test_run_builds_the_pdf_generator_from_lite_font_and_geometry_settings(self):
+        """Resolved CJK font and geometry must reach the Pandoc generator."""
+        captured: list[dict[str, object]] = []
+
+        class _SpyPdfGenerator:
+            """Capture constructor settings and write a placeholder PDF."""
+
+            def __init__(self, cjk_mainfont=None, geometry=None) -> None:
+                captured.append({"cjk_mainfont": cjk_mainfont, "geometry": geometry})
+
+            def generate(self, markdown_path, pdf_path, target_language):
+                pdf_path.write_bytes(b"%PDF-spy")
+                return pdf_path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("src.engines.lite.PandocPdfGenerator", _SpyPdfGenerator):
+                with patch(
+                    "src.engines.lite.resolve_cjk_mainfont", return_value="FandolSong"
+                ):
+                    result, logs = self._run_engine_with_default_pdf_stage(
+                        Path(temp_dir),
+                        {
+                            "source_language": "en",
+                            "target_language": "ch",
+                            "cjk_mainfont_candidates": "SimSun, FandolSong",
+                            "geometry": "margin=2cm",
+                        },
+                    )
+
+            self.assertTrue(result["ok"])
+
+        self.assertEqual(
+            captured, [{"cjk_mainfont": "FandolSong", "geometry": "margin=2cm"}]
+        )
+        self.assertTrue(
+            any("CJK font fallback selected: FandolSong" in str(event["message"]) for event in logs)
+        )
+
+    def test_run_warns_when_no_configured_cjk_font_is_installed(self):
+        """An unresolvable candidate list must be reported instead of failing silently."""
+        class _SpyPdfGenerator:
+            """Write a placeholder PDF for the configured settings."""
+
+            def __init__(self, cjk_mainfont=None, geometry=None) -> None:
+                self.cjk_mainfont = cjk_mainfont
+
+            def generate(self, markdown_path, pdf_path, target_language):
+                pdf_path.write_bytes(b"%PDF-spy")
+                return pdf_path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("src.engines.lite.PandocPdfGenerator", _SpyPdfGenerator):
+                with patch("src.engines.lite.resolve_cjk_mainfont", return_value=None):
+                    _result, logs = self._run_engine_with_default_pdf_stage(
+                        Path(temp_dir),
+                        {
+                            "source_language": "en",
+                            "target_language": "ch",
+                            "cjk_mainfont_candidates": "Missing Font",
+                        },
+                    )
+
+        warnings = [
+            str(event["message"])
+            for event in logs
+            if event.get("level") == "warning"
+        ]
+        self.assertTrue(
+            any("No configured CJK font candidate is installed" in message for message in warnings)
+        )
+
+    def test_run_uses_shipped_font_candidates_when_the_config_omits_them(self):
+        """Configurations written before this setting must keep working."""
+        class _SpyPdfGenerator:
+            """Write a placeholder PDF for the configured settings."""
+
+            def __init__(self, cjk_mainfont=None, geometry=None) -> None:
+                self.cjk_mainfont = cjk_mainfont
+
+            def generate(self, markdown_path, pdf_path, target_language):
+                pdf_path.write_bytes(b"%PDF-spy")
+                return pdf_path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("src.engines.lite.PandocPdfGenerator", _SpyPdfGenerator):
+                with patch(
+                    "src.engines.lite.resolve_cjk_mainfont", return_value="SimSun"
+                ) as resolve:
+                    _result, _logs = self._run_engine_with_default_pdf_stage(
+                        Path(temp_dir),
+                        {"source_language": "en", "target_language": "ch"},
+                    )
+
+        resolve.assert_called_once_with(parse_font_candidates(DEFAULT_CJK_FONT_CANDIDATES))
+
+    def test_run_skips_cjk_font_resolution_for_non_cjk_targets(self):
+        """A Latin target must not resolve or warn about CJK fonts."""
+        captured: list[dict[str, object]] = []
+
+        class _SpyPdfGenerator:
+            """Capture the CJK font setting passed by the engine."""
+
+            def __init__(self, cjk_mainfont=None, geometry=None) -> None:
+                captured.append({"cjk_mainfont": cjk_mainfont})
+
+            def generate(self, markdown_path, pdf_path, target_language):
+                pdf_path.write_bytes(b"%PDF-spy")
+                return pdf_path
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            with patch("src.engines.lite.PandocPdfGenerator", _SpyPdfGenerator):
+                with patch("src.engines.lite.resolve_cjk_mainfont") as resolve:
+                    _result, logs = self._run_engine_with_default_pdf_stage(
+                        Path(temp_dir),
+                        {
+                            "source_language": "en",
+                            "target_language": "fr",
+                            "cjk_mainfont_candidates": "SimSun",
+                        },
+                    )
+
+        resolve.assert_not_called()
+        self.assertEqual(captured, [{"cjk_mainfont": None}])
+        self.assertFalse(any("CJK font" in str(event.get("message")) for event in logs))
 
 
 class RuntimeEngineDispatchTests(unittest.TestCase):

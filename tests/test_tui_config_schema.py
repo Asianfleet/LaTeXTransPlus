@@ -1,11 +1,13 @@
 import unittest
 
+from src.engines.lite_fonts import DEFAULT_CJK_FONT_CANDIDATES
 from src.tui.config_schema import (
     CONFIG_FIELDS,
     config_fields_for_engine,
     form_text_for_field,
     grouped_config_fields,
     normalized_config_from_form,
+    parse_font_list_value,
     parse_textarea_value,
 )
 
@@ -113,6 +115,40 @@ class TuiConfigSchemaTests(unittest.TestCase):
         self.assertEqual(normalized["heavy"]["output_dir"], "keep-heavy")
         self.assertEqual(normalized["heavy"]["validation"]["retry"]["max_attempts"], 7)
         self.assertEqual(normalized["lite"]["output_dir"], "new-lite")
+
+    def test_lite_pdf_fields_use_the_font_list_kind_and_a_pdf_section(self):
+        """Font candidates and geometry belong to lite's PDF settings group."""
+        fields = {field.path: field for field in config_fields_for_engine("lite")}
+
+        font_field = fields[("lite", "cjk_mainfont_candidates")]
+        self.assertEqual(font_field.kind, "font_list")
+        self.assertEqual(font_field.section, "PDF")
+        self.assertEqual(font_field.default, DEFAULT_CJK_FONT_CANDIDATES)
+        self.assertEqual(fields[("lite", "geometry")].kind, "input")
+        self.assertEqual(fields[("lite", "geometry")].default, "")
+
+        sections = dict(grouped_config_fields("lite"))
+        self.assertEqual(
+            [field.path for field in sections["PDF"]],
+            [("lite", "cjk_mainfont_candidates"), ("lite", "geometry")],
+        )
+        self.assertNotIn("PDF", dict(grouped_config_fields("heavy")))
+
+    def test_font_list_values_are_normalized_into_a_comma_separated_string(self):
+        """Saving a font list should dedupe and re-join the family names."""
+        field = next(
+            field
+            for field in config_fields_for_engine("lite")
+            if field.path == ("lite", "cjk_mainfont_candidates")
+        )
+
+        self.assertEqual(
+            parse_font_list_value(field, " SimSun ,FandolSong, simsun "),
+            "SimSun, FandolSong",
+        )
+        self.assertEqual(parse_font_list_value(field, "   "), "")
+        with self.assertRaisesRegex(ValueError, "中文字体候选"):
+            parse_font_list_value(field, " , ,")
 
     def test_paper_list_textarea_round_trips_an_empty_list(self):
         """Paper-list text should retain its JSON array type when empty."""

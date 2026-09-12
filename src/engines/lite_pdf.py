@@ -18,6 +18,7 @@ _LANGUAGE_TAGS = {
 _CJK_LANGUAGE_PREFIXES = ("zh", "ja", "ko")
 _STDERR_EXCERPT_LINES = 20
 _STDERR_EXCERPT_CHARS = 2000
+_MISSING_CHARACTER_MARKER = "Missing character"
 
 
 class PandocPdfError(RuntimeError):
@@ -31,7 +32,11 @@ class PandocPdfError(RuntimeError):
 
 
 class PandocPdfGenerator:
-    """Generate a validated PDF from Markdown through Pandoc and XeLaTeX."""
+    """Generate a validated PDF from Markdown through Pandoc and XeLaTeX.
+
+    The last run's quality warning is exposed through ``last_pdf_warning`` so a
+    PDF that Pandoc produced with dropped glyphs is not reported as clean.
+    """
 
     def __init__(
         self,
@@ -43,6 +48,7 @@ class PandocPdfGenerator:
         self._runner = runner or subprocess.run
         self._cjk_mainfont = cjk_mainfont
         self._geometry = geometry
+        self.last_pdf_warning = ""
 
     def generate(
         self, markdown_path: Path, pdf_path: Path, target_language: str
@@ -50,6 +56,11 @@ class PandocPdfGenerator:
         """Render Markdown to a nonempty PDF using explicit language metadata."""
         language_tag = _pandoc_language_tag(target_language)
         pdf_path.parent.mkdir(parents=True, exist_ok=True)
+        # Pandoc resolves relative image paths against the resource path (the
+        # working directory by default), so a document in an output directory
+        # would lose every extracted figure. Point Pandoc at the document's own
+        # directory instead.
+        resource_path = Path(markdown_path).resolve().parent
         command = [
             "pandoc",
             str(markdown_path),
@@ -57,6 +68,7 @@ class PandocPdfGenerator:
             str(pdf_path),
             "--pdf-engine=xelatex",
             f"--metadata=lang:{language_tag}",
+            f"--resource-path={resource_path}",
         ]
         if self._geometry:
             command.extend(["-V", f"geometry:{self._geometry}"])
@@ -64,7 +76,7 @@ class PandocPdfGenerator:
             command.extend(["-V", f"CJKmainfont:{self._cjk_mainfont}"])
 
         try:
-            self._runner(
+            completed = self._runner(
                 command,
                 check=True,
                 capture_output=True,
@@ -80,7 +92,30 @@ class PandocPdfGenerator:
             ) from exc
         if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
             raise ValueError(f"Pandoc PDF output is missing or empty: {pdf_path}")
+        self.last_pdf_warning = _missing_character_summary(
+            _process_output(getattr(completed, "stderr", ""))
+        )
         return pdf_path
+
+
+def is_cjk_target_language(target_language: str) -> bool:
+    """Return whether a target language alias needs the Pandoc CJK font variables."""
+    return _pandoc_language_tag(target_language).startswith(_CJK_LANGUAGE_PREFIXES)
+
+
+def _missing_character_summary(stderr: str) -> str:
+    """Summarize dropped-glyph warnings emitted by a successful Pandoc run."""
+    warnings = [
+        line.strip()
+        for line in stderr.splitlines()
+        if _MISSING_CHARACTER_MARKER in line
+    ]
+    if not warnings:
+        return ""
+    return (
+        f"PDF engine reported {len(warnings)} missing character warning(s); "
+        f"the PDF may omit glyphs. First warning: {warnings[0]}"
+    )
 
 
 def _pandoc_failure_message(exc: subprocess.CalledProcessError) -> str:

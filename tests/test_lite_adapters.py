@@ -64,10 +64,11 @@ class FakeSdkClient:
 class FakePandocRunner:
     """Record a Pandoc command and create the requested PDF fixture."""
 
-    def __init__(self, pdf_content: bytes = b"%PDF-1.7") -> None:
-        """Configure the bytes the fake converter writes."""
+    def __init__(self, pdf_content: bytes = b"%PDF-1.7", stderr: str = "") -> None:
+        """Configure the bytes and engine output the fake converter reports."""
         self.command: list[str] = []
         self.pdf_content = pdf_content
+        self.stderr = stderr
         self.kwargs: dict[str, object] = {}
 
     def __call__(self, command: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
@@ -77,7 +78,7 @@ class FakePandocRunner:
         destination = Path(command[command.index("-o") + 1])
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(self.pdf_content)
-        return subprocess.CompletedProcess(command, 0, "pandoc output", "")
+        return subprocess.CompletedProcess(command, 0, "pandoc output", self.stderr)
 
 
 class FakeHttpStatusError(Exception):
@@ -541,6 +542,74 @@ class LiteAdapterTests(unittest.TestCase):
         self.assertIn("! Final error", message)
         self.assertNotIn("payload 00", message)
         self.assertIn("payload 00", raised.exception.stderr)
+
+    def test_pandoc_adapter_resolves_resources_from_the_document_directory(self) -> None:
+        """Relative figure paths must resolve against the Markdown directory."""
+        from src.engines.lite_pdf import PandocPdfGenerator
+
+        runner = FakePandocRunner()
+        PandocPdfGenerator(runner=runner).generate(
+            self.output_dir / "translated.md", self.output_dir / "translated.pdf", "ch"
+        )
+
+        self.assertIn(
+            f"--resource-path={self.output_dir.resolve()}",
+            runner.command,
+        )
+
+    def test_pandoc_adapter_uses_the_configured_geometry_and_cjk_font(self) -> None:
+        """Explicit geometry and CJK font settings must reach Pandoc as variables."""
+        from src.engines.lite_pdf import PandocPdfGenerator
+
+        runner = FakePandocRunner()
+        PandocPdfGenerator(
+            runner=runner,
+            cjk_mainfont="FandolSong",
+            geometry="margin=2cm",
+        ).generate(Path("translated.md"), self.output_dir / "translated.pdf", "ch")
+
+        self.assertIn("-V", runner.command)
+        self.assertIn("geometry:margin=2cm", runner.command)
+        self.assertIn("CJKmainfont:FandolSong", runner.command)
+
+    def test_pandoc_adapter_omits_the_cjk_font_for_non_cjk_targets(self) -> None:
+        """A Latin target must not receive the CJK font variable."""
+        from src.engines.lite_pdf import PandocPdfGenerator
+
+        runner = FakePandocRunner()
+        PandocPdfGenerator(runner=runner, cjk_mainfont="FandolSong").generate(
+            Path("translated.md"), self.output_dir / "translated.pdf", "fr"
+        )
+
+        self.assertNotIn("CJKmainfont:FandolSong", runner.command)
+
+    def test_pandoc_adapter_reports_dropped_glyphs_from_a_successful_run(self) -> None:
+        """A zero exit code with missing glyphs must still raise a quality warning."""
+        from src.engines.lite_pdf import PandocPdfGenerator
+
+        runner = FakePandocRunner(
+            pdf_content=b"%PDF-1.7",
+            stderr=(
+                "[WARNING] Missing character: There is no 用 (U+7528) in font [lmroman12]\n"
+                "[WARNING] Missing character: There is no 于 (U+4E8E) in font [lmroman12]\n"
+            ),
+        )
+        generator = PandocPdfGenerator(runner=runner)
+
+        generator.generate(Path("translated.md"), self.output_dir / "out.pdf", "ch")
+
+        self.assertIn("2 missing character warning", generator.last_pdf_warning)
+        self.assertIn("U+7528", generator.last_pdf_warning)
+
+    def test_pandoc_adapter_keeps_a_clean_run_free_of_warnings(self) -> None:
+        """A run without dropped glyphs must not report a quality warning."""
+        from src.engines.lite_pdf import PandocPdfGenerator
+
+        generator = PandocPdfGenerator(runner=FakePandocRunner(stderr=""))
+
+        generator.generate(Path("translated.md"), self.output_dir / "out.pdf", "ch")
+
+        self.assertEqual(generator.last_pdf_warning, "")
 
 
 if __name__ == "__main__":

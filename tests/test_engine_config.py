@@ -84,6 +84,27 @@ class EngineConfigTests(unittest.TestCase):
         self.assertEqual(lite_effective["mineru_api_key_env"], "CUSTOM_MINERU_TOKEN")
         self.assertNotIn("mineru_api_key_env", heavy_effective)
 
+    def test_engine_config_copies_lite_pdf_settings_but_not_for_heavy(self):
+        """CJK font candidates and geometry should reach lite runtime config only."""
+        source = {
+            "heavy": {"output_dir": "heavy-output"},
+            "lite": {
+                "output_dir": "lite-output",
+                "cjk_mainfont_candidates": "SimSun, FandolSong",
+                "geometry": "margin=2cm",
+            },
+        }
+
+        lite_effective = engine_config(source, "lite")
+        heavy_effective = engine_config(source, "heavy")
+
+        self.assertEqual(
+            lite_effective["cjk_mainfont_candidates"], "SimSun, FandolSong"
+        )
+        self.assertEqual(lite_effective["geometry"], "margin=2cm")
+        self.assertNotIn("cjk_mainfont_candidates", heavy_effective)
+        self.assertNotIn("geometry", heavy_effective)
+
 
 if __name__ == "__main__":
     unittest.main()

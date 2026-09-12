@@ -50,11 +50,13 @@ from src.tui.config_schema import (
     form_text_for_field,
     grouped_config_fields,
     normalized_config_from_form,
+    parse_font_list_value,
     parse_integer_value,
     parse_textarea_value,
     select_value_for_field,
 )
 from src.engines.base import normalize_engine
+from src.engines.lite_fonts import list_available_font_families
 from src.tui.history import load_output_history, write_project_metadata
 from src.tui.input_parser import (
     parse_input_items,
@@ -605,6 +607,17 @@ class LaTeXTransTuiApp(App[None]):
         margin: 0 0 1 0;
     }
 
+    .config-field-block {
+        height: auto;
+    }
+
+    .config-field-hint {
+        width: 100%;
+        height: auto;
+        padding: 0 0 1 25;
+        color: $text-muted;
+    }
+
     .config-field-label {
         width: 24;
         padding: 1 1 0 0;
@@ -716,6 +729,7 @@ class LaTeXTransTuiApp(App[None]):
         self.zotero_selected_keys: set[str] = set()
         self.task_processes: dict[str, TuiTaskProcess] = {}
         self.cancelled_task_ids: set[str] = set()
+        self._font_families_cache: list[str] | None = None
 
     def compose(self) -> ComposeResult:
         """Compose the persistent sidebar, content switcher, and footer."""
@@ -1288,13 +1302,40 @@ class LaTeXTransTuiApp(App[None]):
             widgets.extend(self._config_field_row(field) for field in fields)
         return widgets
 
-    def _config_field_row(self, field: ConfigField) -> Horizontal:
-        """Create one labeled configuration row from a schema field."""
-        return Horizontal(
-            Static(field.label, classes="config-field-label"),
-            self._config_field_input(field),
-            classes="config-field-row",
-        )
+    def _config_field_row(self, field: ConfigField) -> Vertical:
+        """Create one labeled configuration row, with a hint below it when needed."""
+        children: list[Widget] = [
+            Horizontal(
+                Static(field.label, classes="config-field-label"),
+                self._config_field_input(field),
+                classes="config-field-row",
+            )
+        ]
+        hint = self._config_field_hint(field)
+        if hint:
+            children.append(
+                Static(
+                    hint,
+                    id=f"{field.widget_id}-hint",
+                    classes="config-field-hint",
+                )
+            )
+        return Vertical(*children, classes="config-field-block")
+
+    def _config_field_hint(self, field: ConfigField) -> str:
+        """返回设置项下方的说明文本，字体候选字段会列出本机可用字体。"""
+        if field.kind != "font_list":
+            return ""
+        families = self._available_font_families()
+        if not families:
+            return "未检测到可用字体：需要随 TeX Live 一起安装的 fc-list。"
+        return f"当前可用字体（{len(families)}）：{'、'.join(families)}"
+
+    def _available_font_families(self) -> list[str]:
+        """按会话缓存 fontconfig 报告的可用字体列表。"""
+        if self._font_families_cache is None:
+            self._font_families_cache = list_available_font_families()
+        return self._font_families_cache
 
     def _config_field_input(self, field: ConfigField) -> Widget:
         """Create the Textual input widget required by one configuration field."""
@@ -1337,6 +1378,9 @@ class LaTeXTransTuiApp(App[None]):
             elif field.kind == "integer":
                 text = self.query_one(f"#{field.widget_id}", Input).value
                 values[field.path] = parse_integer_value(field, text)
+            elif field.kind == "font_list":
+                text = self.query_one(f"#{field.widget_id}", Input).value
+                values[field.path] = parse_font_list_value(field, text)
             else:
                 values[field.path] = self.query_one(f"#{field.widget_id}", Input).value
         return values
