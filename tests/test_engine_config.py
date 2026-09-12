@@ -124,6 +124,19 @@ class EngineConfigTests(unittest.TestCase):
         self.assertEqual(lite_effective["protected_token_retry_attempts"], 5)
         self.assertNotIn("protected_token_retry_attempts", heavy_effective)
 
+    def test_engine_config_copies_lite_appendix_setting_only_for_lite(self):
+        """The appendix policy must remain isolated to the Lite runtime view."""
+        source = {
+            "heavy": {"output_dir": "heavy-output"},
+            "lite": {"output_dir": "lite-output", "translate_appendix": False},
+        }
+
+        lite_effective = engine_config(source, "lite")
+        heavy_effective = engine_config(source, "heavy")
+
+        self.assertFalse(lite_effective["translate_appendix"])
+        self.assertNotIn("translate_appendix", heavy_effective)
+
 
 if __name__ == "__main__":
     unittest.main()

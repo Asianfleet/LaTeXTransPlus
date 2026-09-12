@@ -24,6 +24,7 @@ _ENGINE_RUNTIME_FIELDS: dict[EngineName, tuple[str, ...]] = {
         "mainfont",
         "geometry",
         "protected_token_retry_attempts",
+        "translate_appendix",
     ),
 }
 

@@ -156,6 +156,7 @@ retranslate_with_terms = false
 [lite]
 output_dir = "output-lite"
 mineru_api_key_env = "MINERU_TOKEN"
+translate_appendix = true
 cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
 mainfont = ""
 geometry = ""
@@ -180,6 +181,8 @@ latextrans-tui -e lite
 ```
 
 启动优先级为 `--engine`/`-e`、`ui.toml.engine`、`heavy`。Heavy 和 Lite 使用相互独立的输出根目录：`[heavy].output_dir` 默认是 `outputs`，`[lite].output_dir` 默认是 `output-lite`。Lite 还会从 `[lite].mineru_api_key_env` 指定的环境变量读取 MinerU API token，该配置默认是 `MINERU_TOKEN`。
+
+`[lite].translate_appendix` 默认是 `true`。设为 `false` 时，Lite 按配置的源语言识别附录 ATX 标题，保留首个附录及其后的原始 Markdown，并将这部分内容排除在翻译和项目术语生成之外。支持的标题包括 `Appendix`/`Appendices`、“附录”/“附錄”、`Anhang`、`Annexe`、“付録”和“부록”；`Supplementary Material` 不视为附录。
 
 ## LLM 配置
 

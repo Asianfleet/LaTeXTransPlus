@@ -156,6 +156,7 @@ retranslate_with_terms = false
 [lite]
 output_dir = "output-lite"
 mineru_api_key_env = "MINERU_TOKEN"
+translate_appendix = true
 cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
 mainfont = ""
 geometry = ""
@@ -180,6 +181,8 @@ latextrans-tui -e lite
 ```
 
 The startup precedence is `--engine`/`-e`, then `ui.toml.engine`, then `heavy`. Heavy and Lite retain independent output roots: `[heavy].output_dir` defaults to `outputs`, while `[lite].output_dir` defaults to `output-lite`. Lite also reads its MinerU API token from the environment variable named by `[lite].mineru_api_key_env`, which defaults to `MINERU_TOKEN`.
+
+`[lite].translate_appendix` defaults to `true`. When set to `false`, Lite detects appendix ATX headings in the configured source language, preserves the first appendix and all following Markdown in the original language, and excludes that content from translation and project terminology generation. The supported headings are `Appendix`/`Appendices`, “附录”/“附錄”, `Anhang`, `Annexe`, “付録”, and “부록”; Supplementary Material is not treated as an appendix.
 
 ## LLM Configuration
 

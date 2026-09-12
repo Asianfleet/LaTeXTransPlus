@@ -98,6 +98,7 @@ LITE_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("lite", "output_dir"), "输出目录", "input", "基础", "output-lite"),
     ConfigField(("lite", "mineru_api_key_env"), "MinerU API key 环境变量", "input", "基础", "MINERU_TOKEN"),
     ConfigField(("lite", "protected_token_retry_attempts"), "保护标记额外重试次数", "integer", "翻译", 2),
+    ConfigField(("lite", "translate_appendix"), "翻译附录", "switch", "翻译", True),
     ConfigField(("lite", "mainfont"), "正文字体 mainfont", "font_family", "PDF", ""),
     ConfigField(
         ("lite", "cjk_mainfont_candidates"),

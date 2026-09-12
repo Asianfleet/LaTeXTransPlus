@@ -80,6 +80,7 @@ class TuiConfigTests(unittest.TestCase):
         self.assertEqual(migrated["lite"]["output_dir"], "output-lite")
         self.assertEqual(migrated["lite"]["mineru_api_key_env"], "MINERU_TOKEN")
         self.assertEqual(migrated["lite"]["protected_token_retry_attempts"], 2)
+        self.assertTrue(migrated["lite"]["translate_appendix"])
         self.assertEqual(legacy["output_dir"], "old-output")
         for key in ("tex_sources_dir", "output_dir", "paper_list", "retranslate_with_terms", "validation"):
             self.assertNotIn(key, migrated)
@@ -140,6 +141,7 @@ class TuiConfigTests(unittest.TestCase):
                 self.assertEqual(config["lite"]["output_dir"], "output-lite")
                 self.assertEqual(config["lite"]["mineru_api_key_env"], "MINERU_TOKEN")
                 self.assertEqual(config["lite"]["protected_token_retry_attempts"], 2)
+                self.assertTrue(config["lite"]["translate_appendix"])
                 self.assertEqual(
                     config["lite"]["cjk_mainfont_candidates"],
                     DEFAULT_CJK_FONT_CANDIDATES,

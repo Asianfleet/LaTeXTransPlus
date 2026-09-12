@@ -78,6 +78,7 @@ class TuiConfigSchemaTests(unittest.TestCase):
         self.assertIn(("lite", "output_dir"), paths)
         self.assertIn(("lite", "mineru_api_key_env"), paths)
         self.assertIn(("lite", "protected_token_retry_attempts"), paths)
+        self.assertIn(("lite", "translate_appendix"), paths)
         self.assertFalse(any(path[0] == "heavy" for path in paths))
         self.assertFalse(any("validation" in path for path in paths))
 
@@ -102,6 +103,18 @@ class TuiConfigSchemaTests(unittest.TestCase):
 
         self.assertEqual(field.kind, "integer")
         self.assertEqual(field.default, 2)
+        self.assertEqual(field.section, "翻译")
+
+    def test_lite_appendix_switch_defaults_to_enabled(self):
+        """The Lite settings form should expose the enabled appendix policy."""
+        field = next(
+            field
+            for field in config_fields_for_engine("lite")
+            if field.path == ("lite", "translate_appendix")
+        )
+
+        self.assertEqual(field.kind, "switch")
+        self.assertTrue(field.default)
         self.assertEqual(field.section, "翻译")
 
     def test_grouped_fields_filter_for_selected_engine(self):

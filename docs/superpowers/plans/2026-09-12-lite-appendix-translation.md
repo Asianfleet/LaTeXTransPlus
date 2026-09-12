@@ -37,7 +37,7 @@
 - Produces: `split_markdown(text: str, source_language: str = "en", translate_appendix: bool = True) -> list[MarkdownBlock]`。
 - Produces: `translatable_markdown(blocks: Sequence[MarkdownBlock]) -> str`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_skip_appendix_marks_nested_heading_and_following_blocks(self):
@@ -54,13 +54,13 @@ def test_appendix_headings_match_supported_source_languages(self):
             self.assertEqual([block.translatable for block in blocks], [True, False])
 ```
 
-- [ ] **Step 2: 验证失败**
+- [x] **Step 2: 验证失败**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_markdown.MarkdownBlockTests`
 
 Expected: FAIL，当前函数不接受策略参数，也不会标记附录。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```python
 def split_markdown(text: str, source_language: str = "en", translate_appendix: bool = True) -> list[MarkdownBlock]:
@@ -73,11 +73,13 @@ def translatable_markdown(blocks: Sequence[MarkdownBlock]) -> str:
 
 沿用围栏与 front matter 状态机；为任何匹配的附录标题建立边界，关闭时从首个附录块开始设置 `translatable=False`。词表匹配英文 Appendix/Appendices、中文“附录”/“附錄”、德文 Anhang、法文 Annexe、日文“付録”、韩文“부록”，允许编号和副标题。
 
-- [ ] **Step 4: 验证通过并提交**
+- [x] **Step 4: 验证通过并提交**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_markdown`
 
 Expected: PASS。提交命令：`git add src/engines/lite_markdown.py tests/test_lite_markdown.py && git commit -m "feat(lite): detect appendix markdown sections"`。
+
+Implementation note: 已实现按源语言识别的附录标题、嵌套标题边界和不可翻译块标记，并新增术语可见 Markdown 纯函数；`conda run -n latextrans python -m unittest tests.test_lite_markdown` 通过（29 tests）。
 
 ### Task 2: 将块策略接入 Lite 翻译和术语流程
 
@@ -91,7 +93,7 @@ Expected: PASS。提交命令：`git add src/engines/lite_markdown.py tests/test
 - Consumes: `split_markdown(source_text, source_language, translate_appendix)` 与 `translatable_markdown(blocks)`。
 - Produces: 关闭且命中附录时，Lite 日志包含“Appendix detected”和跳过块数。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_run_marks_appendix_blocks_and_logs_the_policy(self):
@@ -111,13 +113,13 @@ def test_collect_records_excludes_appendix_when_translation_is_disabled(self):
     self.assertNotIn("Appendix-only term", " ".join(record["text"] for record in records))
 ```
 
-- [ ] **Step 2: 验证失败**
+- [x] **Step 2: 验证失败**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_engine tests.test_markdown_terminology_agent`
 
 Expected: FAIL，引擎未将配置传入切块，术语代理仍扫描全文。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```python
 blocks = split_markdown(
@@ -132,11 +134,13 @@ if skipped:
 
 将同一个 `blocks` 交给翻译工厂。术语代理从配置读取开关，使用同一切块函数和 `translatable_markdown` 后执行既有可见文本清理；其标题、摘要上下文仍传入完整 Markdown。
 
-- [ ] **Step 4: 验证通过并提交**
+- [x] **Step 4: 验证通过并提交**
 
 Run: `conda run -n latextrans python -m unittest tests.test_lite_engine tests.test_markdown_terminology_agent tests.test_markdown_translator_agent`
 
 Expected: PASS。提交命令：`git add src/engines/lite.py src/agents/tool_agents/markdown_terminology_agent.py tests/test_lite_engine.py tests/test_markdown_terminology_agent.py && git commit -m "feat(lite): skip appendix translation and terminology"`。
+
+Implementation note: Lite 引擎在运行期共享已策略化的块列表给术语和翻译阶段，并在命中附录时记录跳过块数；`conda run -n latextrans python -m unittest tests.test_lite_engine tests.test_markdown_terminology_agent tests.test_markdown_translator_agent` 通过（36 tests）。
 
 ### Task 3: 配置、TUI 与文档
 
@@ -156,7 +160,7 @@ Expected: PASS。提交命令：`git add src/engines/lite.py src/agents/tool_age
 - Produces: `[lite].translate_appendix: bool`，默认 `true`。
 - Produces: `ConfigField(("lite", "translate_appendix"), "翻译附录", "switch", "翻译", True)`。
 
-- [ ] **Step 1: 写失败测试**
+- [x] **Step 1: 写失败测试**
 
 ```python
 def test_engine_config_copies_lite_appendix_setting_only_for_lite(self):
@@ -169,13 +173,13 @@ def test_lite_appendix_switch_defaults_to_enabled(self):
     self.assertEqual((field.kind, field.default, field.section), ("switch", True, "翻译"))
 ```
 
-- [ ] **Step 2: 验证失败**
+- [x] **Step 2: 验证失败**
 
 Run: `conda run -n latextrans python -m unittest tests.test_engine_config tests.test_tui_config tests.test_tui_config_schema`
 
 Expected: FAIL，Lite runtime fields、迁移默认值与 TUI schema 均没有该字段。
 
-- [ ] **Step 3: 最小实现**
+- [x] **Step 3: 最小实现**
 
 ```python
 _ENGINE_RUNTIME_FIELDS["lite"] = (..., "translate_appendix")
@@ -185,11 +189,13 @@ ConfigField(("lite", "translate_appendix"), "翻译附录", "switch", "翻译", 
 
 两个 `[lite]` TOML 添加 `translate_appendix = true`。两个 README 的 Lite 配置片段和行为说明写明：关闭后按当前源语言附录标题检测，附录原样保留且不参与术语生成。
 
-- [ ] **Step 4: 验证通过并提交**
+- [x] **Step 4: 验证通过并提交**
 
 Run: `conda run -n latextrans python -m unittest tests.test_engine_config tests.test_tui_config tests.test_tui_config_schema`
 
 Expected: PASS。提交命令：`git add config/default.toml config/template.toml src/engines/base.py src/tui/config.py src/tui/config_schema.py tests/test_engine_config.py tests/test_tui_config.py tests/test_tui_config_schema.py README.md README_ZH.md && git commit -m "feat(config): add lite appendix translation setting"`。
+
+Implementation note: 已增加 Lite runtime 字段、旧布局迁移默认值、Lite 设置 switch、默认/模板 TOML 及双语说明；`conda run -n latextrans python -m unittest tests.test_engine_config tests.test_tui_config tests.test_tui_config_schema` 通过（33 tests）。
 
 ### Task 4: 定向验证与计划收尾
 
