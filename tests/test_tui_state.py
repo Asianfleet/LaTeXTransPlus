@@ -224,6 +224,25 @@ class TuiStateEngineTests(unittest.TestCase):
         self.assertEqual(task.task_id, "task-id")
         self.assertEqual(task.engine, "heavy")
 
+    def test_project_complete_event_copies_the_pdf_warning(self):
+        """A PDF warning should be kept without failing the completed project."""
+        state = TaskViewState(input_type="pdf", inputs=["paper.pdf"])
+
+        state.apply_event(
+            {
+                "type": "project_complete",
+                "project_name": "paper_260911",
+                "translated_markdown_path": r"D:\out\translated.md",
+                "pdf_error": "Pandoc PDF generation failed with exit code 43.",
+            }
+        )
+
+        project = state.projects[0]
+        self.assertEqual(project.status, ProjectStatus.COMPLETED)
+        self.assertIn("exit code 43", project.pdf_error)
+        self.assertEqual(state.completed, 1)
+        self.assertEqual(state.failed, 0)
+
 
 if __name__ == "__main__":
     unittest.main()

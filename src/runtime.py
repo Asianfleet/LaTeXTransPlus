@@ -530,6 +530,7 @@ _LITE_ARTIFACT_FIELDS = (
     "source_markdown_path",
     "translated_markdown_path",
     "pdf_path",
+    "pdf_error",
     "project_terms_path",
     "project_terms_decisions_path",
 )

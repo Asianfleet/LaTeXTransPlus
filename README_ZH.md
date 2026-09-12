@@ -444,10 +444,10 @@ outputs/<target_language>_<project_name>/
 
 ## Lite TUI 输出
 
-每个 Lite 任务在 `output-lite/` 下使用独立的时间戳目录，将获取到的 PDF 和全部产物放在一起：
+每个 Lite 任务在 `output-lite/` 下使用独立的日期目录，将获取到的 PDF 和全部产物放在一起：
 
 ```text
-output-lite/<stable_name>_YYYYMMDDTHHMMSS/
+output-lite/<stable_name>_YYMMDD/
 ├── source.pdf
 ├── source.md
 ├── translated.md
@@ -457,7 +457,11 @@ output-lite/<stable_name>_YYYYMMDDTHHMMSS/
 └── latextrans.log
 ```
 
-arXiv 输入的 `<stable_name>` 是 arXiv ID；PDF URL 或本地 PDF 输入使用去掉 `.pdf` 后的文件名。Lite 不生成校验报告；输入获取、Markdown、翻译或 Pandoc/XeLaTeX 失败时，已经生成的中间产物仍保留在该目录，项目状态会标记为失败。
+arXiv 输入的 `<stable_name>` 是 arXiv ID；PDF URL 或本地 PDF 输入使用去掉 `.pdf` 后的文件名；同一天重复翻译同一来源时依次追加 `_1`、`_2`。Lite 不生成校验报告；输入获取、Markdown 或翻译失败时，已经生成的中间产物仍保留在该目录，项目状态会标记为失败。
+
+Pandoc/XeLaTeX 生成 PDF 失败不会丢弃已完成的 Markdown 译文：项目仍标记为完成，`pdf_error` 记录退出码和 PDF 引擎输出，TUI 发出警告提示并在错误表保留一行，完整内容写入 `latextrans.log`。
+
+MinerU 抽取的 Markdown 偶尔会包含 `x^{\prime}^{(i)}` 这类链式上标，XeLaTeX 会直接以 “Double superscript” 失败。Lite 在写出 `source.md` 和 `translated.md` 后（只限数学区间内）合并这类上标，并把修复数量写入日志。
 
 <!-- # 🖼️ 翻译示例
 

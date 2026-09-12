@@ -16,6 +16,18 @@ _LANGUAGE_TAGS = {
     "ko": "ko-KR",
 }
 _CJK_LANGUAGE_PREFIXES = ("zh", "ja", "ko")
+_STDERR_EXCERPT_LINES = 20
+_STDERR_EXCERPT_CHARS = 2000
+
+
+class PandocPdfError(RuntimeError):
+    """Report a failed Pandoc run together with the captured tool output."""
+
+    def __init__(self, message: str, returncode: int | None, stderr: str) -> None:
+        """Store the exit status and full stderr beside the display message."""
+        super().__init__(message)
+        self.returncode = returncode
+        self.stderr = stderr
 
 
 class PandocPdfGenerator:
@@ -51,10 +63,57 @@ class PandocPdfGenerator:
         if self._cjk_mainfont and language_tag.startswith(_CJK_LANGUAGE_PREFIXES):
             command.extend(["-V", f"CJKmainfont:{self._cjk_mainfont}"])
 
-        self._runner(command, check=True, capture_output=True, text=True)
+        try:
+            self._runner(
+                command,
+                check=True,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+            )
+        except subprocess.CalledProcessError as exc:
+            raise PandocPdfError(
+                _pandoc_failure_message(exc),
+                returncode=exc.returncode,
+                stderr=_process_output(exc.stderr),
+            ) from exc
         if not pdf_path.is_file() or pdf_path.stat().st_size == 0:
             raise ValueError(f"Pandoc PDF output is missing or empty: {pdf_path}")
         return pdf_path
+
+
+def _pandoc_failure_message(exc: subprocess.CalledProcessError) -> str:
+    """Build a diagnostic message carrying the exit status and engine output."""
+    stderr = _process_output(exc.stderr).strip()
+    if not stderr:
+        return f"Pandoc PDF generation failed with exit code {exc.returncode}."
+    return (
+        f"Pandoc PDF generation failed with exit code {exc.returncode}. "
+        f"PDF engine output:\n{_excerpt(stderr)}"
+    )
+
+
+def _process_output(value: object) -> str:
+    """Normalize captured process output to text for diagnostics."""
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
+def _excerpt(
+    text: str,
+    max_lines: int = _STDERR_EXCERPT_LINES,
+    max_chars: int = _STDERR_EXCERPT_CHARS,
+) -> str:
+    """Keep the tail of a long engine log, which holds the actual LaTeX error."""
+    lines = text.splitlines()
+    if len(lines) > max_lines:
+        lines = ["...(earlier output truncated)...", *lines[-max_lines:]]
+    excerpt = "\n".join(lines)
+    if len(excerpt) > max_chars:
+        excerpt = "..." + excerpt[-max_chars:]
+    return excerpt
 
 
 def _pandoc_language_tag(target_language: str) -> str:

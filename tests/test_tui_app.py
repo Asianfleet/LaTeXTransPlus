@@ -1597,6 +1597,116 @@ class TuiTaskEventTests(TuiAppTests):
             self.assertIn("任务全部完成：task-1", messages)
 
 
+class TuiNotificationTests(TuiAppTests):
+    """验证通知不会因外部文本触发 markup 解析而崩溃。"""
+
+    BRACKET_MESSAGE = (
+        "发生异常：paper，任务 id：task-1，错误：Command "
+        "'['pandoc', '--pdf-engine=xelatex', '--metadata=lang:zh-CN']' "
+        "returned non-zero exit status 43."
+    )
+
+    def test_compact_notification_collapses_whitespace_and_limits_length(self):
+        """通知文本需要压成单段并在超长时截断。"""
+        self.assertEqual(tui_app._compact_notification("a\n\n   b"), "a b")
+
+        compacted = tui_app._compact_notification("x" * 900)
+        self.assertLessEqual(len(compacted), tui_app.NOTIFY_MESSAGE_LIMIT + 2)
+        self.assertTrue(compacted.endswith("…"))
+
+    async def test_notify_disables_markup_for_external_text(self):
+        """异常文本里的方括号不得再交给 Textual markup 解析。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            with patch.object(app, "notify") as notify:
+                app._notify(self.BRACKET_MESSAGE, severity="error")
+
+            notify.assert_called_once_with(
+                self.BRACKET_MESSAGE,
+                title="LaTeXTransPlus",
+                severity="error",
+                markup=False,
+            )
+
+    async def test_bracket_notification_renders_without_markup_crash(self):
+        """真实渲染带方括号的错误通知时不得抛出 MarkupError。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test(notifications=True) as pilot:
+            app._notify(self.BRACKET_MESSAGE, severity="error")
+            await pilot.pause()
+            await pilot.pause()
+
+    async def test_project_error_event_with_bracket_text_does_not_crash(self):
+        """事件通知渲染外部异常文本时也不得因方括号崩溃。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test(notifications=True) as pilot:
+            app.current_task = TaskViewState(
+                input_type="pdf",
+                inputs=["paper.pdf"],
+                task_id="task-1",
+                total=1,
+            )
+            app.tasks = [app.current_task]
+
+            app.handle_runtime_event(
+                {
+                    "type": "project_error",
+                    "project_name": "paper",
+                    "error": self.BRACKET_MESSAGE,
+                },
+                app.current_task,
+            )
+            await pilot.pause()
+            await pilot.pause()
+
+    async def test_pdf_error_completion_notifies_a_warning(self):
+        """PDF 生成失败应作为项目警告通知，而不是项目异常。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            app.current_task = TaskViewState(
+                input_type="pdf",
+                inputs=["paper.pdf"],
+                task_id="task-1",
+                total=1,
+            )
+            app.tasks = [app.current_task]
+
+            with patch.object(app, "notify") as notify:
+                app.handle_runtime_event(
+                    {
+                        "type": "project_complete",
+                        "project_name": "paper",
+                        "pdf_error": "Pandoc PDF generation failed with exit code 43.",
+                    },
+                    app.current_task,
+                )
+
+            warning = next(
+                call for call in notify.call_args_list if "PDF 生成失败" in call.args[0]
+            )
+            self.assertEqual(warning.kwargs["severity"], "warning")
+            self.assertIn("exit code 43", warning.args[0])
+            self.assertFalse(
+                any("发生异常" in call.args[0] for call in notify.call_args_list)
+            )
+
+    async def test_pdf_error_is_listed_as_a_warning_row(self):
+        """PDF 警告应作为持久记录出现在错误表的警告行中。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            project = ProjectViewState(
+                project_name="paper",
+                pdf_error="Pandoc PDF generation failed with exit code 43.",
+            )
+
+            rows = app._error_reports_with_status(project)
+            self.assertEqual(len(rows), 1)
+            report, status = rows[0]
+            self.assertEqual(status, "warning")
+            self.assertIn("exit code 43", str(report["error"]))
+            self.assertEqual(app._error_status_text("warning").plain, "警告")
+
+
 class TuiResultViewsTests(TuiAppTests):
     """验证任务结果列表、表格和项目详情页会读取项目状态。"""
 

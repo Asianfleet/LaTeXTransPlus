@@ -237,6 +237,34 @@ def restore_markdown(text: str, protected: ProtectedMarkdown) -> str:
     return restored
 
 
+def math_span_ranges(text: str) -> list[tuple[int, int]]:
+    """Return math span ranges that are not covered by code blocks or code spans."""
+    blocked = _normalize_ranges(
+        [*_fenced_code_ranges(text), *_inline_code_ranges(text)],
+        len(text),
+    )
+    spans = _normalize_ranges(
+        [*_backslash_math_ranges(text), *_dollar_math_ranges(text)],
+        len(text),
+    )
+    return [
+        (start, end)
+        for start, end in spans
+        if not _overlaps_any_range(blocked, start, end)
+    ]
+
+
+def _overlaps_any_range(
+    ranges: Sequence[tuple[int, int]],
+    start: int,
+    end: int,
+) -> bool:
+    """Return whether one character range intersects any sorted range."""
+    return any(
+        start < range_end and range_start < end for range_start, range_end in ranges
+    )
+
+
 def _line_content(line: str) -> str:
     """Remove only a line ending while retaining other whitespace."""
     return line.rstrip("\r\n")

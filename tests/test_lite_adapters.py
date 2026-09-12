@@ -92,6 +92,25 @@ class FakeHttpStatusError(Exception):
         )
 
 
+class FailingPandocRunner:
+    """Raise the Pandoc PDF failure that a broken XeLaTeX run reports."""
+
+    def __init__(self, stderr: str, returncode: int = 43) -> None:
+        """Store the captured engine output and exit status."""
+        self.stderr = stderr
+        self.returncode = returncode
+        self.command: list[str] = []
+
+    def __call__(
+        self, command: list[str], **kwargs: object
+    ) -> subprocess.CompletedProcess[str]:
+        """Fail the conversion the way ``subprocess.run(check=True)`` does."""
+        self.command = command
+        raise subprocess.CalledProcessError(
+            self.returncode, command, output="", stderr=self.stderr
+        )
+
+
 class RejectingMineruClient:
     """Reject every extraction with a modeled HTTP status error."""
 
@@ -469,7 +488,13 @@ class LiteAdapterTests(unittest.TestCase):
         self.assertIn("--metadata=lang:zh-CN", runner.command)
         self.assertEqual(
             runner.kwargs,
-            {"check": True, "capture_output": True, "text": True},
+            {
+                "check": True,
+                "capture_output": True,
+                "text": True,
+                "encoding": "utf-8",
+                "errors": "replace",
+            },
         )
 
     def test_pandoc_adapter_rejects_an_empty_pdf_output(self) -> None:
@@ -480,6 +505,42 @@ class LiteAdapterTests(unittest.TestCase):
             PandocPdfGenerator(runner=FakePandocRunner(pdf_content=b"")).generate(
                 Path("translated.md"), self.output_dir / "translated.pdf", "en"
             )
+
+    def test_pandoc_adapter_reports_the_pdf_engine_output_on_failure(self) -> None:
+        """A failed PDF run must keep the exit status and engine output for diagnosis."""
+        from src.engines.lite_pdf import PandocPdfError, PandocPdfGenerator
+
+        runner = FailingPandocRunner(
+            "! Double superscript.\nl.328 ... x ^ { \\prime } ^\n"
+        )
+
+        with self.assertRaises(PandocPdfError) as raised:
+            PandocPdfGenerator(runner=runner).generate(
+                Path("translated.md"), self.output_dir / "translated.pdf", "ch"
+            )
+
+        message = str(raised.exception)
+        self.assertEqual(raised.exception.returncode, 43)
+        self.assertIn("exit code 43", message)
+        self.assertIn("Double superscript", message)
+        self.assertIn("l.328", raised.exception.stderr)
+
+    def test_pandoc_adapter_keeps_the_tail_of_a_long_engine_log(self) -> None:
+        """Only the tail of a long XeLaTeX log is useful, so the head is dropped."""
+        from src.engines.lite_pdf import PandocPdfError, PandocPdfGenerator
+
+        stderr = "\n".join(f"payload {index:02d}" for index in range(60))
+        runner = FailingPandocRunner(f"{stderr}\n! Final error")
+
+        with self.assertRaises(PandocPdfError) as raised:
+            PandocPdfGenerator(runner=runner).generate(
+                Path("translated.md"), self.output_dir / "translated.pdf", "ch"
+            )
+
+        message = str(raised.exception)
+        self.assertIn("! Final error", message)
+        self.assertNotIn("payload 00", message)
+        self.assertIn("payload 00", raised.exception.stderr)
 
 
 if __name__ == "__main__":

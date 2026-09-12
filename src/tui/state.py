@@ -38,6 +38,7 @@ class ProjectViewState:
     engine: str = "heavy"
     source_markdown_path: str | None = None
     translated_markdown_path: str | None = None
+    pdf_error: str | None = None
 
 
 @dataclass
@@ -121,6 +122,7 @@ class TaskViewState:
             "log_path",
             "validation_summary",
             "error",
+            "pdf_error",
         ):
             if key in event:
                 setattr(project, key, event[key])

@@ -11,7 +11,7 @@ import shutil
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Sequence
+from typing import Literal, Sequence
 
 import toml
 from rich.cells import cell_len
@@ -89,6 +89,16 @@ ERROR_STATUS_COLUMN_WIDTH = 8
 ERROR_MIN_CONTENT_COLUMN_WIDTH = 6
 PROGRESS_LOG_LINE_RE = re.compile(r"^\[[#-]+\]\s+\d{1,3}(?:\.\d+)?%")
 APP_TITLE_PLAIN = "LaTeXTransPlus"
+NOTIFY_MESSAGE_LIMIT = 400
+NOTIFICATION_SEVERITY = Literal["information", "warning", "error"]
+
+
+def _compact_notification(message: str, limit: int = NOTIFY_MESSAGE_LIMIT) -> str:
+    """把通知文本压成单段可读文本，过长时保留开头并加省略号。"""
+    collapsed = " ".join(str(message).split())
+    if len(collapsed) <= limit:
+        return collapsed
+    return f"{collapsed[:limit]} …"
 
 
 def _merge_project_log_text(file_text: str, memory_lines: list[str]) -> str:
@@ -1052,7 +1062,7 @@ class LaTeXTransTuiApp(App[None]):
                         raise OSError(f"输出路径不是目录：{output_dir}")
                     shutil.rmtree(output_dir)
             except OSError as exc:
-                self.notify(
+                self._notify(
                     f"删除失败：{project.project_name}，错误：{exc}",
                     title="LaTeXTransPlus",
                     severity="error",
@@ -1366,7 +1376,7 @@ class LaTeXTransTuiApp(App[None]):
         self.tasks.append(self.current_task)
         self.query_one("#batch-input", TextArea).text = ""
         self.switch_page(PAGE_ENTRY)
-        self.notify(
+        self._notify(
             f"任务已开始：{self.current_task.task_id}（{len(items)} 个条目）",
             title="LaTeXTransPlus",
         )
@@ -1423,20 +1433,50 @@ class LaTeXTransTuiApp(App[None]):
             self._refresh_project_log(project, task.task_log_lines if task is not None else None)
             self._refresh_terms_table(project)
 
+    def _notify(
+        self,
+        message: str,
+        *,
+        title: str = "LaTeXTransPlus",
+        severity: NOTIFICATION_SEVERITY = "information",
+    ) -> None:
+        """发送通知：禁用 markup 解析并压缩超长文本。
+
+        通知文本可能包含异常消息、命令列表或文件路径，其中的方括号会被
+        Textual 当作 markup 标签解析并抛出 MarkupError，因此这里统一关闭
+        markup 并限制长度。
+        """
+        self.notify(
+            _compact_notification(message),
+            title=title,
+            severity=severity,
+            markup=False,
+        )
+
     def _notify_task_event(self, event: dict[str, object], task: TaskViewState) -> None:
         """根据任务事件发送轻量通知，不依赖已删除的进度页。"""
         event_type = event.get("type")
         project_name = str(event.get("project_name") or "project")
         if event_type == "project_complete":
             if self._should_notify_project_event(task, project_name, "project_complete"):
-                self.notify(f"项目完成：{project_name}，任务 id：{task.task_id}", title="LaTeXTransPlus")
+                pdf_error = str(event.get("pdf_error") or "").strip()
+                if pdf_error:
+                    self._notify(
+                        f"项目完成（PDF 生成失败）：{project_name}，任务 id：{task.task_id}，原因：{pdf_error}",
+                        severity="warning",
+                    )
+                else:
+                    self._notify(
+                        f"项目完成：{project_name}，任务 id：{task.task_id}",
+                        title="LaTeXTransPlus",
+                    )
         elif event_type == "project_error":
             if event.get("status") == "needs_term_review":
                 if self._should_notify_project_event(task, project_name, "project_terms_ready"):
-                    self.notify(f"术语表已生成：{project_name}，任务 id：{task.task_id}", title="LaTeXTransPlus")
+                    self._notify(f"术语表已生成：{project_name}，任务 id：{task.task_id}", title="LaTeXTransPlus")
             elif self._should_notify_project_event(task, project_name, "project_error"):
                 error = self._project_error_message(event)
-                self.notify(
+                self._notify(
                     f"发生异常：{project_name}，任务 id：{task.task_id}，错误：{error}",
                     title="LaTeXTransPlus",
                     severity="error",
@@ -1444,7 +1484,7 @@ class LaTeXTransTuiApp(App[None]):
 
         if self._task_is_finished(task) and not task.completion_notified:
             task.completion_notified = True
-            self.notify(f"任务全部完成：{task.task_id}", title="LaTeXTransPlus")
+            self._notify(f"任务全部完成：{task.task_id}", title="LaTeXTransPlus")
 
     def _project_error_message(self, event: dict[str, object]) -> str:
         """Return a useful project error message, including validation details when present."""
@@ -1474,14 +1514,14 @@ class LaTeXTransTuiApp(App[None]):
 
     def _notify_empty_task_failure(self, task: TaskViewState, error: str) -> None:
         """在没有可映射项目的任务失败时发出任务级异常和终态通知。"""
-        self.notify(
+        self._notify(
             f"发生异常：{task.task_id}，错误：{error}",
             title="LaTeXTransPlus",
             severity="error",
         )
         if not task.completion_notified:
             task.completion_notified = True
-            self.notify(f"任务全部完成：{task.task_id}", title="LaTeXTransPlus")
+            self._notify(f"任务全部完成：{task.task_id}", title="LaTeXTransPlus")
 
     def _selected_project(self) -> ProjectViewState | None:
         """Return the currently selected project state."""
@@ -1817,7 +1857,19 @@ class LaTeXTransTuiApp(App[None]):
         initial_reports = self._read_error_report(str(initial_path) if initial_path else None)
         if not final_reports and not initial_reports:
             if project.error:
-                return [({"part": "project", "num_or_ph": "-", "error": project.error}, "unresolved")]
+                return [
+                    (
+                        {"part": "project", "num_or_ph": "-", "error": project.error},
+                        "unresolved",
+                    )
+                ]
+            if project.pdf_error:
+                return [
+                    (
+                        {"part": "project", "num_or_ph": "-", "error": project.pdf_error},
+                        "warning",
+                    )
+                ]
             return []
 
         final_by_key = {self._error_report_key(report): report for report in final_reports}
@@ -1920,6 +1972,8 @@ class LaTeXTransTuiApp(App[None]):
         """返回仅状态单元格使用的彩色 Rich 文本。"""
         if status == "resolved":
             return Text("已解决", style="green")
+        if status == "warning":
+            return Text("警告", style="yellow")
         return Text("未解决", style="yellow")
 
     def _error_report_content(self, report: dict[str, object], project: ProjectViewState) -> tuple[str, str]:
@@ -2305,7 +2359,7 @@ class LaTeXTransTuiApp(App[None]):
         if project is not None and message:
             project.zotero_status = message
         if message:
-            self.notify(message)
+            self._notify(message)
 
     def _zotero_config(self) -> dict[str, object]:
         """返回当前 UI 配置中的 Zotero 配置段。"""

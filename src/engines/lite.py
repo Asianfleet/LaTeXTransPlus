@@ -18,6 +18,7 @@ from src.engines.lite_inputs import (
     prepare_lite_project,
 )
 from src.engines.lite_markdown import split_markdown
+from src.engines.lite_math import normalize_markdown_math_file
 from src.engines.lite_mineru import MineruMarkdownExtractor
 from src.engines.lite_pdf import PandocPdfGenerator
 
@@ -86,6 +87,7 @@ class LiteEngine:
             )
             result["source_markdown_path"] = str(source_markdown)
             self._log("MinerU extraction completed.", "info", result, log_callback)
+            self._repair_markdown_math(source_markdown, "source", result, log_callback)
 
             terminology_agent = self._terminology_factory(
                 project_config,
@@ -113,17 +115,27 @@ class LiteEngine:
             translated_markdown = Path(self._await(translator_agent.execute()))
             result["translated_markdown_path"] = str(translated_markdown)
             self._log("Markdown translation completed.", "info", result, log_callback)
-
-            pdf_path = Path(
-                self._pdf_generator.generate(
-                    translated_markdown,
-                    prepared.project_dir / "translated.pdf",
-                    str(project_config.get("target_language", "ch")),
-                )
+            self._repair_markdown_math(
+                translated_markdown, "translated", result, log_callback
             )
-            result["pdf_path"] = str(pdf_path)
+
+            try:
+                pdf_path = Path(
+                    self._pdf_generator.generate(
+                        translated_markdown,
+                        prepared.project_dir / "translated.pdf",
+                        str(project_config.get("target_language", "ch")),
+                    )
+                )
+            except Exception as exc:
+                # A PDF failure must not discard the finished Markdown artifacts;
+                # it is reported as a project warning instead.
+                result["pdf_error"] = str(exc)
+                self._log(f"PDF generation failed: {exc}", "warning", result, log_callback)
+            else:
+                result["pdf_path"] = str(pdf_path)
+                self._log("PDF generation completed.", "info", result, log_callback)
             result["ok"] = True
-            self._log("PDF generation completed.", "info", result, log_callback)
         except Exception as exc:
             if isinstance(exc, LiteProjectPreparationError):
                 result.update(
@@ -152,8 +164,35 @@ class LiteEngine:
             "pdf_path": None,
             "project_terms_path": None,
             "project_terms_decisions_path": None,
+            "pdf_error": None,
             "error": None,
         }
+
+    def _repair_markdown_math(
+        self,
+        markdown_path: Path,
+        label: str,
+        result: dict[str, Any],
+        log_callback: LogCallback | None,
+    ) -> None:
+        """Merge invalid superscript chains left by extraction or translation."""
+        try:
+            fixes = normalize_markdown_math_file(markdown_path)
+        except OSError as exc:
+            self._log(
+                f"Markdown math normalization skipped for {label}: {exc}",
+                "warning",
+                result,
+                log_callback,
+            )
+            return
+        if fixes:
+            self._log(
+                f"Normalized {fixes} invalid superscript chain(s) in {label} Markdown.",
+                "warning",
+                result,
+                log_callback,
+            )
 
     @staticmethod
     def _await(value: Any) -> Any:
@@ -210,6 +249,7 @@ class LiteEngine:
                 "source_markdown_path",
                 "translated_markdown_path",
                 "pdf_path",
+                "pdf_error",
                 "project_terms_path",
                 "project_terms_decisions_path",
             )

@@ -458,7 +458,11 @@ output-lite/<stable_name>_YYMMDD/
 └── latextrans.log
 ```
 
-For arXiv input, `<stable_name>` is the arXiv ID. For a PDF URL or local path, it is the PDF filename without `.pdf`. Translating the same source twice on the same day appends `_1`, `_2`, and so on. Lite does not create a validation report; an acquisition, Markdown, translation, or Pandoc/XeLaTeX failure leaves available intermediate files in this same directory and marks the project failed.
+For arXiv input, `<stable_name>` is the arXiv ID. For a PDF URL or local path, it is the PDF filename without `.pdf`. Translating the same source twice on the same day appends `_1`, `_2`, and so on. Lite does not create a validation report; an acquisition, Markdown, or translation failure leaves available intermediate files in this same directory and marks the project failed.
+
+A Pandoc/XeLaTeX failure does not discard the finished Markdown translation: the project still completes, `pdf_error` records the exit code and PDF engine output, the TUI raises a warning notification with a warning row in the errors table, and the full text is written to `latextrans.log`.
+
+Markdown extracted by MinerU occasionally contains chained superscripts such as `x^{\prime}^{(i)}`, which XeLaTeX rejects with "Double superscript". After writing `source.md` and `translated.md`, Lite merges those chains inside math spans only and logs how many it repaired.
 
 <!-- # 🖼️ Translation Examples
 

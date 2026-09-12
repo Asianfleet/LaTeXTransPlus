@@ -111,6 +111,66 @@ class _FakePdfGenerator:
         return pdf_path
 
 
+class _FailingPdfGenerator:
+    """Raise the Pandoc failure reported when XeLaTeX rejects the Markdown."""
+
+    def generate(
+        self,
+        markdown_path: Path,
+        pdf_path: Path,
+        target_language: str,
+    ) -> Path:
+        """Fail with the diagnostic message produced by the Pandoc adapter."""
+        raise RuntimeError(
+            "Pandoc PDF generation failed with exit code 43. PDF engine output:\n"
+            "! Double superscript."
+        )
+
+
+class _BadMathMineru:
+    """Write MinerU-style Markdown whose math has a chained superscript."""
+
+    def extract(
+        self,
+        source_pdf: Path,
+        output_dir: Path,
+        api_key_env: str | None = None,
+    ) -> Path:
+        """Record Markdown containing the invalid XeLaTeX superscript chain."""
+        markdown_path = output_dir / "source.md"
+        markdown_path.write_text(
+            "# Paper\n\n## Method\n方向 $x ^ { \\prime } ^ { \\left( i \\right) }$。\n",
+            encoding="utf-8",
+        )
+        return markdown_path
+
+
+class _BadMathTranslator:
+    """Write translated Markdown that repeats the extracted superscript defect."""
+
+    def __call__(
+        self,
+        config: dict[str, object],
+        source_markdown: Path,
+        output_dir: Path,
+        blocks: object,
+    ) -> "_BadMathTranslator":
+        """Capture the paths supplied by the lite engine."""
+        self.source_markdown = source_markdown
+        self.output_dir = output_dir
+        self.blocks = tuple(blocks)
+        return self
+
+    async def execute(self) -> Path:
+        """Write a translated artifact whose math chains two superscripts."""
+        translated_path = self.output_dir / "translated.md"
+        translated_path.write_text(
+            "# 论文\n\n## 方法\n方向 $y ^ { \\prime } ^ { \\left( j \\right) }$。\n",
+            encoding="utf-8",
+        )
+        return translated_path
+
+
 class LiteEngineTests(unittest.TestCase):
     """Verify the complete lite pipeline without network or external tools."""
 
@@ -120,6 +180,7 @@ class LiteEngineTests(unittest.TestCase):
         translator: object | None = None,
         config: dict[str, object] | None = None,
         mineru: object | None = None,
+        pdf_generator: object | None = None,
     ):
         """Run a lite engine with deterministic injected stage dependencies."""
         source_pdf = root / "paper.pdf"
@@ -129,7 +190,7 @@ class LiteEngineTests(unittest.TestCase):
             mineru=mineru or _FakeMineru(),
             terminology=_FakeTerminology(),
             translator=translator or _FakeTranslator(),
-            pdf_generator=_FakePdfGenerator(),
+            pdf_generator=pdf_generator or _FakePdfGenerator(),
         )
         result = engine.run(
             str(source_pdf),
@@ -149,7 +210,7 @@ class LiteEngineTests(unittest.TestCase):
             self.assertEqual(result["engine"], "lite")
             project_dir = Path(result["project_dir"])
             self.assertEqual(Path(result["output_dir"]), project_dir)
-            self.assertRegex(project_dir.name, r"^paper_\d{8}T\d{6}(?:_\d+)?$")
+            self.assertRegex(project_dir.name, r"^paper_\d{6}(?:_\d+)?$")
             for artifact_name in (
                 "source.pdf",
                 "source.md",
@@ -202,6 +263,48 @@ class LiteEngineTests(unittest.TestCase):
             self.assertNotIn("validation_summary", result)
 
         self.assertEqual(logs[-1]["level"], "error")
+
+    def test_run_repairs_extracted_double_superscripts_in_both_artifacts(self):
+        """Extracted superscript chains must be merged before Pandoc sees them."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result, logs = self._run_engine(
+                Path(temp_dir),
+                translator=_BadMathTranslator(),
+                mineru=_BadMathMineru(),
+            )
+
+            self.assertTrue(result["ok"])
+            for key in ("source_markdown_path", "translated_markdown_path"):
+                text = Path(result[key]).read_text(encoding="utf-8")
+                self.assertNotIn(r"^ { \prime } ^", text)
+                self.assertIn(r"\prime \,", text)
+
+        normalized_logs = [
+            str(event["message"])
+            for event in logs
+            if "Normalized" in str(event["message"])
+        ]
+        self.assertEqual(len(normalized_logs), 2)
+        self.assertTrue(any("source" in message for message in normalized_logs))
+        self.assertTrue(any("translated" in message for message in normalized_logs))
+
+    def test_pdf_failure_keeps_the_markdown_result_and_records_a_warning(self):
+        """A failed PDF stage must not discard the finished Markdown translation."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result, logs = self._run_engine(
+                Path(temp_dir), pdf_generator=_FailingPdfGenerator()
+            )
+
+            self.assertTrue(result["ok"])
+            self.assertIsNone(result["error"])
+            self.assertIsNone(result["pdf_path"])
+            self.assertIn("exit code 43", result["pdf_error"])
+            self.assertTrue(Path(result["translated_markdown_path"]).is_file())
+            self.assertTrue(Path(result["source_markdown_path"]).is_file())
+
+        self.assertEqual(logs[-1]["level"], "warning")
+        self.assertIn("[WARNING]", str(logs[-1]["line"]))
+        self.assertIn("! Double superscript.", str(logs[-1]["line"]))
 
 
 class RuntimeEngineDispatchTests(unittest.TestCase):
@@ -314,6 +417,41 @@ class RuntimeEngineDispatchTests(unittest.TestCase):
         self.assertEqual(events[-1]["type"], "project_error")
         self.assertEqual(events[-1]["project_dir"], failure["project_dir"])
         self.assertEqual(events[-1]["log_path"], failure["log_path"])
+
+    def test_lite_pdf_warning_still_emits_project_complete_with_pdf_error(self):
+        """A PDF warning must keep the finished Markdown project out of failures."""
+        events: list[dict[str, object]] = []
+
+        class _WarnedLiteEngine:
+            """Return a successful lite result carrying a PDF warning."""
+
+            def run(self, input_item, config, output_root, log_callback=None):
+                """Publish prepared artifacts plus a failed PDF stage."""
+                project_dir = Path(output_root) / "paper_20260910T120000"
+                return {
+                    "ok": True,
+                    "engine": "lite",
+                    "project_name": project_dir.name,
+                    "project_dir": str(project_dir),
+                    "output_dir": str(project_dir),
+                    "source_markdown_path": str(project_dir / "source.md"),
+                    "translated_markdown_path": str(project_dir / "translated.md"),
+                    "pdf_path": None,
+                    "pdf_error": "Pandoc PDF generation failed with exit code 43.",
+                    "project_terms_path": None,
+                    "project_terms_decisions_path": None,
+                    "error": None,
+                }
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            config = {"lite": {"output_dir": str(Path(temp_dir) / "output-lite")}}
+            with patch("src.runtime.LiteEngine", _WarnedLiteEngine):
+                result = run_engine_task("lite", "pdf", ["paper.pdf"], config, events.append)
+
+        self.assertEqual([event["type"] for event in events], ["project_start", "project_complete"])
+        self.assertIn("exit code 43", str(events[-1]["pdf_error"]))
+        self.assertEqual(len(result["completed_projects"]), 1)
+        self.assertEqual(result["failed_projects"], [])
 
 
 if __name__ == "__main__":
