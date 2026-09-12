@@ -9,6 +9,9 @@ from typing import Mapping, Sequence
 
 _FENCE_OPEN_RE = re.compile(r"^ {0,3}(`{3,}|~{3,})(.*)$")
 _HEADING_RE = re.compile(r"^ {0,3}##(?:[ \t]+.*)?$")
+_REFERENCE_HEADING_RE = re.compile(
+    r"^ {0,3}##[ \t]+(?P<title>.*?)(?:[ \t]+#+)?[ \t]*$"
+)
 _TABLE_SEPARATOR_RE = re.compile(
     r"^[ \t]*\|?[ \t]*:?-{3,}:?[ \t]*"
     r"(?:\|[ \t]*:?-{3,}:?[ \t]*)+\|?[ \t]*$"
@@ -31,6 +34,18 @@ _BACKSLASH_MATH_RE = re.compile(
     r"(?<!\\)(?:\\\[(?s:.*?)\\\]|\\\((?s:.*?)\\\))"
 )
 _ProtectionRange = tuple[int, int, str]
+_REFERENCE_HEADING_TITLES = {
+    "references",
+    "bibliography",
+    "reference list",
+    "works cited",
+    "参考文献",
+    "参考资料",
+    "文献",
+    "参考文献一覧",
+    "참고문헌",
+    "참고 문헌",
+}
 
 
 @dataclass(frozen=True)
@@ -40,6 +55,7 @@ class MarkdownBlock:
     index: int
     text: str
     translatable: bool = True
+    preserved_suffix: str = ""
 
 
 @dataclass(frozen=True)
@@ -182,7 +198,7 @@ def split_markdown(text: str) -> list[MarkdownBlock]:
 
     boundaries = ([0] if not starts or starts[0] != 0 else []) + starts + [len(text)]
     return [
-        MarkdownBlock(index=index, text=text[start:end])
+        _markdown_block(index, text[start:end])
         for index, (start, end) in enumerate(zip(boundaries, boundaries[1:]))
     ]
 
@@ -195,7 +211,49 @@ def rebuild_markdown(blocks: Sequence[MarkdownBlock]) -> str:
         raise ValueError("duplicate Markdown block index")
     if indices != list(range(len(ordered))):
         raise ValueError("Markdown block indices must be contiguous from zero")
-    return "".join(block.text for block in ordered)
+    parts: list[str] = []
+    for block in ordered:
+        if parts:
+            trailing_newlines = len(parts[-1]) - len(parts[-1].rstrip("\r\n"))
+            if trailing_newlines < 2:
+                parts.append("\n" * (2 - trailing_newlines))
+        parts.append(block.text)
+    return "".join(parts)
+
+
+def _markdown_block(index: int, text: str) -> MarkdownBlock:
+    """Build a block and retain reference entries outside the translation input."""
+    reference_body_start = _reference_body_start(text)
+    if reference_body_start is None:
+        return MarkdownBlock(index=index, text=text)
+    return MarkdownBlock(
+        index=index,
+        text=text,
+        preserved_suffix=text[reference_body_start:],
+    )
+
+
+def _reference_body_start(text: str) -> int | None:
+    """Return the offset after a references heading and its following blank lines."""
+    lines = text.splitlines(keepends=True)
+    if not lines or not _is_reference_heading(_line_content(lines[0])):
+        return None
+
+    offset = len(lines[0])
+    for line in lines[1:]:
+        if _line_content(line).strip(" \t"):
+            break
+        offset += len(line)
+    return offset
+
+
+def _is_reference_heading(content: str) -> bool:
+    """Return whether a second-level heading introduces a bibliography section."""
+    match = _REFERENCE_HEADING_RE.match(content)
+    if match is None:
+        return False
+    title = match.group("title").strip().casefold()
+    return title in _REFERENCE_HEADING_TITLES
 
 
 def protect_markdown(text: str) -> ProtectedMarkdown:

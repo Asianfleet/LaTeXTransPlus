@@ -102,7 +102,31 @@ class MarkdownBlockTests(unittest.TestCase):
 
         self.assertEqual(
             rebuild_markdown(list(reversed(blocks))),
-            "## A\n翻译A\n## B\n翻译B",
+            "## A\n翻译A\n\n## B\n翻译B",
+        )
+
+    def test_rebuild_separates_blocks_when_a_translation_omits_its_final_newline(self):
+        """Keep a following heading at the line start after a trimmed response."""
+        blocks = [
+            MarkdownBlock(0, "## A\n译文A"),
+            MarkdownBlock(1, "## B\n译文B"),
+        ]
+
+        self.assertEqual(
+            rebuild_markdown(blocks),
+            "## A\n译文A\n\n## B\n译文B",
+        )
+
+    def test_rebuild_keeps_a_blank_line_between_adjacent_markdown_blocks(self):
+        """Keep headings and neighboring block content separated by an empty line."""
+        blocks = [
+            MarkdownBlock(0, "## A"),
+            MarkdownBlock(1, "## B\n正文"),
+        ]
+
+        self.assertEqual(
+            rebuild_markdown(blocks),
+            "## A\n\n## B\n正文",
         )
 
     def test_rebuild_rejects_duplicate_indices(self):

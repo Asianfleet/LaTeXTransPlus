@@ -148,7 +148,10 @@ class MarkdownTranslatorAgent(BaseToolAgent):
             self.log(f"Skipping non-translatable Markdown block {block.index}.", level="debug")
             return block
 
-        protected = protect_markdown(block.text)
+        translation_text = block.text
+        if block.preserved_suffix:
+            translation_text = block.text[: -len(block.preserved_suffix)]
+        protected = protect_markdown(translation_text)
         if not self._has_translatable_text(protected):
             self.log(f"Skipping protected-only Markdown block {block.index}.", level="debug")
             return block
@@ -180,11 +183,17 @@ class MarkdownTranslatorAgent(BaseToolAgent):
                     level="warning",
                 )
                 continue
+            if block.preserved_suffix:
+                trailing_newlines = len(restored) - len(restored.rstrip("\r\n"))
+                if trailing_newlines < 2:
+                    restored += "\n" * (2 - trailing_newlines)
+            restored += block.preserved_suffix
             self.log(f"Translated Markdown block {block.index}.", level="debug")
             return MarkdownBlock(
                 index=block.index,
                 text=restored,
                 translatable=block.translatable,
+                preserved_suffix=block.preserved_suffix,
             )
         raise RuntimeError("protected token retry loop exhausted")
 
@@ -207,6 +216,7 @@ class MarkdownTranslatorAgent(BaseToolAgent):
             f"Translate academic Markdown from {source_label} to {target_label}. "
             "Preserve every protected token matching [[LTP_<TYPE>_<N>]] exactly "
             "once and in place. "
+            "Preserve Markdown headings, paragraph boundaries, blank lines, and line breaks. "
             "Never translate, reorder, or reformat formulas. Keep every mathematical "
             "symbol inside math delimiters: when the source prose contains a bare "
             "symbol such as a lone Greek letter (for example \u03c1), emit it as inline "
@@ -256,7 +266,7 @@ class MarkdownTranslatorAgent(BaseToolAgent):
                 ) as response:
                     response.raise_for_status()
                     result = await response.json()
-                    return str(result["choices"][0]["message"]["content"]).strip()
+                    return str(result["choices"][0]["message"]["content"])
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
                 self.log(
                     f"Markdown block {block_index} provider attempt "

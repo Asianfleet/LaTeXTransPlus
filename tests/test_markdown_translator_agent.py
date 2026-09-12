@@ -102,7 +102,7 @@ class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual(started, [0, 1])
         self.assertEqual(maximum_active, 2)
-        self.assertEqual(translated, "## A\n译文A\n## B\n译文B")
+        self.assertEqual(translated, "## A\n译文A\n\n## B\n译文B")
 
     async def test_request_receives_glossary_and_protected_markdown(self) -> None:
         """Load project terms and restore protected structures after translation."""
@@ -207,6 +207,103 @@ class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertIn("$\\rho$", system_prompt)
         self.assertIn("Do not wrap ordinary words in math delimiters", system_prompt)
 
+    async def test_provider_preserves_trailing_markdown_line_breaks(self) -> None:
+        """Do not trim line breaks needed to separate translated Markdown blocks."""
+        fake_session = _FakeProviderSession("## 方法\n正文\n\n")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            source_path = output_dir / "source.md"
+            source_path.write_text("## Method\nbody\n", encoding="utf-8")
+            config = self._config()
+            config["llm_config"] = {
+                "api_key": "test-key",
+                "base_url": "https://provider.test/chat/completions",
+                "model": "test-model",
+            }
+            agent = MarkdownTranslatorAgent(
+                config,
+                source_path,
+                output_dir,
+                split_markdown(source_path.read_text(encoding="utf-8")),
+            )
+            agent._session = fake_session
+
+            translated = await agent._request_provider_translation("## Method\nbody\n", {}, 0)
+
+        self.assertEqual(translated, "## 方法\n正文\n\n")
+
+    async def test_translates_reference_heading_without_sending_or_changing_entries(self) -> None:
+        """Translate a references heading while preserving its entries verbatim."""
+        source = (
+            "## Body\nbody\n\n"
+            "## References\n\n"
+            "[1] Ada Author. Original reference entry.\n\n"
+            "## Appendix\nappendix\n"
+        )
+        requests: list[str] = []
+
+        async def request(text: str, glossary: dict[str, str], block_index: int) -> str:
+            """Capture exposed source text and translate only ordinary prose."""
+            requests.append(text)
+            return (
+                text.replace("Body", "正文")
+                .replace("body", "内容")
+                .replace("References", "参考文献")
+                .replace("Appendix", "附录")
+                .replace("appendix", "附录正文")
+            )
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            source_path = output_dir / "source.md"
+            source_path.write_text(source, encoding="utf-8")
+
+            output = await MarkdownTranslatorAgent(
+                self._config(),
+                source_path,
+                output_dir,
+                split_markdown(source),
+                request_translation=request,
+            ).execute()
+
+            translated = output.read_text(encoding="utf-8")
+
+        self.assertNotIn("Ada Author", requests[1])
+        self.assertEqual(requests[1], "## References\n\n")
+        self.assertEqual(
+            translated,
+            "## 正文\n内容\n\n"
+            "## 参考文献\n\n"
+            "[1] Ada Author. Original reference entry.\n\n"
+            "## 附录\n附录正文\n",
+        )
+
+    async def test_reference_heading_keeps_a_blank_line_when_provider_trims_response(self) -> None:
+        """Keep a blank line before preserved entries after a trimmed heading response."""
+        source = "## References\n\n[1] Ada Author. Original reference entry.\n"
+
+        async def request(text: str, glossary: dict[str, str], block_index: int) -> str:
+            """Simulate a provider that removes trailing line breaks."""
+            return text.replace("References", "参考文献").rstrip("\r\n")
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            source_path = output_dir / "source.md"
+            source_path.write_text(source, encoding="utf-8")
+
+            output = await MarkdownTranslatorAgent(
+                self._config(),
+                source_path,
+                output_dir,
+                split_markdown(source),
+                request_translation=request,
+            ).execute()
+
+            translated = output.read_text(encoding="utf-8")
+
+        self.assertEqual(translated, "## 参考文献\n\n[1] Ada Author. Original reference entry.\n")
+
     def test_concurrency_defaults_to_ten_and_rejects_invalid_values(self) -> None:
         """Use the lite default concurrency while rejecting unusable configuration."""
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -256,7 +353,7 @@ class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(calls, [2])
         self.assertEqual(
             translated,
-            "```text\nsource code\n```\n## Metadata\nkeep\n## 正文\n内容\n",
+            "```text\nsource code\n```\n\n## Metadata\nkeep\n\n## 正文\n内容\n",
         )
 
     async def test_retries_a_block_when_a_protected_token_is_missing(self) -> None:
