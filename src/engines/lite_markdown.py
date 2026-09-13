@@ -190,6 +190,7 @@ def split_markdown(
     fence_length = 0
     in_front_matter = _front_matter_range(text) is not None
     appendix_start: int | None = None
+    references_seen = False
 
     for line_number, line in enumerate(lines):
         content = _line_content(line)
@@ -218,10 +219,23 @@ def split_markdown(
             not translate_appendix
             and _is_appendix_heading(content, source_language)
         )
-        if _HEADING_RE.match(content) is not None or is_appendix_heading:
+        is_atx_heading = _ATX_HEADING_RE.match(content) is not None
+        is_post_references_heading = (
+            not translate_appendix and references_seen and is_atx_heading
+        )
+        if (
+            _HEADING_RE.match(content) is not None
+            or is_appendix_heading
+            or is_post_references_heading
+        ):
             starts.append(offset)
-        if is_appendix_heading and appendix_start is None:
+        if (
+            (is_appendix_heading or is_post_references_heading)
+            and appendix_start is None
+        ):
             appendix_start = offset
+        if _is_reference_heading(content):
+            references_seen = True
         offset += len(line)
 
     boundaries = ([0] if not starts or starts[0] != 0 else []) + starts + [len(text)]

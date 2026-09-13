@@ -182,7 +182,7 @@ latextrans-tui -e lite
 
 启动优先级为 `--engine`/`-e`、`ui.toml.engine`、`heavy`。Heavy 和 Lite 使用相互独立的输出根目录：`[heavy].output_dir` 默认是 `outputs`，`[lite].output_dir` 默认是 `output-lite`。Lite 还会从 `[lite].mineru_api_key_env` 指定的环境变量读取 MinerU API token，该配置默认是 `MINERU_TOKEN`。
 
-`[lite].translate_appendix` 默认是 `true`。设为 `false` 时，Lite 按配置的源语言识别附录 ATX 标题，保留首个附录及其后的原始 Markdown，并将这部分内容排除在翻译和项目术语生成之外。支持的标题包括 `Appendix`/`Appendices`、“附录”/“附錄”、`Anhang`、`Annexe`、“付録”和“부록”；`Supplementary Material` 不视为附录。
+`[lite].translate_appendix` 默认是 `true`。设为 `false` 时，Lite 按配置的源语言识别附录 ATX 标题，保留首个附录及其后的原始 Markdown，并将这部分内容排除在翻译和项目术语生成之外。支持的标题包括 `Appendix`/`Appendices`、“附录”/“附錄”、`Anhang`、`Annexe`、“付録”和“부록”；`Supplementary Material` 不视为附录。对于附录标题与这些词无关的论文，Lite 还会把 `References` 标题之后的所有章节视为附录内容。
 
 ## LLM 配置
 

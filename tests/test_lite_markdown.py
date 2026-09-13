@@ -200,6 +200,29 @@ class MarkdownBlockTests(unittest.TestCase):
 
         self.assertTrue(all(block.translatable for block in blocks))
 
+    def test_disabled_appendix_translation_preserves_sections_after_references(self):
+        """Treat arbitrary sections after References as appendix content."""
+        source = (
+            "## Method\nBody\n"
+            "## References\nRaw references\n"
+            "## Additional Experiments\nRaw appendix\n"
+            "### Ablation Details\nMore appendix"
+        )
+
+        blocks = split_markdown(
+            source,
+            source_language="en",
+            translate_appendix=False,
+        )
+
+        self.assertEqual(
+            [block.translatable for block in blocks],
+            [True, True, False, False],
+        )
+        self.assertIn("Raw references", blocks[1].text)
+        self.assertIn("Raw appendix", blocks[2].text)
+        self.assertIn("More appendix", blocks[3].text)
+
     def test_translatable_markdown_excludes_preserved_appendix_blocks(self):
         """Terminology input should contain only blocks eligible for translation."""
         blocks = [
