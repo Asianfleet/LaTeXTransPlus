@@ -5,12 +5,90 @@ import unittest
 from src.engines.lite_markdown import (
     MarkdownBlock,
     ProtectedTokenValidationError,
+    group_standalone_images,
     protect_markdown,
     rebuild_markdown,
     restore_markdown,
     split_markdown,
     translatable_markdown,
 )
+
+
+class MarkdownImageGroupingTests(unittest.TestCase):
+    """Verify compact rows for consecutive standalone Markdown images."""
+
+    def test_single_image_remains_unchanged(self):
+        """An isolated image should keep its original full-width behavior."""
+        source = "![figure](images/figure.png)\n"
+
+        self.assertEqual(group_standalone_images(source), source)
+
+    def test_three_images_share_one_row_and_preserve_markup(self):
+        """Three adjacent images should become one inline row."""
+        source = (
+            "![a](images/a.png)\n"
+            "![b](images/b.png)\n"
+            "![c](images/c.png)\n"
+        )
+
+        result = group_standalone_images(source)
+
+        self.assertEqual(
+            result,
+            " ".join(
+                [
+                    "![a](images/a.png){width=0.32\\linewidth}",
+                    "![b](images/b.png){width=0.32\\linewidth}",
+                    "![c](images/c.png){width=0.32\\linewidth}",
+                ]
+            )
+            + "\n",
+        )
+
+    def test_four_images_are_split_into_rows_of_three_and_one(self):
+        """A fourth image should start a new row instead of exceeding the limit."""
+        source = "".join(f"![{letter}](images/{letter}.png)\n" for letter in "abcd")
+
+        rows = group_standalone_images(source).splitlines()
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].count("!["), 3)
+        self.assertEqual(rows[1].count("!["), 1)
+
+    def test_prose_blank_lines_and_trailing_content_break_runs(self):
+        """Only adjacent image-only lines belong to the same row run."""
+        source = (
+            "![a](a.png)\n"
+            "\n"
+            "![b](b.png)\n"
+            "text\n"
+            "![c](c.png) trailing\n"
+        )
+
+        result = group_standalone_images(source)
+
+        self.assertEqual(
+            result,
+            "![a](a.png)\n\n"
+            "![b](b.png)\n"
+            "text\n"
+            "![c](c.png) trailing\n",
+        )
+
+    def test_existing_width_attributes_are_not_duplicated(self):
+        """Repeated normalization should leave already grouped rows unchanged."""
+        source = (
+            "![a](images/a.png){width=0.32\\linewidth} "
+            "![b](images/b.png){width=0.32\\linewidth}\n"
+        )
+
+        self.assertEqual(group_standalone_images(source), source)
+
+    def test_images_inside_fenced_code_are_left_untouched(self):
+        """Code examples must not be interpreted as document figures."""
+        source = "```markdown\n![a](a.png)\n![b](b.png)\n```\n"
+
+        self.assertEqual(group_standalone_images(source), source)
 
 
 class MarkdownBlockTests(unittest.TestCase):

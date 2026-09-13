@@ -65,6 +65,40 @@ class MarkdownTranslatorTests(unittest.IsolatedAsyncioTestCase):
             "llm_config": {},
         }
 
+    async def test_consecutive_standalone_images_are_grouped_in_translated_markdown(self) -> None:
+        """Write adjacent extracted images as compact rows in the final Markdown."""
+        source = (
+            "## Figure\n"
+            "![a](images/a.png)\n"
+            "![b](images/b.png)\n"
+            "![c](images/c.png)\n"
+            "![d](images/d.png)\n"
+        )
+
+        async def request(text: str, glossary: dict[str, str], block_index: int) -> str:
+            """Return protected content unchanged to isolate layout post-processing."""
+            return text
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            output_dir = Path(tmp_dir)
+            source_path = output_dir / "source.md"
+            source_path.write_text(source, encoding="utf-8")
+
+            output = await MarkdownTranslatorAgent(
+                self._config(),
+                source_path,
+                output_dir,
+                split_markdown(source),
+                request_translation=request,
+            ).execute()
+            translated = output.read_text(encoding="utf-8")
+
+        rows = translated.splitlines()
+        self.assertEqual(rows[0], "## Figure")
+        self.assertEqual(rows[1].count("!["), 3)
+        self.assertEqual(rows[2].count("!["), 1)
+        self.assertEqual(translated.count("{width=0.32\\linewidth}"), 4)
+
     async def test_blocks_translate_concurrently_and_rebuild_in_original_order(self) -> None:
         """Limit concurrent requests while ordering output by original block index."""
         source = "## A\nbodyA\n## B\nbodyB"

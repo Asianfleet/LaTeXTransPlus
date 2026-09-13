@@ -16,6 +16,7 @@ from src.engines.lite_markdown import (
     MarkdownBlock,
     ProtectedMarkdown,
     ProtectedTokenValidationError,
+    group_standalone_images,
     protect_markdown,
     rebuild_markdown,
     restore_markdown,
@@ -84,7 +85,9 @@ class MarkdownTranslatorAgent(BaseToolAgent):
             else:
                 translated_blocks = await self._translate_all_blocks(glossary)
 
-            translated_markdown = rebuild_markdown(translated_blocks)
+            translated_markdown = group_standalone_images(
+                rebuild_markdown(translated_blocks)
+            )
             self.output_dir.mkdir(parents=True, exist_ok=True)
             temporary_path.write_text(translated_markdown, encoding="utf-8")
             temporary_path.replace(output_path)

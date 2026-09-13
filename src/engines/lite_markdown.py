@@ -63,6 +63,11 @@ _APPENDIX_TITLES_BY_LANGUAGE: dict[str, tuple[str, ...]] = {
 _NUMBERED_HEADING_PREFIX_RE = re.compile(
     r"^(?:\d+(?:\.\d+)*|[A-Za-z])[.)、:：]\s*"
 )
+_STANDALONE_IMAGE_RE = re.compile(
+    r"^[ \t]*(?P<image>!\[[^\]\r\n]*\]\([^\r\n]*\))"
+    r"(?P<attributes>\{[^}\r\n]*\})?[ \t]*(?P<newline>\r?\n)?$"
+)
+_GROUPED_IMAGE_WIDTH = r"{width=0.32\linewidth}"
 
 
 @dataclass(frozen=True)
@@ -265,6 +270,92 @@ def rebuild_markdown(blocks: Sequence[MarkdownBlock]) -> str:
                 parts.append("\n" * (2 - trailing_newlines))
         parts.append(block.text)
     return "".join(parts)
+
+
+def group_standalone_images(text: str, max_per_row: int = 3) -> str:
+    """Pack adjacent standalone images into Pandoc-sized rows.
+
+    Only lines containing one Markdown image are grouped. All other lines are
+    copied unchanged, and an existing image attribute is preserved so repeated
+    normalization does not append duplicate width declarations.
+    """
+    if max_per_row < 1:
+        raise ValueError("max_per_row must be at least 1")
+
+    lines = text.splitlines(keepends=True)
+    output: list[str] = []
+    position = 0
+    fence_char: str | None = None
+    fence_length = 0
+    while position < len(lines):
+        content = _line_content(lines[position])
+        if fence_char is not None:
+            output.append(lines[position])
+            if _is_fence_close(content, fence_char, fence_length):
+                fence_char = None
+                fence_length = 0
+            position += 1
+            continue
+        marker = _fence_marker(content)
+        if marker is not None:
+            output.append(lines[position])
+            fence_char = marker[0]
+            fence_length = len(marker)
+            position += 1
+            continue
+
+        match = _STANDALONE_IMAGE_RE.match(lines[position])
+        if match is None:
+            output.append(lines[position])
+            position += 1
+            continue
+
+        run: list[re.Match[str]] = []
+        run_lines: list[str] = []
+        while position < len(lines):
+            candidate = _STANDALONE_IMAGE_RE.match(lines[position])
+            if candidate is None:
+                break
+            run.append(candidate)
+            run_lines.append(lines[position])
+            position += 1
+
+        if len(run) == 1:
+            output.append(run_lines[0])
+            continue
+
+        rendered: list[str] = []
+        for image_index in range(0, len(run), max_per_row):
+            row_matches = run[image_index : image_index + max_per_row]
+            row_images = [
+                match.group("image")
+                + _grouped_image_attributes(match.group("attributes"))
+                for match in row_matches
+            ]
+            rendered.append(" ".join(row_images))
+
+        newline = ""
+        if run_lines[-1].endswith("\r\n"):
+            newline = "\r\n"
+        elif run_lines[-1].endswith("\n"):
+            newline = "\n"
+        elif run_lines[-1].endswith("\r"):
+            newline = "\r"
+        if newline:
+            output.append(newline.join(rendered) + newline)
+        else:
+            output.append(newline.join(rendered))
+
+    return "".join(output)
+
+
+def _grouped_image_attributes(attributes: str | None) -> str:
+    """Return existing image attributes with a width added when necessary."""
+    if attributes is None:
+        return _GROUPED_IMAGE_WIDTH
+    if re.search(r"(?:^|[ \t])width\s*=", attributes[1:-1]):
+        return attributes
+    return attributes[:-1] + " width=0.32\\linewidth}"
 
 
 def translatable_markdown(blocks: Sequence[MarkdownBlock]) -> str:

@@ -17,8 +17,8 @@ full-width paragraph each in the lite engine's generated PDF.
   three images fit on one line in the XeLaTeX PDF.
 - Any non-image line, heading, paragraph, blank line, or image syntax with
   trailing content ends the current run.
-- Existing runs of one image remain unchanged apart from the width attribute;
-  source Markdown is never rewritten.
+- Runs containing one image remain unchanged; source Markdown is never
+  rewritten.
 
 ## Components
 
