@@ -73,6 +73,7 @@ def init_prompts(source_lang: str, target_lang: str):
     - Keep optional arguments such as `\\item[...]`, figure/table options, and package options structurally unchanged. Translate only natural language text inside them when it is clearly human-readable.
     - Keep the number of formatting commands such as `\\textit`, `\\textbf`, `\\emph`, and legacy declarations such as `\\bf` aligned with the source.
     - In LaTeX text, percent signs that mean percentages must be escaped as `\\%`. Never output a bare `%` in translated prose, because it starts a LaTeX comment and can hide following commands such as citations.
+    - Do not preserve whitespace layout. A real line break inside a command argument such as `\textit{{...}}` or `\caption{{...}}` may be kept, or reflowed into a normal space on a single line; either is acceptable. Never replace a real line break with a literal `\n`. LaTeX reads a literal `\n` as an undefined control sequence named from the `n` and the following word, which breaks the build and silently drops that word from the output.
     - When correcting a retry error, prioritize the concrete validator report over fluency changes.
     """
 
