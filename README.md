@@ -31,7 +31,7 @@ LaTeXTransPlus is a LaTeX paper translation tool developed based on the original
 
 The current implementation coordinates a parser, terminology generator, translator, validator, and PDF generator. It supports arXiv source downloads, local LaTeX projects, compressed source archives, project-level terminology extraction, configurable source and target languages, validation-driven retranslation, and per-project workflow logs.
 
-LaTeXTransPlus also includes a Textual-based terminal UI through `latextrans-tui`. The TUI provides task creation, project management, settings, progress tracking, and access to generated results from a single terminal screen.
+LaTeXTransPlus also includes a Textual-based terminal UI through `latextrans-tui`. The TUI provides task creation, project management, settings, progress tracking, and access to generated results from a single terminal screen. It supports the source-based Heavy engine and the PDF-to-Markdown Lite engine in separate sessions.
 
 ## Terminal UI Preview
 
@@ -77,6 +77,12 @@ To generate PDF output, install [MiKTeX](https://miktex.org/download) or [TeX Li
 For MiKTeX, enable package installation on the fly. On Windows, Strawberry Perl may also be required by parts of the LaTeX toolchain.
 
 LaTeXTransPlus compiles translated projects with `latexmk` and may use `pdflatex`, `xelatex`, or `lualatex` depending on the target language. Make sure the required engine and language packages are available in your TeX distribution. Chinese output uses `ctex` when needed, Japanese output uses `luatexja`, and Korean output uses `kotex`.
+
+## 3. Lite Engine Dependencies
+
+The Lite engine uses the MinerU Python SDK, supplied by the `mineru-open-sdk` dependency in `requirements.txt`, to extract Markdown and image resources from a PDF. It also requires a separately installed `pandoc` executable and XeLaTeX for the final `translated.pdf` conversion. MinerU requests need an API token: the environment variable named by `[lite].mineru_api_key_env` (default `MINERU_TOKEN`) must be set and non-empty, otherwise Lite fails before contacting MinerU. Set it to the raw MinerU API token; surrounding quotes and a `Bearer ` prefix are stripped automatically, but an invalid or expired token makes MinerU answer with HTTP 401.
+
+Chinese (and Japanese or Korean) targets need a CJK font for Pandoc, otherwise XeLaTeX silently drops every CJK glyph and still reports success. Lite reads candidate fonts from `[lite].cjk_mainfont_candidates` (comma-separated, probed in order), uses fontconfig (`fc-list`, shipped with TeX Live) to keep only names this machine can actually resolve, and logs the selected font. Non-Latin symbols in the body text (Greek letters, for example) are controlled by `[lite].mainfont`: when it is blank, Pandoc's default Latin Modern has no Greek coverage and drops those characters silently. Use `[lite].mainfont` for the body font and `[lite].cjk_mainfont_candidates` for CJK text; both must match the names `fc-list` reports (this machine has `Noto Sans SC`, while `Noto Sans CJK SC` makes XeLaTeX fail outright). The TUI shows the detected fonts in a collapsed "available fonts" panel below each font field, listing CJK families for the candidate list and every family for the body font, and the translation prompt asks for bare math symbols in prose to come back as inline math.
 
 ## Optional Conda Environment
 
@@ -136,12 +142,24 @@ sys_name = "LaTeXTrans"
 version = "0.1.0"
 source_language = "en"
 target_language = "ch"
-paper_list = []
-tex_sources_dir = "tex source"
-output_dir = "outputs"
 update_term = "False"
 mode = "plain"
 user_term = ""
+engine = "heavy"
+
+[heavy]
+paper_list = []
+tex_sources_dir = "tex source"
+output_dir = "outputs"
+retranslate_with_terms = false
+
+[lite]
+output_dir = "output-lite"
+mineru_api_key_env = "MINERU_TOKEN"
+translate_appendix = true
+cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
+mainfont = ""
+geometry = ""
 ```
 
 `source_language` and `target_language` accept short language codes used by the prompt layer, such as `en`, `ch`, `zh`, `ja`, `jp`, `de`, `fr`, `es`, `ko`, `ru`, `pt`, `it`, and `ar`. The default is English to Chinese.
@@ -152,6 +170,19 @@ For PDF generation, LaTeXTransPlus has built-in package and engine handling for 
 
 - `plain`: translate with the available default, user, and project terms when applicable.
 - `terms`: force glossary-oriented translation prompts.
+
+## TUI Engine Configuration
+
+`engine` is the default selected by the TUI at its next startup. The settings page persists this value to `config/ui.toml`; saving it does not switch the active TUI session. The startup option and the entry-page engine switch are session-only, so neither writes to `ui.toml`:
+
+```bash
+latextrans-tui --engine heavy
+latextrans-tui -e lite
+```
+
+The startup precedence is `--engine`/`-e`, then `ui.toml.engine`, then `heavy`. Heavy and Lite retain independent output roots: `[heavy].output_dir` defaults to `outputs`, while `[lite].output_dir` defaults to `output-lite`. Lite also reads its MinerU API token from the environment variable named by `[lite].mineru_api_key_env`, which defaults to `MINERU_TOKEN`.
+
+`[lite].translate_appendix` defaults to `true`. When set to `false`, Lite detects appendix ATX headings in the configured source language, preserves the first appendix and all following Markdown in the original language, and excludes that content from translation and project terminology generation. The supported headings are `Appendix`/`Appendices`, “附录”/“附錄”, `Anhang`, `Annexe`, “付録”, and “부록”; Supplementary Material is not treated as an appendix. For papers whose appendix headings use unrelated titles, Lite also treats every section after the `References` heading as appendix content.
 
 ## LLM Configuration
 
@@ -203,7 +234,7 @@ When enabled, LaTeXTransPlus scans parsed paper text, asks the LLM to select pro
 - `project_terms.csv`
 - `project_terms_decisions.json`
 
-If `review_before_translate = true`, the workflow stops after generating project terms. Review `project_terms.csv`, then rerun with `--retranslate-with-terms`.
+In the Heavy workflow, if `review_before_translate = true`, the workflow stops after generating project terms. Review `project_terms.csv`, then rerun with `--retranslate-with-terms`.
 
 You can also provide a custom CSV glossary with `user_term`. The expected CSV columns are:
 
@@ -213,7 +244,7 @@ Source Term,Target Translation
 
 For English-to-Chinese translation, default terminology from `terms/` may also be merged.
 
-## Validation Configuration
+## Heavy Validation Configuration
 
 ```toml
 [validation.retry]
@@ -234,7 +265,7 @@ severity = "error"
 retryable = true
 ```
 
-The validator checks command counts, placeholder preservation, and bracket balance. Retryable issues are sent back to the translator for targeted retranslation.
+The Heavy validator checks command counts, placeholder preservation, and bracket balance. Retryable issues are sent back to the translator for targeted retranslation.
 
 # 📚 Usage
 
@@ -244,9 +275,13 @@ LaTeXTransPlus also provides a Textual terminal UI:
 
 ```bash
 latextrans-tui
+latextrans-tui --engine heavy
+latextrans-tui -e lite
 ```
 
-The UI supports one input type per task: arXiv IDs or URLs, local project paths or archives, or remote archive URLs. It displays project-level progress, result files, logs, validation reports, and UI-specific configuration. Zotero integration is optional and does not block translation results.
+Heavy tasks support arXiv IDs or URLs, local LaTeX project paths or archives, and remote source archive URLs. Lite tasks accept exactly one input: an arXiv ID, an arXiv abstract or PDF URL, a direct PDF URL, or a local PDF path. Lite rejects newline-, comma-, and batch-separated inputs; create another task in the same TUI session for each additional PDF.
+
+The `latextrans` command-line workflow remains source-based Heavy translation. Lite is started from `latextrans-tui`, not from `main.py`. The TUI displays project-level progress, result files, logs, and engine-appropriate details. Zotero integration is optional and does not block translation results.
 
 ## Translate by arXiv ID
 
@@ -274,7 +309,7 @@ The first schema version emits these event types:
 - `project_error`
 - `run_complete`
 
-Each event includes `schema_version`, `type`, and `timestamp`. Project events also include `project_name`, `project_dir`, `output_dir`, and `log_path`; completion and error events include `pdf_path`, `errors_report_path`, `validation_summary`, and `error`.
+This JSON Lines schema is emitted by the Heavy CLI workflow only. Each event includes `schema_version`, `type`, and `timestamp`. Heavy project events also include `project_name`, `project_dir`, `output_dir`, and `log_path`; Heavy completion and error events include `pdf_path`, `errors_report_path`, `validation_summary`, and `error`. Lite TUI tasks do not emit these JSON Lines events and have no `errors_report_path` or `validation_summary`.
 
 Versioned arXiv IDs are supported:
 
@@ -368,7 +403,7 @@ latextrans --model deepseek-chat --url https://api.deepseek.com/chat/completions
 
 Prefer environment variables for real API keys instead of passing secrets directly on the command line.
 
-## Review Terms Before Translation
+## Review Heavy Terms Before Translation
 
 Set this in your config:
 
@@ -392,6 +427,8 @@ latextrans --arxiv 2508.18791 --retranslate-with-terms
 
 # 📂 Outputs
 
+## Heavy Outputs
+
 Each project is written to:
 
 ```text
@@ -413,6 +450,27 @@ Typical generated files include:
 If validation errors remain, PDF generation depends on `validation.retry.generate_pdf_on_error`. If `validation.retry.fail_on_error = true`, remaining validation errors cause the CLI to exit with failure status even if a PDF is generated.
 
 If a compiler produces a PDF but its `.log` contains hard LaTeX errors, LaTeXTransPlus treats that compilation attempt as failed and tries the next configured engine when available. Check the build log directories for details when no final PDF is produced.
+
+## Lite TUI Outputs
+
+Each Lite task uses its own date-suffixed directory under `output-lite/`, keeping the acquired PDF and every generated artifact together:
+
+```text
+output-lite/<stable_name>_YYMMDD/
+├── source.pdf
+├── source.md
+├── translated.md
+├── translated.pdf
+├── project_terms.csv
+├── project_terms_decisions.json
+└── latextrans.log
+```
+
+For arXiv input, `<stable_name>` is the arXiv ID. For a PDF URL or local path, it is the PDF filename without `.pdf`. Translating the same source twice on the same day appends `_1`, `_2`, and so on. Lite does not create a validation report; an acquisition, Markdown, or translation failure leaves available intermediate files in this same directory and marks the project failed.
+
+A Pandoc/XeLaTeX failure does not discard the finished Markdown translation: the project still completes, `pdf_error` records the exit code and PDF engine output, the TUI raises a warning notification with a warning row in the errors table, and the full text is written to `latextrans.log`. A zero exit code with `Missing character` warnings is recorded the same way, so a PDF that dropped glyphs is never reported as clean. Figures resolve against the Markdown directory (`--resource-path`), so the extracted images are embedded no matter which directory the run started from.
+
+Markdown extracted by MinerU occasionally contains chained superscripts such as `x^{\prime}^{(i)}`, which XeLaTeX rejects with "Double superscript". After writing `source.md` and `translated.md`, Lite merges those chains inside math spans only and logs how many it repaired.
 
 <!-- # 🖼️ Translation Examples
 

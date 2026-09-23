@@ -166,17 +166,32 @@ class ValidatorAgent(BaseToolAgent):
 
         content = part.get("content", "")
         trans_content = part.get("trans_content", "")
-        org_errors = self._find_brackets_errors(content, org=1)
-        errors = self._find_brackets_errors(trans_content)
+        source_errors = self._scan_bracket_errors(content)
+        translated_errors = self._scan_bracket_errors(trans_content)
 
-        if errors and not org_errors:
+        source_error_counts = Counter(error[0] for error in source_errors)
+        errors = []
+        for signature, message in translated_errors:
+            if source_error_counts[signature]:
+                source_error_counts[signature] -= 1
+                continue
+            errors.append(message)
+
+        if errors:
             return [self._make_policy_issue(
                 issue_type="bracket_mismatch",
                 message="\n".join(errors),
             )]
         return None
-        
+
     def _find_brackets_errors(self, content, org=None):
+        """Return formatted bracket errors for compatibility with existing callers."""
+        if org:
+            return [message for _signature, message in self._scan_bracket_errors(content, org=org)]
+        return [message for _signature, message in self._scan_bracket_errors(content)]
+
+    def _scan_bracket_errors(self, content: str, org=None) -> list[tuple[tuple[str, str, str], str]]:
+        """Scan bracket structure and return stable signatures with display messages."""
 
         if org:
             bracket_pairs = {'[': ']', '{': '}'}    
@@ -188,24 +203,45 @@ class ValidatorAgent(BaseToolAgent):
         closing_brackets = set(bracket_pairs.values())
 
         stack = []
-        errors = []
+        errors: list[tuple[tuple[str, str, str], str]] = []
         for idx, char in enumerate(content):
             if char in opening_brackets:
                 stack.append((char, idx))
             elif char in closing_brackets:
                 if not stack:
                     fragment = content[max(0, idx - 10): idx + 10]
-                    errors.append(f"Extra closing bracket '{char}' at position {idx}, context: {fragment}")
+                    errors.append((
+                        ("extra_closing", char, ""),
+                        f"Extra closing bracket '{char}' at position {idx}, context: {fragment}",
+                    ))
                 else:
                     last_open, open_idx = stack.pop()
                     if bracket_pairs[last_open] != char:
+                        matching_open = next(
+                            (opening for opening, _position in reversed(stack) if bracket_pairs[opening] == char),
+                            None,
+                        )
+                        if matching_open is None:
+                            stack.append((last_open, open_idx))
+                            fragment = content[max(0, idx - 10): idx + 10]
+                            errors.append((
+                                ("extra_closing", char, ""),
+                                f"Extra closing bracket '{char}' at position {idx}, context: {fragment}",
+                            ))
+                            continue
                         fragment = content[open_idx: idx + 1]
-                        errors.append(f"Bracket mismatch: '{last_open}' opened at {open_idx} does not match '{char}' at {idx}, fragment: {fragment}")
+                        errors.append((
+                            ("mismatch", last_open, char),
+                            f"Bracket mismatch: '{last_open}' opened at {open_idx} does not match '{char}' at {idx}, fragment: {fragment}",
+                        ))
 
         # Any unmatched opening brackets left in stack
         for open_bracket, pos in stack:
             fragment = content[pos: pos + 20]
-            errors.append(f"Unmatched opening bracket '{open_bracket}' at position {pos}, fragment: {fragment}")
+            errors.append((
+                ("unmatched_opening", open_bracket, ""),
+                f"Unmatched opening bracket '{open_bracket}' at position {pos}, fragment: {fragment}",
+            ))
 
         return errors
 

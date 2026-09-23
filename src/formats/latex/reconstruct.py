@@ -49,13 +49,33 @@ class LatexConstructor:
 
     def _revert_envs(self, tex: str) -> str:
         """
-        Revert all the envs to tex
+        Restore environment placeholders, including nested environments.
         """
-        for env in self.envs:
-            placeholder = env["placeholder"]
-            tex = tex.replace(placeholder, env["trans_content"])
+        seen_unresolved = set()
+        while True:
+            unresolved = tuple(sorted(set(re.findall(r"<PLACEHOLDER_ENV_\d+>", tex))))
+            if not unresolved:
+                return tex
 
-        return tex
+            if unresolved in seen_unresolved:
+                raise ValueError(
+                    "Unresolved or cyclic environment placeholder(s): "
+                    + ", ".join(unresolved)
+                )
+            seen_unresolved.add(unresolved)
+
+            replaced = False
+            for env in self.envs:
+                placeholder = env["placeholder"]
+                if placeholder in tex:
+                    tex = tex.replace(placeholder, env["trans_content"])
+                    replaced = True
+
+            if not replaced:
+                raise ValueError(
+                    "Unresolved environment placeholder(s): "
+                    + ", ".join(unresolved)
+                )
              
     def _revert_captions(self, tex: str) -> str:
         """

@@ -376,6 +376,35 @@ profile = "test"
         self.assertEqual(projects_dir, str(source_dir.resolve()))
         self.assertEqual(returned_output_dir, str(output_dir.resolve()))
 
+    def test_prepare_projects_routes_logs_to_callback_without_printing(self):
+        """提供准备日志回调时，跳过信息应转发且不再输出到 stdout。"""
+        from src.runtime import prepare_projects
+        from src.project_sources import RemoteArchiveDownloadError
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            tmp_path = Path(tmp_dir)
+            config = {
+                "paper_list": [],
+                "tex_sources_dir": str(tmp_path / "tex-source"),
+                "output_dir": str(tmp_path / "outputs"),
+            }
+            events = []
+            with patch(
+                "src.runtime.download_remote_archive",
+                side_effect=RemoteArchiveDownloadError("bad archive"),
+            ):
+                with self.assertRaises(ValueError):
+                    with redirect_stdout(StringIO()) as stdout:
+                        prepare_projects(
+                            config=config,
+                            project_url_items=["https://example.test/bad"],
+                            prepare_log_callback=events.append,
+                        )
+
+        self.assertEqual(stdout.getvalue(), "")
+        self.assertTrue(events)
+        self.assertIn("Failed to download remote archive", events[0]["line"])
+
     def test_prepare_projects_combines_local_and_remote_inputs(self):
         from src.runtime import prepare_projects
 

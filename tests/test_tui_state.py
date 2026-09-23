@@ -1,8 +1,12 @@
 """Tests for Textual UI task state merging."""
 
+import json
+import tempfile
 import unittest
+from pathlib import Path
 
-from src.tui.state import ProjectStatus, TaskViewState
+from src.tui.history import load_output_history
+from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
 
 
 class TuiStateTests(unittest.TestCase):
@@ -103,6 +107,140 @@ class TuiStateTests(unittest.TestCase):
 
         self.assertEqual(state.projects[0].log_lines, ["[ParserAgent] [INFO] parsed"])
         self.assertEqual(state.completed, 0)
+        self.assertEqual(state.failed, 0)
+
+    def test_task_log_event_does_not_create_project(self):
+        """无项目归属的准备日志应保存在任务状态，不创建虚假项目。"""
+        state = TaskViewState(input_type="arxiv", inputs=["2508.18791"])
+
+        state.apply_event({"type": "task_log", "line": "preparing"})
+
+        self.assertEqual(state.projects, [])
+        self.assertEqual(state.task_log_lines, ["preparing"])
+
+    def test_cancelled_status_is_a_stopped_project_state(self):
+        """强制终止事件应标记取消状态且不计入成功或失败。"""
+        state = TaskViewState(input_type="arxiv", inputs=["paper"], total=1)
+        state.apply_event(
+            {
+                "type": "project_cancelled",
+                "project_name": "paper",
+                "output_dir": r"D:\\out",
+                "error": "terminated",
+            }
+        )
+
+        self.assertEqual(state.projects[0].status, ProjectStatus.CANCELLED)
+        self.assertEqual(state.completed, 0)
+        self.assertEqual(state.failed, 0)
+        self.assertEqual(state.projects[0].output_dir, r"D:\\out")
+
+    def test_cancelled_event_takes_priority_over_review_status(self):
+        """取消事件即使携带术语状态也必须保持 cancelled。"""
+        state = TaskViewState(input_type="arxiv", inputs=["paper"], total=1)
+        state.apply_event(
+            {
+                "type": "project_cancelled",
+                "project_name": "paper",
+                "status": "needs_term_review",
+            }
+        )
+        self.assertEqual(state.projects[0].status, ProjectStatus.CANCELLED)
+
+    def test_history_metadata_loads_cancelled_status(self):
+        """历史元数据中的 cancelled 状态应恢复为取消项目。"""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            output_root = Path(temp_dir)
+            project_dir = output_root / "paper"
+            project_dir.mkdir()
+            (project_dir / ".latextrans-tui.json").write_text(
+                json.dumps(
+                    {
+                        "task_id": "task-1",
+                        "input_type": "arxiv",
+                        "input_item": "paper",
+                        "project_name": "paper",
+                        "status": "cancelled",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            tasks = load_output_history(output_root)
+
+        self.assertEqual(len(tasks), 1)
+        self.assertEqual(tasks[0].projects[0].status, ProjectStatus.CANCELLED)
+        self.assertEqual(tasks[0].completed, 0)
+        self.assertEqual(tasks[0].failed, 0)
+
+
+class TuiStateEngineTests(unittest.TestCase):
+    """Verify engine-specific runtime artifacts remain attached to their task."""
+
+    def test_lite_event_copies_markdown_paths_and_engine(self):
+        """Lite completion events should expose both Markdown artifacts."""
+        task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+
+        task.apply_event(
+            {
+                "type": "project_complete",
+                "engine": "lite",
+                "project_name": "paper_1",
+                "source_markdown_path": "/tmp/source.md",
+                "translated_markdown_path": "/tmp/translated.md",
+            }
+        )
+
+        project = task.projects[0]
+        self.assertEqual(task.engine, "lite")
+        self.assertEqual(project.engine, "lite")
+        self.assertEqual(project.source_markdown_path, "/tmp/source.md")
+        self.assertEqual(project.translated_markdown_path, "/tmp/translated.md")
+
+    def test_project_without_event_engine_inherits_task_engine(self):
+        """A task should keep its creation engine when later events omit it."""
+        task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+
+        task.apply_event({"type": "project_start", "project_name": "paper_1"})
+
+        self.assertEqual(task.projects[0].engine, "lite")
+
+    def test_legacy_task_construction_defaults_to_heavy(self):
+        """Existing callers that omit engine should retain heavy semantics."""
+        task = TaskViewState(input_type="arxiv", inputs=["2508.18791"])
+
+        task.apply_event({"type": "project_start", "project_name": "2508.18791"})
+
+        self.assertEqual(task.engine, "heavy")
+        self.assertEqual(task.projects[0].engine, "heavy")
+
+    def test_new_engine_fields_preserve_legacy_positional_arguments(self):
+        """Appending engine fields should not reinterpret old positional values."""
+        project = ProjectViewState("paper", ProjectStatus.COMPLETED)
+        task = TaskViewState("arxiv", ["paper"], "task-id")
+
+        self.assertEqual(project.status, ProjectStatus.COMPLETED)
+        self.assertEqual(project.engine, "heavy")
+        self.assertEqual(task.task_id, "task-id")
+        self.assertEqual(task.engine, "heavy")
+
+    def test_project_complete_event_copies_the_pdf_warning(self):
+        """A PDF warning should be kept without failing the completed project."""
+        state = TaskViewState(input_type="pdf", inputs=["paper.pdf"])
+
+        state.apply_event(
+            {
+                "type": "project_complete",
+                "project_name": "paper_260911",
+                "translated_markdown_path": r"D:\out\translated.md",
+                "pdf_error": "Pandoc PDF generation failed with exit code 43.",
+            }
+        )
+
+        project = state.projects[0]
+        self.assertEqual(project.status, ProjectStatus.COMPLETED)
+        self.assertIn("exit code 43", project.pdf_error)
+        self.assertEqual(state.completed, 1)
         self.assertEqual(state.failed, 0)
 
 

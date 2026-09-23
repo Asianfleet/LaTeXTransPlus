@@ -215,6 +215,106 @@ class LatexConstructorLanguageSupportTests(unittest.TestCase):
             with self.assertRaisesRegex(FileNotFoundError, "No main TeX file found"):
                 constructor.construct()
 
+    def test_constructor_restores_nested_environments_regardless_of_map_order(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text("source", encoding="utf-8")
+            (project_dir / "00README.json").write_text(
+                json.dumps({"sources": [{"usage": "toplevel", "filename": "main.tex"}]}),
+                encoding="utf-8",
+            )
+            constructor = LatexConstructor(
+                sections=[{
+                    "trans_content": (
+                        "\\documentclass{article}\n\\begin{document}\n"
+                        "<PLACEHOLDER_ENV_3>\n\\end{document}"
+                    )
+                }],
+                captions=[],
+                envs=[
+                    {
+                        "placeholder": "<PLACEHOLDER_ENV_1>",
+                        "trans_content": "\\begin{itemize}\n\\item inner one\n\\end{itemize}",
+                    },
+                    {
+                        "placeholder": "<PLACEHOLDER_ENV_2>",
+                        "trans_content": "\\begin{itemize}\n\\item inner two\n\\end{itemize}",
+                    },
+                    {
+                        "placeholder": "<PLACEHOLDER_ENV_3>",
+                        "trans_content": (
+                            "\\begin{itemize}\n\\item outer one\n<PLACEHOLDER_ENV_1>\n"
+                            "\\item outer two\n<PLACEHOLDER_ENV_2>\n\\end{itemize}"
+                        ),
+                    },
+                ],
+                inputs=[],
+                newcommands=[],
+                output_latex_dir=str(project_dir),
+                target_language="fr",
+            )
+
+            constructor.construct()
+
+            result = (project_dir / "main.tex").read_text(encoding="utf-8")
+            self.assertEqual(result.count("\\begin{itemize}"), 3)
+            self.assertNotIn("<PLACEHOLDER_ENV_", result)
+
+    def test_constructor_rejects_unresolved_environment_placeholder(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text("source", encoding="utf-8")
+            (project_dir / "00README.json").write_text(
+                json.dumps({"sources": [{"usage": "toplevel", "filename": "main.tex"}]}),
+                encoding="utf-8",
+            )
+            constructor = LatexConstructor(
+                sections=[{
+                    "trans_content": "\\documentclass{article}\n<PLACEHOLDER_ENV_99>"
+                }],
+                captions=[],
+                envs=[],
+                inputs=[],
+                newcommands=[],
+                output_latex_dir=str(project_dir),
+                target_language="fr",
+            )
+
+            with self.assertRaisesRegex(ValueError, "<PLACEHOLDER_ENV_99>"):
+                constructor.construct()
+
+    def test_constructor_rejects_cyclic_environment_placeholders(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text("source", encoding="utf-8")
+            (project_dir / "00README.json").write_text(
+                json.dumps({"sources": [{"usage": "toplevel", "filename": "main.tex"}]}),
+                encoding="utf-8",
+            )
+            constructor = LatexConstructor(
+                sections=[{
+                    "trans_content": "\\documentclass{article}\n<PLACEHOLDER_ENV_1>"
+                }],
+                captions=[],
+                envs=[
+                    {
+                        "placeholder": "<PLACEHOLDER_ENV_1>",
+                        "trans_content": "<PLACEHOLDER_ENV_2>",
+                    },
+                    {
+                        "placeholder": "<PLACEHOLDER_ENV_2>",
+                        "trans_content": "<PLACEHOLDER_ENV_1>",
+                    },
+                ],
+                inputs=[],
+                newcommands=[],
+                output_latex_dir=str(project_dir),
+                target_language="fr",
+            )
+
+            with self.assertRaisesRegex(ValueError, "<PLACEHOLDER_ENV_1>"):
+                constructor.construct()
+
 
 class LatexCompilerLanguageTests(unittest.TestCase):
     def test_engine_order_for_supported_languages(self):

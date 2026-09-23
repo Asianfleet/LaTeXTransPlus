@@ -2,7 +2,11 @@
 
 import unittest
 
-from src.tui.input_parser import parse_input_items, validate_input_items
+from src.tui.input_parser import (
+    parse_input_items,
+    validate_input_items,
+    validate_lite_input,
+)
 
 
 class TuiInputParserTests(unittest.TestCase):
@@ -52,6 +56,20 @@ class TuiInputParserTests(unittest.TestCase):
             errors,
             ["remote input must be an http or https URL: file:///tmp/paper.zip"],
         )
+
+
+class LiteInputParserTests(unittest.TestCase):
+    """Regression tests for the lite engine's one-item input boundary."""
+
+    def test_lite_rejects_comma_and_newline_batch_text(self):
+        """Lite input rejects either supported heavy batch separator."""
+        self.assertTrue(validate_lite_input("first.pdf, second.pdf"))
+        self.assertTrue(validate_lite_input("first.pdf\nsecond.pdf"))
+
+    def test_lite_accepts_one_pdf_or_arxiv_value(self):
+        """Lite input accepts exactly one value understood by the lite engine."""
+        self.assertEqual(validate_lite_input("paper.pdf"), [])
+        self.assertEqual(validate_lite_input("2508.18791"), [])
 
 
 if __name__ == "__main__":

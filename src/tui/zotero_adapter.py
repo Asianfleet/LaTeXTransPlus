@@ -101,6 +101,49 @@ class ZoteroAdapter:
         self._register_upload(attachment_key, auth_payload["uploadKey"], library_id, library_type)
         return {"attachment_key": attachment_key, "status": "uploaded"}
 
+    def create_note(
+        self,
+        item_key: str,
+        title: str,
+        note: str,
+        library_id: str,
+        library_type: str,
+    ) -> dict[str, Any]:
+        """Create a Zotero child note containing the supplied Markdown text."""
+        prefix = self._library_prefix(library_id, library_type)
+        payload = [
+            {
+                "itemType": "note",
+                "parentItem": item_key,
+                "title": title,
+                "note": note,
+                "tags": [],
+                "relations": {},
+            }
+        ]
+        response = self.session.post(
+            f"{self.api_base_url}/{prefix}/items",
+            json=payload,
+            headers={
+                **self._api_headers(),
+                "Content-Type": "application/json",
+                "Zotero-Write-Token": uuid.uuid4().hex,
+            },
+        )
+        response.raise_for_status()
+        body = response.json()
+        if not isinstance(body, dict):
+            raise RuntimeError(f"Zotero did not return a note key: {body}")
+        successful = body.get("successful") or body.get("success") or {}
+        if not isinstance(successful, dict):
+            raise RuntimeError(f"Zotero did not return a note key: {body}")
+        first_result = successful.get("0")
+        if isinstance(first_result, dict) and first_result.get("key"):
+            return {"item_key": str(first_result["key"])}
+        if isinstance(first_result, str):
+            return {"item_key": first_result}
+        raise RuntimeError(f"Zotero did not return a note key: {body}")
+
     def _get_local_items(
         self,
         library_id: str,

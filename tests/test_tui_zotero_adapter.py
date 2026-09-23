@@ -166,6 +166,104 @@ class ZoteroAdapterTests(unittest.TestCase):
         self.assertEqual(result, {"attachment_key": "ATTACH1", "status": "exists"})
         self.assertEqual(session.post.call_count, 2)
 
+    def test_create_note_posts_child_note_payload(self):
+        """Create a child note with the complete supplied Markdown content."""
+        session = Mock()
+        response = Mock()
+        response.json.return_value = {"successful": {"0": {"key": "NOTE1"}}}
+        response.raise_for_status.return_value = None
+        session.post.return_value = response
+
+        result = ZoteroAdapter(api_key="secret", session=session).create_note(
+            "PARENT",
+            "paper translated",
+            "# 内容",
+            "0",
+            "user",
+        )
+
+        self.assertEqual(result, {"item_key": "NOTE1"})
+        request = session.post.call_args
+        self.assertEqual(request.args[0], "https://api.zotero.org/users/0/items")
+        self.assertEqual(request.kwargs["json"][0]["itemType"], "note")
+        self.assertEqual(request.kwargs["json"][0]["parentItem"], "PARENT")
+        self.assertEqual(request.kwargs["json"][0]["title"], "paper translated")
+        self.assertEqual(request.kwargs["json"][0]["note"], "# 内容")
+        self.assertEqual(request.kwargs["json"][0]["tags"], [])
+        self.assertEqual(request.kwargs["json"][0]["relations"], {})
+        self.assertEqual(request.kwargs["headers"]["Zotero-API-Key"], "secret")
+
+    def test_create_note_propagates_response_status_failure(self):
+        """Propagate a failed Web API status without attempting to parse a note key."""
+        session = Mock()
+        response = Mock()
+        failure = RuntimeError("Zotero rejected note creation")
+        response.raise_for_status.side_effect = failure
+        session.post.return_value = response
+
+        with self.assertRaises(RuntimeError) as context:
+            ZoteroAdapter(api_key="secret", session=session).create_note(
+                "PARENT",
+                "paper translated",
+                "# content",
+                "42",
+                "group",
+            )
+
+        self.assertIs(context.exception, failure)
+        response.json.assert_not_called()
+
+    def test_create_note_rejects_response_without_note_key(self):
+        """Reject a successful-looking Zotero response that omits the note key."""
+        session = Mock()
+        response = Mock()
+        response.json.return_value = {"successful": {"0": {}}}
+        response.raise_for_status.return_value = None
+        session.post.return_value = response
+
+        with self.assertRaisesRegex(RuntimeError, "note key"):
+            ZoteroAdapter(api_key="secret", session=session).create_note(
+                "PARENT",
+                "paper translated",
+                "# content",
+                "42",
+                "group",
+            )
+
+    def test_create_note_rejects_non_object_response(self):
+        """Reject a malformed Zotero response without leaking an AttributeError."""
+        session = Mock()
+        response = Mock()
+        response.json.return_value = []
+        response.raise_for_status.return_value = None
+        session.post.return_value = response
+
+        with self.assertRaisesRegex(RuntimeError, "note key"):
+            ZoteroAdapter(api_key="secret", session=session).create_note(
+                "PARENT",
+                "paper translated",
+                "# content",
+                "42",
+                "group",
+            )
+
+    def test_create_note_rejects_non_object_successful_field(self):
+        """Reject a malformed successful field without leaking an AttributeError."""
+        session = Mock()
+        response = Mock()
+        response.json.return_value = {"successful": [{"key": "NOTE1"}]}
+        response.raise_for_status.return_value = None
+        session.post.return_value = response
+
+        with self.assertRaisesRegex(RuntimeError, "note key"):
+            ZoteroAdapter(api_key="secret", session=session).create_note(
+                "PARENT",
+                "paper translated",
+                "# content",
+                "42",
+                "group",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -41,6 +41,31 @@ class ValidatorAgentTests(unittest.TestCase):
 
         self.assertIsNone(self.validator._validate_closed_brackets(part))
 
+    def test_validate_brackets_ignores_source_enumeration_closing_parentheses(self):
+        part = {
+            "content": (
+                r"\caption{\textbf{UAMP visualization.} "
+                r"The setup uses i) disabled input normalization and ii) all normalization layers.}"
+            ),
+            "trans_content": (
+                r"\caption{\textbf{使用 UAMP 进行可视化。} "
+                r"该设置中我们 i) 禁用输入归一化，以及 ii) 禁用所有归一化层。}"
+            ),
+        }
+
+        self.assertIsNone(self.validator._validate_closed_brackets(part))
+
+    def test_validate_brackets_reports_new_closing_parenthesis(self):
+        part = {
+            "content": r"\caption{A balanced caption with i) and ii) enumerations.}",
+            "trans_content": r"\caption{一个平衡的标题，i) 和 ii) 后新增了一个闭括号。)}",
+        }
+
+        issues = self.validator._validate_closed_brackets(part)
+
+        self.assertIsNotNone(issues)
+        self.assertEqual(issues[0]["type"], "bracket_mismatch")
+
     def test_validate_command_mismatch_uses_strict_default_policy(self):
         part = {
             "section": "5_3",

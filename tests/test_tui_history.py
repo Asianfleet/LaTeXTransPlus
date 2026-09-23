@@ -132,5 +132,135 @@ class TuiHistoryTests(unittest.TestCase):
             self.assertEqual(metadata["input_item"], "2308.10248")
 
 
+class TuiHistoryEngineTests(unittest.TestCase):
+    """Verify history and metadata remain isolated by translation engine."""
+
+    def test_history_filters_mixed_engine_metadata(self):
+        """A scan should only return projects for the requested engine."""
+        with TemporaryDirectory() as temp_dir:
+            output_root = Path(temp_dir) / "mixed"
+            heavy_dir = output_root / "ch_heavy"
+            lite_dir = output_root / "lite-paper"
+            heavy_dir.mkdir(parents=True)
+            lite_dir.mkdir()
+            (heavy_dir / "ch_heavy.pdf").write_bytes(b"%PDF")
+            (lite_dir / "source.pdf").write_bytes(b"%PDF source")
+            (lite_dir / "source.md").write_text("# Source", encoding="utf-8")
+            (lite_dir / "translated.md").write_text("# Translated", encoding="utf-8")
+            (lite_dir / "translated.pdf").write_bytes(b"%PDF translated")
+            write_project_metadata(
+                heavy_dir,
+                "heavy-task",
+                "arxiv",
+                "heavy",
+                "heavy",
+                ProjectStatus.COMPLETED,
+                engine="heavy",
+            )
+            write_project_metadata(
+                lite_dir,
+                "lite-task",
+                "pdf",
+                "paper.pdf",
+                "lite-paper",
+                ProjectStatus.COMPLETED,
+                engine="lite",
+                source_markdown_path=str(lite_dir / "source.md"),
+                translated_markdown_path=str(lite_dir / "translated.md"),
+            )
+
+            heavy_tasks = load_output_history(output_root, engine="heavy")
+            lite_tasks = load_output_history(output_root, engine="lite")
+
+        self.assertEqual([task.task_id for task in heavy_tasks], ["heavy-task"])
+        self.assertEqual([task.task_id for task in lite_tasks], ["lite-task"])
+        self.assertEqual(lite_tasks[0].engine, "lite")
+        self.assertEqual(lite_tasks[0].projects[0].engine, "lite")
+
+    def test_history_reads_lite_artifacts_without_error_report(self):
+        """Metadata-free lite output should use translated artifacts and no errors path."""
+        with TemporaryDirectory() as temp_dir:
+            output_root = Path(temp_dir) / "output-lite"
+            project_dir = output_root / "paper_20260910T120000"
+            project_dir.mkdir(parents=True)
+            (project_dir / "source.pdf").write_bytes(b"%PDF source")
+            (project_dir / "source.md").write_text("# Source", encoding="utf-8")
+            (project_dir / "translated.md").write_text("# Translated", encoding="utf-8")
+            translated_pdf = project_dir / "translated.pdf"
+            translated_pdf.write_bytes(b"%PDF translated")
+
+            tasks = load_output_history(output_root, engine="lite")
+
+        project = tasks[0].projects[0]
+        self.assertEqual(project.status, ProjectStatus.COMPLETED)
+        self.assertEqual(project.engine, "lite")
+        self.assertTrue(project.source_markdown_path.endswith("source.md"))
+        self.assertTrue(project.translated_markdown_path.endswith("translated.md"))
+        self.assertTrue(project.pdf_path.endswith("translated.pdf"))
+        self.assertIsNone(project.errors_report_path)
+
+    def test_lite_source_pdf_is_not_mistaken_for_completed_translation(self):
+        """A copied source PDF alone should represent an incomplete lite run."""
+        with TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "paper"
+            project_dir.mkdir()
+            (project_dir / "source.pdf").write_bytes(b"%PDF source")
+            (project_dir / "source.md").write_text("# Source", encoding="utf-8")
+
+            status = infer_project_status(project_dir, engine="lite")
+
+        self.assertEqual(status, ProjectStatus.FAILED)
+
+    def test_version_one_metadata_defaults_to_heavy(self):
+        """Metadata written before engine support should only appear in heavy history."""
+        with TemporaryDirectory() as temp_dir:
+            output_root = Path(temp_dir) / "outputs"
+            project_dir = output_root / "ch_legacy"
+            project_dir.mkdir(parents=True)
+            (project_dir / "ch_legacy.pdf").write_bytes(b"%PDF")
+            (project_dir / TUI_PROJECT_METADATA_FILENAME).write_text(
+                json.dumps(
+                    {
+                        "schema_version": 1,
+                        "task_id": "legacy-task",
+                        "project_name": "legacy",
+                        "status": "completed",
+                    }
+                ),
+                encoding="utf-8",
+            )
+
+            heavy_tasks = load_output_history(output_root, engine="heavy")
+            lite_tasks = load_output_history(output_root, engine="lite")
+
+        self.assertEqual([task.task_id for task in heavy_tasks], ["legacy-task"])
+        self.assertEqual(lite_tasks, [])
+
+    def test_write_metadata_uses_schema_two_and_markdown_paths(self):
+        """Engine-aware metadata should persist all lite history fields."""
+        with TemporaryDirectory() as temp_dir:
+            project_dir = Path(temp_dir) / "paper"
+            write_project_metadata(
+                project_dir,
+                "task-2",
+                "pdf",
+                "paper.pdf",
+                "paper",
+                ProjectStatus.COMPLETED,
+                engine="lite",
+                source_markdown_path="source.md",
+                translated_markdown_path="translated.md",
+            )
+
+            metadata = json.loads(
+                (project_dir / TUI_PROJECT_METADATA_FILENAME).read_text(encoding="utf-8")
+            )
+
+        self.assertEqual(metadata["schema_version"], 2)
+        self.assertEqual(metadata["engine"], "lite")
+        self.assertEqual(metadata["source_markdown_path"], "source.md")
+        self.assertEqual(metadata["translated_markdown_path"], "translated.md")
+
+
 if __name__ == "__main__":
     unittest.main()

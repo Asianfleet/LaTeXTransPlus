@@ -153,6 +153,19 @@ class CoordinatorMessageTests(unittest.TestCase):
         self.assertEqual(result["project_name"], "2510.14901")
         self.assertTrue(result["pdf_path"].endswith("ch_2510.14901.pdf"))
 
+    def test_build_workflow_result_includes_validation_failure_details(self):
+        report_path = r"outputs\ch_2510.14901\errors_report.json"
+        result = build_workflow_result(
+            project_name="2510.14901",
+            pdf_path=None,
+            errors_report_path=report_path,
+            validation_summary={"warnings": 1, "errors": 2, "total": 3},
+            validation_failed=True,
+        )
+
+        self.assertIn("remaining validation errors: 2", result["error"])
+        self.assertIn(report_path, result["error"])
+
     def test_build_workflow_result_respects_lenient_validation_policy(self):
         result = build_workflow_result(
             project_name="2510.14901",

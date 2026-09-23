@@ -6,6 +6,8 @@ import re
 from typing import Literal
 from urllib.parse import urlparse
 
+from src.engines.lite_inputs import parse_lite_input
+
 InputType = Literal["arxiv", "local", "remote"]
 
 _ARXIV_ID_PATTERN = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$")
@@ -43,3 +45,17 @@ def validate_input_items(input_type: InputType, items: list[str]) -> list[str]:
             errors.append(f"unsupported input type: {input_type}")
 
     return errors
+
+
+def validate_lite_input(value: str) -> list[str]:
+    """Return validation errors for the lite engine's exactly-one input contract."""
+    stripped = value.strip()
+    if not stripped:
+        return ["lite input must not be empty"]
+    if "," in stripped or "\n" in stripped or "\r" in stripped:
+        return ["lite accepts exactly one input item per task"]
+    try:
+        parse_lite_input(stripped)
+    except ValueError as exc:
+        return [str(exc)]
+    return []

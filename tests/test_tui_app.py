@@ -1,14 +1,17 @@
+import hashlib
 import json
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
-from unittest.mock import Mock, patch
+from unittest.mock import Mock, call, patch
 
 from rich.cells import cell_len
+from rich.syntax import Syntax
 from rich.text import Text
 from textual.css.query import NoMatches
 from textual.widgets import (
     Button,
+    Collapsible,
     ContentSwitcher,
     DataTable,
     Footer,
@@ -31,11 +34,19 @@ from src.tui.app import (
     PAGE_ENTRY,
     PAGE_TASKS,
     LaTeXTransTuiApp,
+    _merge_project_log_text,
     build_app_title,
     compact_progress_log_for_display,
+    run,
 )
 from src.tui.history import TUI_PROJECT_METADATA_FILENAME
+from src.tui.config import UI_CONFIG_PATH
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
+
+
+def _file_sha256(path: Path) -> str:
+    """Return a file digest without exposing its contents in test output."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class TuiPackagingTests(unittest.TestCase):
@@ -52,18 +63,310 @@ class TuiPackagingTests(unittest.TestCase):
 
         self.assertTrue(callable(run))
 
+    def test_run_short_engine_flag_overrides_persisted_default(self):
+        """The short CLI engine flag must win without persisting a configuration change."""
+        with patch("src.tui.app.load_ui_config", return_value={"engine": "heavy"}), patch(
+            "src.tui.app.LaTeXTransTuiApp"
+        ) as app_class:
+            run(["-e", "lite"])
+
+        app_class.assert_called_once_with(initial_engine="lite")
+        app_class.return_value.run.assert_called_once_with()
+
+    def test_run_uses_persisted_engine_when_cli_does_not_override_it(self):
+        """The saved UI engine is the startup default when CLI omits --engine."""
+        with patch("src.tui.app.load_ui_config", return_value={"engine": "lite"}), patch(
+            "src.tui.app.LaTeXTransTuiApp"
+        ) as app_class:
+            run([])
+
+        app_class.assert_called_once_with(initial_engine="lite")
+
 
 class TuiAppTests(unittest.IsolatedAsyncioTestCase):
     """为所有 TUI 测试隔离真实项目配置文件。"""
 
     async def asyncSetUp(self) -> None:
         """在整个异步测试生命周期内拦截 UI 配置保存。"""
-        self._save_ui_config_patcher = patch("src.tui.app.save_ui_config")
-        self.save_ui_config = self._save_ui_config_patcher.start()
+        self._ui_config_hash = _file_sha256(Path.cwd() / UI_CONFIG_PATH)
+        self.save_ui_config = Mock()
+        self._save_ui_config_patchers = [
+            patch("src.tui.app.save_ui_config", self.save_ui_config),
+            patch("src.tui.config.save_ui_config", self.save_ui_config),
+        ]
+        for save_ui_config_patcher in self._save_ui_config_patchers:
+            save_ui_config_patcher.start()
 
     async def asyncTearDown(self) -> None:
         """在异步测试完成后恢复 UI 配置保存函数。"""
-        self._save_ui_config_patcher.stop()
+        try:
+            self.assertEqual(
+                _file_sha256(Path.cwd() / UI_CONFIG_PATH),
+                self._ui_config_hash,
+                "TUI 测试不得修改真实 UI 配置文件。",
+            )
+        finally:
+            for save_ui_config_patcher in reversed(self._save_ui_config_patchers):
+                save_ui_config_patcher.stop()
+
+
+class TuiEngineModeTests(TuiAppTests):
+    """Verify the TUI keeps heavy and lite session state isolated."""
+
+    async def test_initial_engine_mount_does_not_persist_configuration(self):
+        """Mounting an engine-specific form must not overwrite the saved UI default."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+
+        self.save_ui_config.assert_not_called()
+
+    async def test_settings_default_engine_persists_without_changing_active_session(self):
+        """Changing the saved default engine must leave the current Heavy session intact."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        with patch("src.tui.app.load_ui_config", return_value={"engine": "heavy"}):
+            async with app.run_test() as pilot:
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                app.load_config_page()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+                self.assertFalse(app.loading_config_form)
+                self.save_ui_config.reset_mock()
+
+                app.query_one("#config-engine", Select).value = "lite"
+                await pilot.pause()
+
+                saved_config = self.save_ui_config.call_args.args[1]
+                self.assertEqual(saved_config["engine"], "lite")
+                self.assertEqual(app.effective_engine, "heavy")
+                self.assertFalse(app.query_one("#engine-mode-switch", Switch).value)
+                self.assertEqual(app.query_one("#input-type-select", Select).value, "arxiv")
+
+    async def test_lite_mode_hides_heavy_tabs_and_shows_markdown_tabs(self):
+        """Lite mode must expose Markdown details instead of TeX validation details."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertFalse(app.query_one("#tex-tab").display)
+            self.assertFalse(app.query_one("#errors-tab").display)
+            tabs = app.query_one("#detail-tabs", TabbedContent)
+            self.assertFalse(tabs.get_tab("source-markdown-tab").has_class("-hidden"))
+            self.assertFalse(tabs.get_tab("translated-markdown-tab").has_class("-hidden"))
+
+    async def test_mode_switch_is_session_only_and_preserves_existing_task_engine(self):
+        """Changing the mode must not write config or alter an already-created task."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        existing_task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], engine="heavy")
+        app.tasks = [existing_task]
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.save_ui_config.reset_mock()
+            app.set_engine("lite")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            self.assertEqual(app.effective_engine, "lite")
+            self.assertEqual(existing_task.engine, "heavy")
+            self.save_ui_config.assert_not_called()
+
+    async def test_lite_mode_submits_one_pdf_task_and_rejects_batch_text(self):
+        """Lite entry creates a PDF task only after its single value validates."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test():
+            input_area = app.query_one("#batch-input", TextArea)
+            input_area.text = "first.pdf, second.pdf"
+            app.submit_entry_form()
+            self.assertIsNone(app.current_task)
+            self.assertIn("exactly one", str(app.query_one("#entry-error", Static).content))
+
+            input_area.text = "paper.pdf"
+            with patch.object(app, "start_current_task"), patch.object(app, "notify"):
+                app.submit_entry_form()
+
+            self.assertIsNotNone(app.current_task)
+            self.assertEqual(app.current_task.engine, "lite")
+            self.assertEqual(app.current_task.input_type, "pdf")
+            self.assertEqual(app.current_task.inputs, ["paper.pdf"])
+
+    async def test_lite_entry_select_is_labeled_as_auto_detection(self):
+        """Lite entry uses one visible input choice labeled for automatic detection."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            select = app.query_one("#input-type-select", Select)
+
+            self.assertEqual(select._options[1], ("自动识别", "pdf"))
+
+    async def test_engine_mode_switch_aligns_with_entry_select(self):
+        """The session mode switch starts at the same x-coordinate as the input select."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            input_select = app.query_one("#input-type-select", Select)
+            mode_switch = app.query_one("#engine-mode-switch", Switch)
+
+            self.assertEqual(mode_switch.region.x, input_select.region.x)
+
+    async def test_engine_mode_control_has_spacing_below_entry_actions(self):
+        """模式开关行与入口操作行之间保留一个终端行的间距。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            mode_control = app.query_one("#engine-mode-control")
+
+            self.assertEqual(mode_control.styles.margin.top, 1)
+
+    async def test_lite_settings_only_show_shared_and_lite_fields(self):
+        """The settings form must not show heavy-only runtime controls in lite mode."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            self.assertIsNotNone(app.query_one("#config-engine", Select))
+            self.assertIsNotNone(app.query_one("#config-lite-output_dir", Input))
+            with self.assertRaises(NoMatches):
+                app.query_one("#config-heavy-tex_sources_dir", Input)
+            with self.assertRaises(NoMatches):
+                app.query_one("#config-heavy-validation-retry-max_attempts", Input)
+
+    async def test_lite_font_fields_list_available_fonts_in_a_collapsed_panel(self):
+        """字体字段下方用默认折叠的面板列出可用字体。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        detected = ["SimSun", "宋体", "FandolSong"]
+        with patch(
+            "src.tui.app.list_available_font_families", return_value=detected
+        ) as lister:
+            async with app.run_test():
+                panel = app.query_one(
+                    "#config-lite-cjk_mainfont_candidates-hint", Collapsible
+                )
+                self.assertEqual(panel.title, "可用字体（3）")
+                self.assertTrue(panel.collapsed)
+                listed = str(panel.query_one(".config-font-list").content)
+                for family in detected:
+                    self.assertIn(family, listed)
+
+                block = panel.parent
+                self.assertEqual(list(block.children).index(panel), 1)
+                self.assertIsNotNone(
+                    block.children[0].query_one(
+                        "#config-lite-cjk_mainfont_candidates", Input
+                    )
+                )
+
+                mainfont_panel = app.query_one("#config-lite-mainfont-hint", Collapsible)
+                self.assertTrue(mainfont_panel.collapsed)
+
+                # CJK 候选只看中文字体，正文字体需要全部字体。
+                self.assertIn(call("zh"), lister.call_args_list)
+                self.assertIn(call(None), lister.call_args_list)
+
+    async def test_lite_font_hint_reports_a_missing_font_listing(self):
+        """未检测到字体列表时，提示文字必须说明原因且不出现折叠面板。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        with patch("src.tui.app.list_available_font_families", return_value=[]):
+            async with app.run_test():
+                hint = app.query_one("#config-lite-cjk_mainfont_candidates-hint")
+                self.assertIsInstance(hint, Static)
+                self.assertNotIsInstance(hint, Collapsible)
+                self.assertIn("未检测到可用字体", str(hint.content))
+
+    async def test_heavy_settings_have_no_font_candidate_field(self):
+        """Heavy 模式不应出现 PDF 字体字段。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        async with app.run_test():
+            for widget_id in (
+                "#config-lite-cjk_mainfont_candidates",
+                "#config-lite-mainfont",
+                "#config-lite-geometry",
+            ):
+                with self.assertRaises(NoMatches):
+                    app.query_one(widget_id, Input)
+
+    async def test_switching_to_lite_rebuilds_settings_fields(self):
+        """Mode changes replace heavy settings fields with lite settings fields."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        async with app.run_test() as pilot:
+            app.set_engine("lite")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+
+            self.assertIsNotNone(app.query_one("#config-lite-output_dir", Input))
+            self.assertIsNotNone(
+                app.query_one("#config-lite-protected_token_retry_attempts", Input)
+            )
+            with self.assertRaises(NoMatches):
+                app.query_one("#config-heavy-tex_sources_dir", Input)
+
+    async def test_lite_settings_expose_the_mineru_api_key_env_field(self):
+        """Lite settings must let users change the MinerU token environment variable."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.load_config_page()
+
+            field = app.query_one("#config-lite-mineru_api_key_env", Input)
+
+            self.assertEqual(field.value, "MINERU_TOKEN")
+
+    async def test_heavy_settings_hide_the_lite_mineru_api_key_env_field(self):
+        """The lite MinerU token env field must stay out of the heavy settings form."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        async with app.run_test() as pilot:
+            await pilot.pause()
+            app.load_config_page()
+
+            with self.assertRaises(NoMatches):
+                app.query_one("#config-lite-mineru_api_key_env", Input)
+
+    async def test_mode_switch_filters_project_views_by_task_engine(self):
+        """Sidebar and management rows only show tasks created in the active mode."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        heavy_task = TaskViewState(input_type="arxiv", inputs=["heavy"], engine="heavy")
+        heavy_task.projects.append(ProjectViewState(project_name="heavy-project", engine="heavy"))
+        lite_task = TaskViewState(input_type="pdf", inputs=["lite.pdf"], engine="lite")
+        lite_task.projects.append(ProjectViewState(project_name="lite-project", engine="lite"))
+        app.tasks = [heavy_task, lite_task]
+        async with app.run_test() as pilot:
+            app.refresh_project_list()
+            self.assertIn(
+                "heavy-project",
+                str(app.query_one("#project-list", ListView).children[0].query_one(Static).content),
+            )
+
+            app.set_engine("lite")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            labels = [
+                str(item.query_one(Static).content)
+                for item in app.query_one("#project-list", ListView).children
+            ]
+            self.assertEqual(labels, ["lite-project"])
+
+    async def test_lite_detail_renders_markdown_and_reports_missing_artifact(self):
+        """Lite detail tabs render Markdown syntax and make a missing file explicit."""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        with TemporaryDirectory() as temp_dir:
+            source_path = Path(temp_dir) / "source.md"
+            source_path.write_text("## Source\ntext", encoding="utf-8")
+            async with app.run_test() as pilot:
+                task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+                project = ProjectViewState(
+                    project_name="paper",
+                    engine="lite",
+                    source_markdown_path=str(source_path),
+                    translated_markdown_path=str(Path(temp_dir) / "translated.md"),
+                )
+                task.projects.append(project)
+                app.tasks = [task]
+                app.select_project("paper", task.task_id)
+                await pilot.pause()
+
+                source_preview = app.query_one("#source-markdown-preview", Static)
+                translated_preview = app.query_one("#translated-markdown-preview", Static)
+                self.assertIsInstance(source_preview.content, Syntax)
+                self.assertIn("## Source", source_preview.content.code)
+                self.assertIn("Markdown 文件不存在", str(translated_preview.content))
 
 
 class TuiLayoutTests(TuiAppTests):
@@ -146,6 +449,7 @@ class TuiLayoutTests(TuiAppTests):
                     "zotero-auto-match-button",
                     "zotero-import-rule",
                     "import-zotero-button",
+                    "import-zotero-markdown-button",
                 ],
             )
             self.assertIsNotNone(app.query_one("#zotero-library-select", Select))
@@ -154,6 +458,7 @@ class TuiLayoutTests(TuiAppTests):
             self.assertIsNotNone(app.query_one("#zotero-auto-match-button", Button))
             self.assertIsNotNone(app.query_one("#zotero-import-rule", Rule))
             self.assertIsNotNone(app.query_one("#import-zotero-button", Button))
+            self.assertIsNotNone(app.query_one("#import-zotero-markdown-button", Button))
             self.assertIsNotNone(app.query_one("#zotero-results", DataTable))
             with self.assertRaises(NoMatches):
                 app.query_one("#detail-paths")
@@ -261,6 +566,7 @@ class TuiEntryPageTests(TuiAppTests):
                     "entry-top-spacer",
                     "app-title",
                     "entry-actions",
+                    "engine-mode-control",
                     "entry-error",
                     "entry-bottom-offset",
                     "entry-bottom-spacer",
@@ -488,13 +794,14 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
             table = app.query_one("#task-table", DataTable)
 
             self.assertEqual(len(app.tasks), 1)
-            self.assertEqual(str(table.ordered_columns[0].label), "项目")
-            self.assertEqual(str(table.ordered_columns[1].label), "状态")
-            self.assertEqual(str(table.ordered_columns[2].label), "任务 id")
-            self.assertEqual(len(table.ordered_columns), 3)
+            self.assertEqual(str(table.ordered_columns[0].label), "选中")
+            self.assertEqual(str(table.ordered_columns[1].label), "项目")
+            self.assertEqual(str(table.ordered_columns[2].label), "状态")
+            self.assertEqual(str(table.ordered_columns[3].label), "任务 id")
+            self.assertEqual(len(table.ordered_columns), 4)
             self.assertEqual(table.row_count, 2)
-            self.assertEqual(table.get_cell_at((0, 2)), task.task_id)
-            self.assertEqual(table.get_cell_at((1, 2)), task.task_id)
+            self.assertEqual(table.get_cell_at((0, 3)), task.task_id)
+            self.assertEqual(table.get_cell_at((1, 3)), task.task_id)
 
     async def test_sidebar_marks_projects_from_running_task_orange(self):
         """确认左侧项目属于进行中任务时用橙色文字展示。"""
@@ -577,9 +884,10 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
 
                     self.assertEqual(len(list_view.children), 1)
                     self.assertIn("2308.10248", str(list_view.children[0].query_one(Static).content))
-                    self.assertEqual(table.get_cell_at((0, 0)), "2308.10248")
-                    self.assertEqual(table.get_cell_at((0, 1)), "completed")
-                    self.assertEqual(table.get_cell_at((0, 2)), "")
+                    self.assertEqual(table.get_cell_at((0, 0)), "[]")
+                    self.assertEqual(table.get_cell_at((0, 1)), "2308.10248")
+                    self.assertEqual(table.get_cell_at((0, 2)), "completed")
+                    self.assertEqual(table.get_cell_at((0, 3)), "")
 
     async def test_selecting_history_project_loads_tex_preview(self):
         """确认点击历史项目时右侧 TeX 页能显示项目源码。"""
@@ -648,17 +956,44 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
 class TuiConfigPageTests(TuiAppTests):
     """验证配置页会加载、编辑并保存 UI 配置。"""
 
+    async def test_font_field_edits_are_normalized_before_saving(self):
+        """中文字体候选与正文字体保存时都会被规范化。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        config = {
+            "engine": "lite",
+            "lite": {"output_dir": "output-lite", "mineru_api_key_env": "MINERU_TOKEN"},
+        }
+        async with app.run_test() as pilot:
+            with patch("src.tui.app.load_ui_config", return_value=config):
+                app.load_config_page()
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            self.assertFalse(app.loading_config_form)
+            self.save_ui_config.reset_mock()
+
+            app.query_one("#config-lite-cjk_mainfont_candidates", Input).value = (
+                " SimSun ,FandolSong, simsun "
+            )
+            await pilot.pause(delay=0.1)
+            app.query_one("#config-lite-mainfont", Input).value = " Times  New Roman "
+            await pilot.pause(delay=0.1)
+
+            saved_config = self.save_ui_config.call_args.args[1]
+            self.assertEqual(
+                saved_config["lite"]["cjk_mainfont_candidates"],
+                "SimSun, FandolSong",
+            )
+            self.assertEqual(saved_config["lite"]["mainfont"], "Times New Roman")
+
     async def test_settings_button_loads_structured_config_tabs(self):
         """确认设置按钮会打开配置 tabs 并按字段类型填充表单。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
         config = {
             "sys_name": "LaTeXTransPlus",
             "version": "0.1.0",
+            "engine": "heavy",
             "source_language": "en",
             "target_language": "ja",
-            "paper_list": ["2508.18791", "2407.01648"],
-            "tex_sources_dir": "tex source",
-            "output_dir": "outputs",
             "category": {"cs": ["cs.LG"]},
             "update_term": "True",
             "mode": "plain",
@@ -668,18 +1003,24 @@ class TuiConfigPageTests(TuiAppTests):
                 "review_before_translate": False,
                 "max_llm_candidates": 30,
             },
-            "validation": {
-                "retry": {
-                    "max_attempts": 3,
-                    "generate_pdf_on_error": True,
-                    "fail_on_error": True,
-                },
-                "issues": {
-                    "command_mismatch": {"severity": "error", "retryable": True},
-                    "placeholder_mismatch": {"severity": "warning", "retryable": False},
-                    "bracket_mismatch": {"severity": "error", "retryable": True},
+            "heavy": {
+                "paper_list": ["2508.18791", "2407.01648"],
+                "tex_sources_dir": "tex source",
+                "output_dir": "outputs",
+                "validation": {
+                    "retry": {
+                        "max_attempts": 3,
+                        "generate_pdf_on_error": True,
+                        "fail_on_error": True,
+                    },
+                    "issues": {
+                        "command_mismatch": {"severity": "error", "retryable": True},
+                        "placeholder_mismatch": {"severity": "warning", "retryable": False},
+                        "bracket_mismatch": {"severity": "error", "retryable": True},
+                    },
                 },
             },
+            "lite": {"output_dir": "output-lite"},
             "llm_config": {
                 "profile": "deepseek",
             },
@@ -700,10 +1041,10 @@ class TuiConfigPageTests(TuiAppTests):
                 self.assertEqual(app.query_one("#config-source_language", Select).value, "en")
                 self.assertTrue(app.query_one("#config-update_term", Switch).value)
                 self.assertEqual(
-                    app.query_one("#config-validation-issues-placeholder_mismatch-severity", Select).value,
+                    app.query_one("#config-heavy-validation-issues-placeholder_mismatch-severity", Select).value,
                     "warning",
                 )
-                self.assertFalse(app.query_one("#config-validation-issues-placeholder_mismatch-retryable", Switch).value)
+                self.assertFalse(app.query_one("#config-heavy-validation-issues-placeholder_mismatch-retryable", Switch).value)
                 self.assertEqual(
                     app.query_one("#config-zotero-local_api_base", Input).value,
                     "http://127.0.0.1:23119/api",
@@ -727,6 +1068,24 @@ class TuiConfigPageTests(TuiAppTests):
                 app.query_one("#save-config-button")
             with self.assertRaises(NoMatches):
                 app.query_one("#reload-config-button")
+
+    async def test_config_form_scrolls_in_both_engine_modes(self):
+        """配置表单在 heavy 和 lite 模式的小终端中都必须提供垂直滚动。"""
+        for engine in ("heavy", "lite"):
+            app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine=engine)
+            async with app.run_test(size=(100, 24)) as pilot:
+                app.switch_page(PAGE_CONFIG)
+                await pilot.pause()
+                config_form = app.query_one("#config-form", tui_app.VerticalScroll)
+
+                self.assertGreater(
+                    config_form.max_scroll_y,
+                    0,
+                    f"{engine} 配置表单必须超过视口并可滚动",
+                )
+                config_form.scroll_end(animate=False)
+                await pilot.pause()
+                self.assertGreater(config_form.scroll_y, 0)
 
     async def test_config_page_shortcuts_switch_config_and_preview_tabs(self):
         """确认设置页 c/p 快捷键会切换配置和预览 tab。"""
@@ -813,13 +1172,17 @@ class TuiConfigPageTests(TuiAppTests):
         async with app.run_test() as pilot:
             with patch("src.tui.app.load_ui_config", return_value={"llm_config": {"profile": "profile-ja"}}):
                 app.load_config_page()
+            await app.workers.wait_for_complete()
             await pilot.pause()
 
-            self.save_ui_config.reset_mock()
+            self.assertFalse(app.loading_config_form)
+            self.save_ui_config.assert_not_called()
             app.query_one("#config-llm_config-profile", Input).value = "profile-fr"
-            await pilot.pause()
+            await pilot.pause(delay=0.1)
 
-            self.save_ui_config.assert_called()
+            self.save_ui_config.assert_called_once()
+            saved_config = self.save_ui_config.call_args.args[1]
+            self.assertEqual(saved_config["llm_config"]["profile"], "profile-fr")
 
     async def test_config_change_collects_form_fields_and_preserves_metadata(self):
         """确认即时保存会从结构化表单写回配置并保留不可编辑元数据。"""
@@ -827,24 +1190,28 @@ class TuiConfigPageTests(TuiAppTests):
         config = {
             "sys_name": "LaTeXTransPlus",
             "version": "0.1.0",
+            "engine": "heavy",
             "source_language": "en",
             "target_language": "ja",
-            "paper_list": ["2508.18791"],
-            "tex_sources_dir": "tex source",
-            "output_dir": "outputs",
             "category": {},
             "update_term": "False",
             "mode": "plain",
             "user_term": "",
             "terminology": {"enabled": True, "review_before_translate": False, "max_llm_candidates": 30},
-            "validation": {
-                "retry": {"max_attempts": 3, "generate_pdf_on_error": True, "fail_on_error": True},
-                "issues": {
-                    "command_mismatch": {"severity": "error", "retryable": True},
-                    "placeholder_mismatch": {"severity": "error", "retryable": True},
-                    "bracket_mismatch": {"severity": "error", "retryable": True},
+            "heavy": {
+                "paper_list": ["2508.18791"],
+                "tex_sources_dir": "tex source",
+                "output_dir": "outputs",
+                "validation": {
+                    "retry": {"max_attempts": 3, "generate_pdf_on_error": True, "fail_on_error": True},
+                    "issues": {
+                        "command_mismatch": {"severity": "error", "retryable": True},
+                        "placeholder_mismatch": {"severity": "error", "retryable": True},
+                        "bracket_mismatch": {"severity": "error", "retryable": True},
+                    },
                 },
             },
+            "lite": {"output_dir": "output-lite"},
             "llm_config": {
                 "profile": "deepseek",
             },
@@ -863,9 +1230,9 @@ class TuiConfigPageTests(TuiAppTests):
                 app.query_one("#config-category", TextArea).text = '{"cs": ["cs.LG"]}'
                 app.query_one("#config-update_term", Switch).value = True
                 app.query_one("#config-terminology-max_llm_candidates", Input).value = "12"
-                app.query_one("#config-validation-retry-max_attempts", Input).value = "2"
-                app.query_one("#config-validation-issues-command_mismatch-severity", Select).value = "warning"
-                app.query_one("#config-validation-issues-command_mismatch-retryable", Switch).value = False
+                app.query_one("#config-heavy-validation-retry-max_attempts", Input).value = "2"
+                app.query_one("#config-heavy-validation-issues-command_mismatch-severity", Select).value = "warning"
+                app.query_one("#config-heavy-validation-issues-command_mismatch-retryable", Switch).value = False
                 app.query_one("#config-llm_config-profile", Input).value = "profile-x"
                 app.query_one("#config-zotero-local_api_base", Input).value = "http://localhost:23119/api"
                 app.query_one("#config-zotero-web_api_key_env", Input).value = "MY_ZOTERO_API_KEY"
@@ -877,13 +1244,13 @@ class TuiConfigPageTests(TuiAppTests):
             self.assertEqual(saved["version"], "0.1.0")
             self.assertEqual(saved["target_language"], "fr")
             self.assertEqual(saved["source_language"], "de")
-            self.assertEqual(saved["paper_list"], ["2508.18791"])
+            self.assertEqual(saved["heavy"]["paper_list"], ["2508.18791"])
             self.assertEqual(saved["category"], {"cs": ["cs.LG"]})
             self.assertEqual(saved["update_term"], "True")
             self.assertEqual(saved["terminology"]["max_llm_candidates"], 12)
-            self.assertEqual(saved["validation"]["retry"]["max_attempts"], 2)
-            self.assertEqual(saved["validation"]["issues"]["command_mismatch"]["severity"], "warning")
-            self.assertFalse(saved["validation"]["issues"]["command_mismatch"]["retryable"])
+            self.assertEqual(saved["heavy"]["validation"]["retry"]["max_attempts"], 2)
+            self.assertEqual(saved["heavy"]["validation"]["issues"]["command_mismatch"]["severity"], "warning")
+            self.assertFalse(saved["heavy"]["validation"]["issues"]["command_mismatch"]["retryable"])
             self.assertEqual(saved["llm_config"]["profile"], "profile-x")
             self.assertEqual(saved["zotero"]["local_api_base"], "http://localhost:23119/api")
             self.assertEqual(saved["zotero"]["web_api_key_env"], "MY_ZOTERO_API_KEY")
@@ -999,6 +1366,33 @@ class TuiTaskEventTests(TuiAppTests):
             self.assertTrue(any("runner failed" in message for message in messages))
             self.assertIn("任务全部完成：task-1", messages)
 
+    async def test_validation_project_error_notification_includes_summary(self):
+        """校验失败事件缺少 error 时也应展示剩余错误数和报告路径。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            app.current_task = TaskViewState(
+                input_type="arxiv",
+                inputs=["2508.18791"],
+                task_id="task-validation-error",
+                total=1,
+            )
+            app.tasks = [app.current_task]
+
+            with patch.object(app, "notify") as notify:
+                app.handle_runtime_event(
+                    {
+                        "type": "project_error",
+                        "project_name": "2508.18791",
+                        "validation_summary": {"warnings": 1, "errors": 2, "total": 3},
+                        "errors_report_path": r"D:\out\errors_report.json",
+                    },
+                    app.current_task,
+                )
+
+            messages = [call.args[0] for call in notify.call_args_list]
+            self.assertTrue(any("remaining validation errors: 2" in message for message in messages))
+            self.assertTrue(any(r"D:\out\errors_report.json" in message for message in messages))
+
     async def test_review_required_event_notifies_terms_ready_and_task_completion(self):
         """确认等待术语确认不会弹异常通知，且会结束当前任务。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
@@ -1070,6 +1464,39 @@ class TuiTaskEventTests(TuiAppTests):
             refresh_project_list.assert_not_called()
             refresh_task_table.assert_not_called()
 
+    async def test_task_log_event_refreshes_selected_project_detail_log(self):
+        """任务级准备日志到达后应刷新当前项目详情日志区域。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            app.current_task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-1")
+            app.tasks = [app.current_task]
+            app.handle_runtime_event({"type": "project_start", "project_name": "2508.18791"})
+            app.select_project("2508.18791")
+
+            with patch.object(app, "_refresh_project_log") as refresh_log:
+                app.handle_runtime_event({"type": "task_log", "line": "Downloading metadata"})
+
+            refresh_log.assert_called_once()
+            self.assertIn("Downloading metadata", refresh_log.call_args.args[1])
+
+    def test_project_log_refresh_preserves_prepare_lines_missing_from_file(self):
+        """项目日志文件刷新时不应覆盖尚未落盘的准备阶段日志。"""
+        merged = _merge_project_log_text("[ParserAgent] parsed\n", ["Downloading paper", "[ParserAgent] parsed"])
+
+        self.assertEqual(merged.splitlines(), ["Downloading paper", "[ParserAgent] parsed"])
+
+    def test_project_log_refresh_fallback_keeps_task_log_lines(self):
+        """日志文件不可读时，任务级准备日志仍应显示在详情区域。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        project = ProjectViewState(project_name="paper", log_path=r"D:\\missing\\latextrans.log")
+        log_widget = Mock()
+
+        with patch.object(app, "query_one", return_value=log_widget):
+            app._refresh_project_log(project, ["Downloading paper"])
+
+        rendered = str(log_widget.write.call_args.args[0])
+        self.assertIn("Downloading paper", rendered)
+
     async def test_start_current_task_initializes_total_without_run_start(self):
         """确认真实启动路径不依赖 runner 发送 run_start 也会初始化总数。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
@@ -1095,6 +1522,74 @@ class TuiTaskEventTests(TuiAppTests):
             self.assertEqual(call_kwargs["items"], ["2508.18791"])
             self.assertEqual(app.current_task.completed, 1)
             self.assertEqual(app.current_task.total, 1)
+
+    async def test_process_task_events_update_state(self):
+        """确认进程队列事件会更新任务状态并注册进程句柄。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        handle = Mock()
+        handle.process.is_alive.return_value = False
+        with patch("src.tui.app.start_tui_task_process", return_value=handle) as start_process, \
+            patch("src.tui.app.drain_process_messages", side_effect=[
+                [("event", {"type": "project_start", "project_name": "2508.18791"})],
+                [("event", {"type": "project_complete", "project_name": "2508.18791"})],
+                [],
+            ]):
+            async with app.run_test() as pilot:
+                task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-process")
+                app.current_task = task
+                app.tasks = [task]
+                app.start_current_task()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+        start_process.assert_called_once()
+        self.assertEqual(task.projects[0].status, ProjectStatus.COMPLETED)
+        self.assertNotIn(task.task_id, app.task_processes)
+
+    async def test_process_error_marks_running_project_failed_and_refreshes(self):
+        """确认子进程异常会将运行项目标记失败并刷新任务表。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        handle = Mock()
+        handle.process.is_alive.return_value = False
+        with patch("src.tui.app.start_tui_task_process", return_value=handle), \
+            patch("src.tui.app.drain_process_messages", side_effect=[
+                [("event", {"type": "project_start", "project_name": "2508.18791"})],
+                [("error", {"error": "child failed"})],
+                [],
+            ]), patch.object(app, "refresh_task_table") as refresh_table:
+            async with app.run_test() as pilot:
+                task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-error")
+                app.current_task = task
+                app.tasks = [task]
+                app.start_current_task()
+                await app.workers.wait_for_complete()
+                await pilot.pause()
+
+        self.assertEqual(task.projects[0].status, ProjectStatus.FAILED)
+        self.assertEqual(task.failed, 1)
+        refresh_table.assert_called()
+
+    async def test_terminate_task_marks_cancelled_and_ignores_late_completion(self):
+        """确认强制终止调用 terminate，且迟到完成事件不会覆盖 cancelled。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        handle = Mock()
+        handle.process.is_alive.return_value = True
+        async with app.run_test():
+            task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-cancel", total=1)
+            task.projects.append(ProjectViewState(project_name="2508.18791", status=ProjectStatus.RUNNING))
+            app.current_task = task
+            app.tasks = [task]
+            app.task_processes[task.task_id] = handle
+
+            with patch("src.tui.app.terminate_tui_task_process") as terminate_process:
+                app.terminate_task_process(task.task_id)
+            app.handle_runtime_event(
+                {"type": "project_complete", "project_name": "2508.18791"},
+                task,
+            )
+
+        terminate_process.assert_called_once_with(handle)
+        self.assertEqual(task.projects[0].status, ProjectStatus.CANCELLED)
 
     async def test_stale_worker_events_do_not_update_new_current_task(self):
         """确认旧任务 worker 回调不会污染新的 current_task。"""
@@ -1189,6 +1684,116 @@ class TuiTaskEventTests(TuiAppTests):
             self.assertIn("任务全部完成：task-1", messages)
 
 
+class TuiNotificationTests(TuiAppTests):
+    """验证通知不会因外部文本触发 markup 解析而崩溃。"""
+
+    BRACKET_MESSAGE = (
+        "发生异常：paper，任务 id：task-1，错误：Command "
+        "'['pandoc', '--pdf-engine=xelatex', '--metadata=lang:zh-CN']' "
+        "returned non-zero exit status 43."
+    )
+
+    def test_compact_notification_collapses_whitespace_and_limits_length(self):
+        """通知文本需要压成单段并在超长时截断。"""
+        self.assertEqual(tui_app._compact_notification("a\n\n   b"), "a b")
+
+        compacted = tui_app._compact_notification("x" * 900)
+        self.assertLessEqual(len(compacted), tui_app.NOTIFY_MESSAGE_LIMIT + 2)
+        self.assertTrue(compacted.endswith("…"))
+
+    async def test_notify_disables_markup_for_external_text(self):
+        """异常文本里的方括号不得再交给 Textual markup 解析。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            with patch.object(app, "notify") as notify:
+                app._notify(self.BRACKET_MESSAGE, severity="error")
+
+            notify.assert_called_once_with(
+                self.BRACKET_MESSAGE,
+                title="LaTeXTransPlus",
+                severity="error",
+                markup=False,
+            )
+
+    async def test_bracket_notification_renders_without_markup_crash(self):
+        """真实渲染带方括号的错误通知时不得抛出 MarkupError。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test(notifications=True) as pilot:
+            app._notify(self.BRACKET_MESSAGE, severity="error")
+            await pilot.pause()
+            await pilot.pause()
+
+    async def test_project_error_event_with_bracket_text_does_not_crash(self):
+        """事件通知渲染外部异常文本时也不得因方括号崩溃。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test(notifications=True) as pilot:
+            app.current_task = TaskViewState(
+                input_type="pdf",
+                inputs=["paper.pdf"],
+                task_id="task-1",
+                total=1,
+            )
+            app.tasks = [app.current_task]
+
+            app.handle_runtime_event(
+                {
+                    "type": "project_error",
+                    "project_name": "paper",
+                    "error": self.BRACKET_MESSAGE,
+                },
+                app.current_task,
+            )
+            await pilot.pause()
+            await pilot.pause()
+
+    async def test_pdf_error_completion_notifies_a_warning(self):
+        """PDF 生成失败应作为项目警告通知，而不是项目异常。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            app.current_task = TaskViewState(
+                input_type="pdf",
+                inputs=["paper.pdf"],
+                task_id="task-1",
+                total=1,
+            )
+            app.tasks = [app.current_task]
+
+            with patch.object(app, "notify") as notify:
+                app.handle_runtime_event(
+                    {
+                        "type": "project_complete",
+                        "project_name": "paper",
+                        "pdf_error": "Pandoc PDF generation failed with exit code 43.",
+                    },
+                    app.current_task,
+                )
+
+            warning = next(
+                call for call in notify.call_args_list if "PDF 生成失败" in call.args[0]
+            )
+            self.assertEqual(warning.kwargs["severity"], "warning")
+            self.assertIn("exit code 43", warning.args[0])
+            self.assertFalse(
+                any("发生异常" in call.args[0] for call in notify.call_args_list)
+            )
+
+    async def test_pdf_error_is_listed_as_a_warning_row(self):
+        """PDF 警告应作为持久记录出现在错误表的警告行中。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            project = ProjectViewState(
+                project_name="paper",
+                pdf_error="Pandoc PDF generation failed with exit code 43.",
+            )
+
+            rows = app._error_reports_with_status(project)
+            self.assertEqual(len(rows), 1)
+            report, status = rows[0]
+            self.assertEqual(status, "warning")
+            self.assertIn("exit code 43", str(report["error"]))
+            self.assertEqual(app._error_status_text("warning").plain, "警告")
+
+
 class TuiResultViewsTests(TuiAppTests):
     """验证任务结果列表、表格和项目详情页会读取项目状态。"""
 
@@ -1224,8 +1829,8 @@ class TuiResultViewsTests(TuiAppTests):
 
             table = app.query_one("#task-table", DataTable)
             self.assertEqual(table.row_count, 1)
-            self.assertEqual(table.get_cell_at((0, 0)), "paper")
-            self.assertEqual(table.get_cell_at((0, 1)), "completed")
+            self.assertEqual(table.get_cell_at((0, 1)), "paper")
+            self.assertEqual(table.get_cell_at((0, 2)), "completed")
 
     async def test_refresh_project_list_adds_selectable_items(self):
         """确认侧栏项目列表会展示当前任务下的项目。"""
@@ -1666,8 +2271,252 @@ class TuiResultViewsTests(TuiAppTests):
                 self.assertEqual(terms_table.get_cell_at((0, 1)), "图")
 
 
+class TuiProjectManagerTests(TuiAppTests):
+    """验证项目管理表的多选和批量操作按钮状态。"""
+
+    def _task_with_projects(self) -> tuple[TaskViewState, TaskViewState]:
+        """构造一个包含运行项目和已完成项目的任务集合。"""
+        running = TaskViewState(input_type="arxiv", inputs=["running"], task_id="task-running", total=1)
+        running.projects.append(ProjectViewState(project_name="running", status=ProjectStatus.RUNNING))
+        completed = TaskViewState(input_type="arxiv", inputs=["done"], task_id="task-done", total=1)
+        completed.projects.append(ProjectViewState(project_name="done", status=ProjectStatus.COMPLETED))
+        return running, completed
+
+    async def test_project_table_has_selection_column_and_toggles_rows(self):
+        """确认项目表首列为选择标记，点击同一行可切换选中状态。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            running, completed = self._task_with_projects()
+            app.tasks = [running, completed]
+            app.refresh_task_table()
+
+            table = app.query_one("#task-table", DataTable)
+            self.assertEqual([str(column.label) for column in table.ordered_columns], ["选中", "项目", "状态", "任务 id"])
+            self.assertEqual(table.get_cell_at((0, 0)), "[]")
+
+            app._toggle_project_selection(0)
+            self.assertEqual(table.get_cell_at((0, 0)), "[√]")
+            app._toggle_project_selection(0)
+            self.assertEqual(table.get_cell_at((0, 0)), "[]")
+
+    async def test_project_table_mouse_click_selects_row_once(self):
+        """确认真实鼠标点击只切换一次，并将首行变为选中标记。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            task = TaskViewState(input_type="arxiv", inputs=["paper"], task_id="task-1", total=1)
+            task.projects.append(ProjectViewState(project_name="paper", status=ProjectStatus.COMPLETED))
+            app.tasks = [task]
+            app.refresh_task_table()
+            app.action_project_manager()
+            await pilot.pause()
+
+            table = app.query_one("#task-table", DataTable)
+            self.assertGreater(table.region.width, 0)
+            self.assertGreater(table.region.height, 0)
+            self.assertEqual(table.get_cell_at((0, 0)), "[]")
+            await pilot.click("#task-table", offset=(1, 1))
+            await pilot.pause()
+            self.assertEqual(table.get_cell_at((0, 0)), "[√]")
+
+    async def test_project_action_buttons_require_all_selected_projects_to_match(self):
+        """确认终止、删除、重译按钮遵循所有选中项目的状态约束。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            running, completed = self._task_with_projects()
+            app.tasks = [running, completed]
+            app.refresh_task_table()
+            terminate = app.query_one("#terminate-translation-button", Button)
+            delete = app.query_one("#delete-project-button", Button)
+            retry = app.query_one("#retry-translation-button", Button)
+
+            self.assertTrue(terminate.disabled)
+            self.assertTrue(delete.disabled)
+            self.assertTrue(retry.disabled)
+
+            app._toggle_project_selection(0)
+            self.assertFalse(terminate.disabled)
+            self.assertTrue(delete.disabled)
+            self.assertTrue(retry.disabled)
+
+            app._toggle_project_selection(0)
+            app._toggle_project_selection(1)
+            self.assertTrue(terminate.disabled)
+            self.assertFalse(delete.disabled)
+            self.assertFalse(retry.disabled)
+
+            app._toggle_project_selection(0)
+            self.assertTrue(terminate.disabled)
+            self.assertTrue(delete.disabled)
+            self.assertTrue(retry.disabled)
+
+    async def test_refresh_task_table_preserves_existing_project_selection(self):
+        """确认刷新表格后保留仍存在项目的选择身份并清理失效身份。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test():
+            running, completed = self._task_with_projects()
+            app.tasks = [running, completed]
+            app.selected_project_keys = {(running.task_id, "running"), ("missing", "gone")}
+            app.refresh_task_table()
+
+            self.assertEqual(app.selected_project_keys, {(running.task_id, "running")})
+            table = app.query_one("#task-table", DataTable)
+            self.assertEqual(table.get_cell_at((0, 0)), "[√]")
+
+    async def test_delete_selected_projects_removes_output_and_history_but_keeps_source(self):
+        """确认删除会清理输出目录和内存历史，但不会删除源项目目录。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            source = root / "source"
+            output = root / "output"
+            source.mkdir()
+            output.mkdir()
+            (output / "artifact.txt").write_text("x", encoding="utf-8")
+            task = TaskViewState(input_type="local", inputs=[str(source)], task_id="task-1", total=1)
+            task.projects.append(
+                ProjectViewState(
+                    project_name="paper",
+                    status=ProjectStatus.COMPLETED,
+                    project_dir=str(source),
+                    output_dir=str(output),
+                )
+            )
+            async with app.run_test():
+                app.tasks = [task]
+                app.selected_project_keys = {(task.task_id, "paper")}
+                app.refresh_task_table()
+
+                app._delete_selected_projects()
+
+                self.assertTrue(source.is_dir())
+                self.assertFalse(output.exists())
+                self.assertEqual(app.tasks, [])
+                self.assertEqual(app.selected_project_keys, set())
+
+    async def test_delete_selected_projects_continues_after_one_failure(self):
+        """确认单个输出目录删除失败时，其他项目仍会继续删除。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        with TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            first, second = root / "first", root / "second"
+            first.mkdir()
+            second.mkdir()
+            task = TaskViewState(input_type="local", inputs=["first", "second"], task_id="task-1", total=2)
+            task.projects.extend(
+                [
+                    ProjectViewState(project_name="first", status=ProjectStatus.COMPLETED, output_dir=str(first)),
+                    ProjectViewState(project_name="second", status=ProjectStatus.COMPLETED, output_dir=str(second)),
+                ]
+            )
+            async with app.run_test():
+                app.tasks = [task]
+                app.selected_project_keys = {(task.task_id, "first"), (task.task_id, "second")}
+                app.refresh_task_table()
+                real_rmtree = tui_app.shutil.rmtree
+
+                def fail_first(path):
+                    """仅让第一个目录删除失败，第二个使用真实递归删除。"""
+                    if Path(path) == first:
+                        raise OSError("locked")
+                    return real_rmtree(path)
+
+                with patch.object(tui_app.shutil, "rmtree", side_effect=fail_first):
+                    app._delete_selected_projects()
+
+                self.assertTrue(first.exists())
+                self.assertFalse(second.exists())
+                self.assertEqual([project.project_name for project in task.projects], ["first"])
+
+    async def test_retry_selected_projects_reuses_inputs_and_starts_one_task(self):
+        """确认批量重译复用原始输入，并只创建和启动一个新任务。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["2508.18791", "2508.18792"], task_id="old", total=2)
+        task.projects.extend(
+            [
+                ProjectViewState(project_name="2508.18791", status=ProjectStatus.FAILED),
+                ProjectViewState(project_name="2508.18792", status=ProjectStatus.COMPLETED),
+            ]
+        )
+        async with app.run_test():
+            app.tasks = [task]
+            app.selected_project_keys = {(task.task_id, "2508.18791"), (task.task_id, "2508.18792")}
+            app.refresh_task_table()
+            with patch.object(app, "start_current_task") as start:
+                app._retry_selected_projects()
+
+            self.assertIs(app.current_task, app.tasks[-1])
+            self.assertEqual(app.current_task.input_type, "arxiv")
+            self.assertEqual(app.current_task.inputs, ["2508.18791", "2508.18792"])
+            self.assertEqual(len(app.tasks), 2)
+            start.assert_called_once_with()
+
+    async def test_terminate_button_terminates_selected_task(self):
+        """确认点击终止按钮会强制终止选中项目所属任务。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="running", total=1)
+        task.projects.append(ProjectViewState(project_name="2508.18791", status=ProjectStatus.RUNNING))
+        async with app.run_test():
+            app.tasks = [task]
+            app.selected_project_keys = {(task.task_id, "2508.18791")}
+            app.refresh_task_table()
+            with patch.object(app, "terminate_task_process") as terminate:
+                app.on_button_pressed(Button.Pressed(app.query_one("#terminate-translation-button", Button)))
+            terminate.assert_called_once_with(task.task_id)
+
+
 class TuiZoteroImportTests(TuiAppTests):
     """验证 Zotero tab 能对选中项目的 PDF 调用 adapter 并反馈状态。"""
+
+    async def test_project_completion_shows_import_controls_on_first_zotero_tab_activation(self):
+        """确认项目完成后首次打开 Zotero 页会显示新生成 PDF 的导入控件。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], task_id="task-1", total=1)
+        task.projects.append(ProjectViewState(project_name="2508.18791", status=ProjectStatus.RUNNING))
+
+        async with app.run_test() as pilot:
+            app.current_task = task
+            app.tasks = [task]
+            app.select_project("2508.18791", task.task_id)
+            self.assertFalse(app.query_one("#import-zotero-button", Button).display)
+
+            app.handle_runtime_event(
+                {
+                    "type": "project_complete",
+                    "project_name": "2508.18791",
+                    "pdf_path": "paper.pdf",
+                },
+                task,
+            )
+            with patch.object(app, "load_zotero_libraries"):
+                app.query_one("#detail-tabs", TabbedContent).active = "zotero-tab"
+                await pilot.pause()
+
+            self.assertTrue(app.query_one("#zotero-import-rule", Rule).display)
+            self.assertTrue(app.query_one("#import-zotero-button", Button).display)
+
+    async def test_other_project_completion_does_not_refresh_selected_detail(self):
+        """确认其他项目完成时不会重绘当前选中的项目详情。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["selected", "other"], task_id="task-1", total=2)
+        task.projects.extend(
+            [
+                ProjectViewState(project_name="selected", status=ProjectStatus.RUNNING),
+                ProjectViewState(project_name="other", status=ProjectStatus.RUNNING),
+            ]
+        )
+
+        async with app.run_test():
+            app.current_task = task
+            app.tasks = [task]
+            app.select_project("selected", task.task_id)
+
+            with patch.object(app, "refresh_detail_page") as refresh_detail:
+                app.handle_runtime_event(
+                    {"type": "project_complete", "project_name": "other", "pdf_path": "other.pdf"},
+                    task,
+                )
+
+            refresh_detail.assert_not_called()
 
     async def test_refresh_detail_page_hides_import_controls_without_pdf(self):
         """确认没有 PDF 的项目不显示竖向 Rule 和导入按钮。"""
@@ -2080,6 +2929,257 @@ class TuiZoteroImportTests(TuiAppTests):
 
         async with app.run_test():
             with patch.object(app, "import_selected_project_to_zotero") as import_method:
+                app.on_button_pressed(event)
+
+        import_method.assert_called_once_with()
+
+    async def test_lite_shows_markdown_import_button_and_heavy_hides_it(self):
+        """确认 lite 显示 PDF 与 Markdown 导入，heavy 只显示 PDF 导入。"""
+        lite = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        heavy = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+
+        async with lite.run_test():
+            lite.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+            lite.current_task.projects.append(
+                ProjectViewState(
+                    project_name="paper",
+                    engine="lite",
+                    pdf_path=r"D:\out\paper.pdf",
+                    translated_markdown_path=r"D:\out\translated.md",
+                )
+            )
+            lite.selected_project_name = "paper"
+            lite.refresh_detail_page()
+
+            self.assertTrue(lite.query_one("#import-zotero-button", Button).display)
+            self.assertTrue(lite.query_one("#import-zotero-markdown-button", Button).display)
+
+        async with heavy.run_test():
+            heavy.current_task = TaskViewState(input_type="arxiv", inputs=["2508.18791"], engine="heavy")
+            heavy.current_task.projects.append(
+                ProjectViewState(
+                    project_name="paper",
+                    engine="heavy",
+                    pdf_path=r"D:\out\paper.pdf",
+                    translated_markdown_path=r"D:\out\translated.md",
+                )
+            )
+            heavy.selected_project_name = "paper"
+            heavy.refresh_detail_page()
+
+            self.assertTrue(heavy.query_one("#import-zotero-button", Button).display)
+            self.assertFalse(heavy.query_one("#import-zotero-markdown-button", Button).display)
+
+    async def test_import_markdown_creates_note_for_each_selected_zotero_item(self):
+        """确认 lite 会把完整译文 Markdown 作为每个选中条目的子笔记。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        adapter = Mock()
+        adapter.create_note.side_effect = [{"item_key": "NOTE1"}, {"item_key": "NOTE2"}]
+
+        with TemporaryDirectory() as temp_dir:
+            translated_path = Path(temp_dir) / "translated.md"
+            markdown = "# Title\n\n完整译文内容\n"
+            translated_path.write_text(markdown, encoding="utf-8")
+
+            async with app.run_test():
+                app.zotero_adapter_factory = lambda api_key, local_api_base: adapter
+                app.current_config = {
+                    "zotero": {
+                        "local_api_base": "http://127.0.0.1:23119/api",
+                        "web_api_key_env": "ZOTERO_API_KEY",
+                    }
+                }
+                app.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+                app.current_task.projects.append(
+                    ProjectViewState(
+                        project_name="paper",
+                        engine="lite",
+                        status=ProjectStatus.COMPLETED,
+                        translated_markdown_path=str(translated_path),
+                    )
+                )
+                app.selected_project_name = "paper"
+                app.populate_zotero_results(
+                    [
+                        {
+                            "item_key": "ITEM123",
+                            "title": "Paper 1",
+                            "library_id": "42",
+                            "library_type": "group",
+                            "library_name": "Reading Group",
+                            "collection_names": [],
+                        },
+                        {
+                            "item_key": "ITEM456",
+                            "title": "Paper 2",
+                            "library_id": "7",
+                            "library_type": "user",
+                            "library_name": "Ada",
+                            "collection_names": [],
+                        },
+                    ]
+                )
+                app.toggle_zotero_row_selection(0)
+                app.toggle_zotero_row_selection(1)
+
+                with patch.dict("os.environ", {"ZOTERO_API_KEY": "ui-key"}):
+                    app.import_selected_project_markdown_to_zotero()
+
+        self.assertEqual(adapter.create_note.call_count, 2)
+        adapter.create_note.assert_any_call("ITEM123", "paper", markdown, "42", "group")
+        adapter.create_note.assert_any_call("ITEM456", "paper", markdown, "7", "user")
+        self.assertEqual(app.current_task.projects[0].zotero_status, "导入完成：成功 2，失败 0。")
+
+    async def test_import_markdown_continues_after_one_selected_item_fails(self):
+        """确认首个子笔记失败不会阻止后续选中条目的导入。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        adapter = Mock()
+        adapter.create_note.side_effect = [RuntimeError("first note rejected"), {"item_key": "NOTE2"}]
+
+        with TemporaryDirectory() as temp_dir:
+            translated_path = Path(temp_dir) / "translated.md"
+            translated_path.write_text("# Title\n\n完整译文内容\n", encoding="utf-8")
+
+            async with app.run_test():
+                app.zotero_adapter_factory = lambda api_key, local_api_base: adapter
+                app.current_config = {
+                    "zotero": {
+                        "local_api_base": "http://127.0.0.1:23119/api",
+                        "web_api_key_env": "ZOTERO_API_KEY",
+                    }
+                }
+                app.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+                app.current_task.projects.append(
+                    ProjectViewState(
+                        project_name="paper",
+                        engine="lite",
+                        status=ProjectStatus.COMPLETED,
+                        translated_markdown_path=str(translated_path),
+                    )
+                )
+                app.selected_project_name = "paper"
+                app.populate_zotero_results(
+                    [
+                        {
+                            "item_key": "ITEM123",
+                            "title": "Paper 1",
+                            "library_id": "42",
+                            "library_type": "group",
+                            "library_name": "Reading Group",
+                            "collection_names": [],
+                        },
+                        {
+                            "item_key": "ITEM456",
+                            "title": "Paper 2",
+                            "library_id": "7",
+                            "library_type": "user",
+                            "library_name": "Ada",
+                            "collection_names": [],
+                        },
+                    ]
+                )
+                app.toggle_zotero_row_selection(0)
+                app.toggle_zotero_row_selection(1)
+
+                with patch.dict("os.environ", {"ZOTERO_API_KEY": "ui-key"}):
+                    app.import_selected_project_markdown_to_zotero()
+
+        self.assertEqual(adapter.create_note.call_count, 2)
+        adapter.create_note.assert_any_call("ITEM123", "paper", "# Title\n\n完整译文内容\n", "42", "group")
+        adapter.create_note.assert_any_call("ITEM456", "paper", "# Title\n\n完整译文内容\n", "7", "user")
+        self.assertEqual(
+            app.current_task.projects[0].zotero_status,
+            "导入完成：成功 1，失败 1。 ITEM123: first note rejected",
+        )
+
+    async def test_import_markdown_reports_missing_translated_file(self):
+        """确认 Markdown 导入会明确报告缺失的译文文件。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+
+        async with app.run_test():
+            app.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+            app.current_task.projects.append(
+                ProjectViewState(
+                    project_name="paper",
+                    engine="lite",
+                    status=ProjectStatus.COMPLETED,
+                    translated_markdown_path=r"D:\out\missing-translated.md",
+                )
+            )
+            app.selected_project_name = "paper"
+            app.populate_zotero_results(
+                [
+                    {
+                        "item_key": "ITEM123",
+                        "title": "Paper",
+                        "library_id": "42",
+                        "library_type": "group",
+                        "library_name": "Reading Group",
+                        "collection_names": [],
+                    }
+                ]
+            )
+            app.toggle_zotero_row_selection(0)
+
+            app.import_selected_project_markdown_to_zotero()
+
+        self.assertEqual(app.current_task.projects[0].zotero_status, "失败：当前项目没有译文 Markdown 文件。")
+
+    async def test_import_markdown_reports_missing_api_key(self):
+        """确认 Markdown 导入在 API key 缺失时不创建笔记。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+
+        with TemporaryDirectory() as temp_dir:
+            translated_path = Path(temp_dir) / "translated.md"
+            translated_path.write_text("# content", encoding="utf-8")
+
+            async with app.run_test():
+                app.current_config = {
+                    "zotero": {
+                        "local_api_base": "http://127.0.0.1:23119/api",
+                        "web_api_key_env": "MISSING_ZOTERO_API_KEY",
+                    }
+                }
+                app.current_task = TaskViewState(input_type="pdf", inputs=["paper.pdf"], engine="lite")
+                app.current_task.projects.append(
+                    ProjectViewState(
+                        project_name="paper",
+                        engine="lite",
+                        status=ProjectStatus.COMPLETED,
+                        translated_markdown_path=str(translated_path),
+                    )
+                )
+                app.selected_project_name = "paper"
+                app.populate_zotero_results(
+                    [
+                        {
+                            "item_key": "ITEM123",
+                            "title": "Paper",
+                            "library_id": "42",
+                            "library_type": "group",
+                            "library_name": "Reading Group",
+                            "collection_names": [],
+                        }
+                    ]
+                )
+                app.toggle_zotero_row_selection(0)
+
+                with patch.dict("os.environ", {}, clear=True):
+                    app.import_selected_project_markdown_to_zotero()
+
+        self.assertEqual(
+            app.current_task.projects[0].zotero_status,
+            "失败：Web API key 环境变量未设置：MISSING_ZOTERO_API_KEY。",
+        )
+
+    async def test_markdown_import_button_branch_calls_markdown_import_method(self):
+        """确认 Zotero Markdown 导入按钮会调用对应动作。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
+        event = Mock()
+        event.button.id = "import-zotero-markdown-button"
+
+        async with app.run_test():
+            with patch.object(app, "import_selected_project_markdown_to_zotero") as import_method:
                 app.on_button_pressed(event)
 
         import_method.assert_called_once_with()

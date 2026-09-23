@@ -10,6 +10,13 @@ from src.tui.config import ensure_ui_config
 
 TuiEventCallback = Callable[[dict[str, Any]], None]
 
+_HEAVY_PREPARE_ERROR_MESSAGES = {
+    "No projects found. Check 'tex_sources_dir' and 'paper_list' in config.",
+    "No valid TeX projects available for processing.",
+    "No input provided. Use --arxiv, --project, or --project-url. "
+    "To process existing projects, pass --all-existing.",
+}
+
 
 def run_tui_task(
     config_path: str,
@@ -17,51 +24,117 @@ def run_tui_task(
     items: list[str],
     overrides: dict[str, Any],
     event_callback: TuiEventCallback,
+    engine: str = "heavy",
 ) -> dict[str, Any]:
-    """Run a UI-submitted translation task through the existing runtime."""
+    """Run a UI task through the engine captured when the task was created."""
+    selected_engine = runtime.normalize_engine(engine)
     resolved_config_path = str(ensure_ui_config(Path.cwd()))
     runtime_overrides = dict(overrides)
-    project_items: list[str] = []
-    project_url_items: list[str] = []
+    remote_start_emitted = False
+    full_input_start_emitted = False
 
-    if input_type == "arxiv":
-        runtime_overrides["paper_list"] = list(items)
-    elif input_type == "local":
-        runtime_overrides["paper_list"] = []
-        project_items = list(items)
-    elif input_type == "remote":
-        runtime_overrides["paper_list"] = []
-        project_url_items = list(items)
+    if selected_engine == "lite":
+        runtime_overrides.pop("retranslate_with_terms", None)
     else:
-        raise ValueError(f"Unsupported input type: {input_type}")
+        if input_type == "arxiv":
+            runtime_overrides["paper_list"] = list(items)
+        elif input_type in {"local", "remote"}:
+            runtime_overrides["paper_list"] = []
+        else:
+            raise ValueError(f"Unsupported input type: {input_type}")
 
     config = runtime.load_runtime_config(config_path=resolved_config_path, overrides=runtime_overrides)
-    try:
-        projects, config, projects_dir, output_dir = runtime.prepare_projects(
-            config=config,
-            project_items=project_items,
-            project_url_items=project_url_items,
-            all_existing=False,
-        )
-    except ValueError:
-        _emit_prepare_failure_events(input_type, items, event_callback)
-        raise
-    _emit_prepare_skip_events(input_type, items, projects, event_callback)
-    project_status = runtime.run_projects(
-        config=config,
-        projects=projects,
-        output_dir=output_dir,
-        event_callback=event_callback,
-    )
+    prepare_project_names = _prepare_project_names(input_type, items)
 
-    return {
-        "config": config,
-        "projects": projects,
-        "projects_dir": projects_dir,
-        "output_dir": output_dir,
-        "completed_projects": project_status["completed_projects"],
-        "failed_projects": project_status["failed_projects"],
-    }
+    def emit_full_input_start() -> None:
+        """Set the heavy task total to all submitted local or ArXiv inputs once."""
+        nonlocal full_input_start_emitted
+        if full_input_start_emitted:
+            return
+        event_callback(
+            {
+                "type": "run_start",
+                "engine": selected_engine,
+                "total": len(items),
+            }
+        )
+        full_input_start_emitted = True
+
+    def forward_event(event: dict[str, Any]) -> None:
+        """Tag events with the immutable task engine before forwarding them."""
+        nonlocal remote_start_emitted
+        tagged_event = dict(event)
+        tagged_event["engine"] = selected_engine
+        if (
+            selected_engine == "heavy"
+            and input_type in {"arxiv", "local"}
+            and tagged_event.get("type")
+            in {"project_start", "project_complete", "project_error"}
+        ):
+            emit_full_input_start()
+        if (
+            selected_engine == "heavy"
+            and input_type == "remote"
+            and not remote_start_emitted
+            and tagged_event.get("type")
+            in {"project_start", "project_complete", "project_error"}
+        ):
+            event_callback(
+                {
+                    "type": "run_start",
+                    "engine": selected_engine,
+                    "total": int(tagged_event.get("total") or 0),
+                }
+            )
+            remote_start_emitted = True
+        event_callback(tagged_event)
+
+    try:
+        result = runtime.run_engine_task(
+            engine=selected_engine,
+            input_type=input_type,
+            items=list(items),
+            config=config,
+            event_callback=lambda event: _emit_engine_event(
+                event,
+                forward_event,
+                prepare_project_names,
+            ),
+        )
+    except ValueError as error:
+        if selected_engine == "heavy" and _is_heavy_prepare_error(error):
+            if input_type in {"arxiv", "local"}:
+                emit_full_input_start()
+            _emit_prepare_failure_events(input_type, items, forward_event)
+        raise
+
+    if selected_engine == "heavy" and input_type != "remote":
+        _emit_prepare_skip_events(
+            input_type,
+            items,
+            list(result.get("projects") or []),
+            forward_event,
+        )
+    elif selected_engine == "heavy" and not remote_start_emitted:
+        forward_event({"type": "run_start", "total": len(result.get("projects") or [])})
+    return result
+
+
+def _is_heavy_prepare_error(error: ValueError) -> bool:
+    """Return whether a known heavy input-preparation failure reached the runner."""
+    return str(error) in _HEAVY_PREPARE_ERROR_MESSAGES
+
+
+def _emit_engine_event(
+    event: dict[str, Any],
+    event_callback: TuiEventCallback,
+    project_names: set[str],
+) -> None:
+    """Preserve runtime event types while scoping preparation logs safely."""
+    if event.get("type") != "task_log":
+        event_callback(event)
+        return
+    _emit_prepare_log(event, event_callback, project_names)
 
 
 def _emit_prepare_skip_events(
@@ -77,6 +150,38 @@ def _emit_prepare_skip_events(
     skipped_items = _prepare_skipped_items(input_type, items, projects)
     for item in skipped_items:
         _emit_prepare_error(item, event_callback)
+
+
+def _emit_prepare_log(
+    payload: dict[str, Any],
+    event_callback: TuiEventCallback,
+    project_names: set[str] | None = None,
+) -> None:
+    """将准备阶段工具日志包装为项目日志或任务日志事件。"""
+    event = dict(payload)
+    project_name = str(event.get("project_name") or "")
+    is_known_project = bool(project_name) and (
+        project_names is None or project_name in project_names
+    )
+    event["type"] = "project_log" if is_known_project else "task_log"
+    if not is_known_project:
+        event.pop("project_name", None)
+    event_callback(event)
+
+
+def _prepare_project_names(input_type: str, items: list[str]) -> set[str]:
+    """Return project names that can be confidently tied to submitted inputs."""
+    names: set[str] = set()
+    for item in items:
+        item_name = Path(item).name
+        names.add(item_name)
+        names.add(_archive_stem(item_name))
+    if input_type == "arxiv":
+        try:
+            names.update(str(item) for item in runtime.extract_arxiv_ids(items))
+        except (TypeError, ValueError):
+            pass
+    return {name for name in names if name}
 
 
 def _emit_prepare_failure_events(input_type: str, items: list[str], event_callback: TuiEventCallback) -> None:

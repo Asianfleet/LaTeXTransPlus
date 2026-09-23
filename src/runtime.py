@@ -1,6 +1,7 @@
 import os
 import tarfile
 import zipfile
+from copy import deepcopy
 from contextlib import nullcontext
 from pathlib import Path
 from typing import Any, Callable, ContextManager, Dict, Iterable, List, Optional, Sequence
@@ -9,6 +10,9 @@ import toml
 
 from src.agents.coordinator_agent import CoordinatorAgent
 from src.config import load_llm_profile, parse_custom_json, resolve_llm_api_key
+from src.engines.base import engine_config, engine_runtime_fields, normalize_engine
+from src.engines.heavy import HeavyEngine
+from src.engines.lite import LiteEngine
 from src.formats.latex.utils import (
     batch_download_arxiv_tex,
     extract_arxiv_ids,
@@ -23,6 +27,17 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ProjectEventCallback = Callable[[Dict[str, Any]], None]
 ProjectContextCallback = Callable[[int, int, str], ContextManager[None]]
 ProjectLogCallback = Callable[[Dict[str, Any]], None]
+
+
+def effective_engine_config(config: Dict[str, Any], engine: str) -> Dict[str, Any]:
+    """Build an engine view while retaining explicit legacy runtime overrides."""
+    if "heavy" not in config and "lite" not in config:
+        return config
+    effective = engine_config(config, engine)
+    for key in engine_runtime_fields(engine):
+        if key in config:
+            effective[key] = deepcopy(config[key])
+    return effective
 
 
 def project_output_dir(output_dir: str, target_language: str, project_dir: str) -> Path:
@@ -149,6 +164,9 @@ def load_runtime_config(
         llm_config["api_key"] = overrides["key"]
     resolve_llm_api_key(config)
 
+    heavy_config = config.get("heavy")
+    heavy_overrides = heavy_config if isinstance(heavy_config, dict) else config
+
     for key in ("source", "output", "source_language", "target_language", "user_term"):
         if overrides.get(key):
             mapped_key = {
@@ -158,19 +176,20 @@ def load_runtime_config(
                 "target_language": "target_language",
                 "user_term": "user_term",
             }[key]
-            config[mapped_key] = overrides[key]
+            target_config = heavy_overrides if key in {"source", "output"} else config
+            target_config[mapped_key] = overrides[key]
 
     if overrides.get("mode") is not None:
         config["mode"] = overrides["mode"]
     if overrides.get("update_term") is not None:
         config["update_term"] = overrides["update_term"]
     if overrides.get("retranslate_with_terms") is not None:
-        config["retranslate_with_terms"] = bool(overrides["retranslate_with_terms"])
+        heavy_overrides["retranslate_with_terms"] = bool(overrides["retranslate_with_terms"])
 
     extra_papers = overrides.get("paper_list") or []
     if extra_papers:
-        config.setdefault("paper_list", [])
-        config["paper_list"].extend(extra_papers)
+        heavy_overrides.setdefault("paper_list", [])
+        heavy_overrides["paper_list"].extend(extra_papers)
 
     return config
 
@@ -180,7 +199,18 @@ def prepare_projects(
     project_items: Optional[Iterable[str]] = None,
     project_url_items: Optional[Iterable[str]] = None,
     all_existing: bool = False,
+    prepare_log_callback: Optional[ProjectLogCallback] = None,
 ) -> tuple[List[str], Dict[str, Any], str, str]:
+    """准备输入项目；可选回调用于将准备阶段日志转发给 TUI。"""
+    def emit_prepare(message: str, level: str = "info", project_name: str | None = None) -> None:
+        if prepare_log_callback:
+            payload: Dict[str, Any] = {"level": level, "message": message, "line": message}
+            if project_name:
+                payload["project_name"] = project_name
+            prepare_log_callback(payload)
+        else:
+            print(message)
+
     input_items = config.get("paper_list", [])
     projects_dir = str(resolve_path(config.get("tex_sources_dir", "tex source")))
     output_dir = str(resolve_path(config.get("output_dir", "outputs")))
@@ -196,10 +226,28 @@ def prepare_projects(
         projects: List[str] = []
 
         if paper_list:
-            projects.extend(batch_download_arxiv_tex(paper_list, projects_dir))
+            if prepare_log_callback:
+                projects.extend(
+                    batch_download_arxiv_tex(
+                        paper_list,
+                        projects_dir,
+                        log_callback=prepare_log_callback,
+                    )
+                )
+            else:
+                projects.extend(batch_download_arxiv_tex(paper_list, projects_dir))
             if not config.get("user_term"):
-                config["category"] = get_arxiv_category(paper_list)
-            extract_compressed_files(projects_dir)
+                if prepare_log_callback:
+                    config["category"] = get_arxiv_category(
+                        paper_list,
+                        log_callback=prepare_log_callback,
+                    )
+                else:
+                    config["category"] = get_arxiv_category(paper_list)
+            if prepare_log_callback:
+                extract_compressed_files(projects_dir, log_callback=prepare_log_callback)
+            else:
+                extract_compressed_files(projects_dir)
 
         for project_path in project_items:
             resolved_project_path = str(resolve_path(project_path))
@@ -210,9 +258,9 @@ def prepare_projects(
                 try:
                     projects.append(extract_local_archive(resolved_project_path, projects_dir))
                 except Exception as e:
-                    print(f"[SKIP] Failed to extract local archive {project_path}: {e}")
+                    emit_prepare(f"[SKIP] Failed to extract local archive {project_path}: {e}", "error")
                 continue
-            print(f"[SKIP] Invalid local project path: {project_path}")
+            emit_prepare(f"[SKIP] Invalid local project path: {project_path}", "error")
 
         for project_url in project_url_items:
             archive_path: Optional[str] = None
@@ -220,9 +268,9 @@ def prepare_projects(
                 archive_path = download_remote_archive(project_url, projects_dir)
                 projects.append(extract_local_archive(archive_path, projects_dir))
             except RemoteArchiveDownloadError as e:
-                print(f"[SKIP] Failed to download remote archive {project_url}: {e}")
+                emit_prepare(f"[SKIP] Failed to download remote archive {project_url}: {e}", "error")
             except Exception as e:
-                print(f"[SKIP] Failed to extract remote archive {project_url}: {e}")
+                emit_prepare(f"[SKIP] Failed to extract remote archive {project_url}: {e}", "error")
             finally:
                 if archive_path:
                     try:
@@ -230,8 +278,11 @@ def prepare_projects(
                     except OSError:
                         pass
     elif all_existing:
-        print("No explicit inputs. Processing all existing projects in the specified directory.")
-        extract_compressed_files(projects_dir)
+        emit_prepare("No explicit inputs. Processing all existing projects in the specified directory.")
+        if prepare_log_callback:
+            extract_compressed_files(projects_dir, log_callback=prepare_log_callback)
+        else:
+            extract_compressed_files(projects_dir)
         projects = get_profect_dirs(projects_dir)
         if not projects:
             raise ValueError("No projects found. Check 'tex_sources_dir' and 'paper_list' in config.")
@@ -262,6 +313,7 @@ def classify_project_result(
     result = {
         "type": "completed" if ok else "failed",
         "ok": ok,
+        "engine": workflow_result.get("engine", "heavy"),
         "index": index,
         "total": total,
         "project_name": project_name,
@@ -291,6 +343,7 @@ def should_exit_with_failure(project_status: Dict[str, List[Dict[str, Any]]]) ->
 def _build_project_log_callback(
     event_callback: Optional[ProjectEventCallback],
     log_file: Any,
+    engine: str,
     project_name: str,
     project_dir: str,
     project_output_path: str,
@@ -308,6 +361,7 @@ def _build_project_log_callback(
         if event_callback:
             event_payload = {
                 "type": "project_log",
+                "engine": engine,
                 "project_name": project_name,
                 "project_dir": project_dir,
                 "output_dir": project_output_path,
@@ -329,6 +383,7 @@ def run_projects(
     event_callback: Optional[ProjectEventCallback] = None,
     project_context: Optional[ProjectContextCallback] = None,
 ) -> Dict[str, List[Dict[str, Any]]]:
+    """Run prepared heavy projects while preserving the legacy result contract."""
     completed_projects: List[Dict[str, Any]] = []
     failed_projects: List[Dict[str, Any]] = []
     total_projects = len(projects)
@@ -346,6 +401,7 @@ def run_projects(
                 event_callback(
                     {
                         "type": "project_start",
+                        "engine": "heavy",
                         "index": idx,
                         "total": total_projects,
                         "project_name": project_name,
@@ -365,6 +421,7 @@ def run_projects(
                 project_config["_project_log_callback"] = _build_project_log_callback(
                     event_callback=event_callback,
                     log_file=log_file,
+                    engine="heavy",
                     project_name=project_name,
                     project_dir=project_dir,
                     project_output_path=project_output_path,
@@ -378,15 +435,13 @@ def run_projects(
                     emit_console=project_context is not None,
                 ):
                     try:
-                        latex_trans = CoordinatorAgent(
-                            config=project_config,
-                            project_dir=project_dir,
-                            output_dir=output_dir,
+                        heavy_engine = HeavyEngine(coordinator_factory=CoordinatorAgent)
+                        workflow_result = heavy_engine.run(
+                            project_dir,
+                            project_config,
+                            Path(output_dir),
+                            project_config["_project_log_callback"],
                         )
-                        if project_config.get("retranslate_with_terms", False):
-                            workflow_result = latex_trans.workflow_latextrans_with_existing_terms()
-                        else:
-                            workflow_result = latex_trans.workflow_latextrans()
                         project_result = classify_project_result(
                             index=idx,
                             total=total_projects,
@@ -405,6 +460,7 @@ def run_projects(
                         failure_result = {
                             "type": "failed",
                             "ok": False,
+                            "engine": "heavy",
                             "index": idx,
                             "total": total_projects,
                             "project_name": project_name,
@@ -433,6 +489,7 @@ def run_projects(
             if event_callback:
                 event_payload = {
                     "type": event_type,
+                    "engine": "heavy",
                     "index": idx,
                     "total": total_projects,
                     "project_name": project_name,
@@ -454,6 +511,250 @@ def run_projects(
     }
 
 
+_LITE_ARTIFACT_FIELDS = (
+    "project_name",
+    "project_dir",
+    "output_dir",
+    "source_markdown_path",
+    "translated_markdown_path",
+    "pdf_path",
+    "pdf_error",
+    "project_terms_path",
+    "project_terms_decisions_path",
+)
+
+
+def _lite_artifact_payload(source: Dict[str, Any]) -> Dict[str, Any]:
+    """Return the lite engine identity and artifact fields for runtime events."""
+    payload = {key: source.get(key) for key in _LITE_ARTIFACT_FIELDS}
+    payload["engine"] = "lite"
+    return payload
+
+
+def _merge_lite_artifacts(
+    primary: Dict[str, Any],
+    fallback: Dict[str, Any],
+) -> Dict[str, Any]:
+    """Merge observed lite paths without replacing known values with nulls."""
+    merged = _lite_artifact_payload(fallback)
+    for key in _LITE_ARTIFACT_FIELDS:
+        if primary.get(key) is not None:
+            merged[key] = primary[key]
+    return merged
+
+
+def _lite_log_path(source: Dict[str, Any]) -> Optional[str]:
+    """Return the project-local lite log path when a project directory exists."""
+    output_dir = source.get("output_dir") or source.get("project_dir")
+    if not output_dir:
+        return None
+    return str(Path(str(output_dir)) / "latextrans.log")
+
+
+def _append_lite_log(log_path: Optional[str], line: str) -> None:
+    """Append one UTF-8 line to a lite project log when its path is known."""
+    if not log_path or not line:
+        return
+    path = Path(log_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("a", encoding="utf-8", buffering=1) as log_file:
+        log_file.write(f"{line}\n")
+
+
+def _run_lite_engine_task(
+    item: str,
+    config: Dict[str, Any],
+    output_root: Path,
+    event_callback: ProjectEventCallback,
+) -> Dict[str, Any]:
+    """Run one lite item and translate its logs into ordered project events."""
+    buffered_logs: List[Dict[str, Any]] = []
+    observed_artifacts: Dict[str, Any] = {}
+    start_emitted = False
+
+    def emit_start(source: Dict[str, Any]) -> None:
+        """Emit one lite project_start event with all engine-specific fields."""
+        nonlocal start_emitted
+        if start_emitted:
+            return
+        payload = _lite_artifact_payload(source)
+        payload.update(
+            {
+                "type": "project_start",
+                "index": 1,
+                "total": 1,
+                "log_path": _lite_log_path(payload),
+            }
+        )
+        event_callback(payload)
+        start_emitted = True
+
+    def emit_log(payload: Dict[str, Any], fallback: Dict[str, Any]) -> None:
+        """Write and forward one project-scoped lite log event."""
+        artifacts = _merge_lite_artifacts(payload, fallback)
+        log_path = _lite_log_path(artifacts)
+        line = str(payload.get("line") or payload.get("message") or "")
+        _append_lite_log(log_path, line)
+        event = dict(artifacts)
+        event.update(
+            {
+                "type": "project_log",
+                "index": 1,
+                "total": 1,
+                "log_path": log_path,
+                "agent_name": payload.get("agent_name"),
+                "level": payload.get("level", "info"),
+                "message": payload.get("message"),
+                "line": line,
+            }
+        )
+        event_callback(event)
+
+    def log_callback(payload: Dict[str, Any]) -> None:
+        """Buffer pre-project logs and stream later logs after project_start."""
+        nonlocal start_emitted
+        for key in _LITE_ARTIFACT_FIELDS:
+            if payload.get(key) is not None:
+                observed_artifacts[key] = payload[key]
+        if not start_emitted and payload.get("project_dir"):
+            emit_start(payload)
+            for buffered in buffered_logs:
+                emit_log(buffered, payload)
+            buffered_logs.clear()
+        if start_emitted:
+            emit_log(payload, observed_artifacts)
+        else:
+            buffered_logs.append(dict(payload))
+
+    try:
+        workflow_result = LiteEngine().run(item, config, output_root, log_callback)
+    except Exception as exc:
+        workflow_result = {
+            "ok": False,
+            "engine": "lite",
+            "project_name": Path(item).stem or item,
+            "project_dir": None,
+            "output_dir": None,
+            "source_markdown_path": None,
+            "translated_markdown_path": None,
+            "pdf_path": None,
+            "project_terms_path": None,
+            "project_terms_decisions_path": None,
+            "error": str(exc),
+        }
+
+    workflow_result = _merge_lite_artifacts(workflow_result, observed_artifacts) | {
+        "ok": bool(workflow_result.get("ok", False)),
+        "error": workflow_result.get("error"),
+    }
+    if not start_emitted:
+        emit_start(workflow_result)
+        for buffered in buffered_logs:
+            emit_log(buffered, workflow_result)
+
+    project_result = dict(_lite_artifact_payload(workflow_result))
+    project_result.update(
+        {
+            "type": "completed" if workflow_result["ok"] else "failed",
+            "ok": workflow_result["ok"],
+            "index": 1,
+            "total": 1,
+            "error": workflow_result.get("error"),
+            "log_path": _lite_log_path(workflow_result),
+        }
+    )
+    event_payload = dict(project_result)
+    event_payload["type"] = (
+        "project_complete" if workflow_result["ok"] else "project_error"
+    )
+    event_callback(event_payload)
+
+    completed_projects = [project_result] if workflow_result["ok"] else []
+    failed_projects = [] if workflow_result["ok"] else [project_result]
+    project_dir = workflow_result.get("project_dir")
+    return {
+        "config": config,
+        "projects": [project_dir] if project_dir else [],
+        "projects_dir": str(output_root),
+        "output_dir": str(output_root),
+        "completed_projects": completed_projects,
+        "failed_projects": failed_projects,
+    }
+
+
+def _emit_heavy_prepare_log(
+    payload: Dict[str, Any],
+    event_callback: ProjectEventCallback,
+) -> None:
+    """Forward a heavy input-preparation message as an engine-aware task log."""
+    event = dict(payload)
+    event["type"] = "task_log"
+    event["engine"] = "heavy"
+    event_callback(event)
+
+
+def run_engine_task(
+    engine: str,
+    input_type: str,
+    items: List[str],
+    config: Dict[str, Any],
+    event_callback: ProjectEventCallback,
+) -> Dict[str, Any]:
+    """Dispatch one TUI task through an isolated effective engine config."""
+    selected_engine = normalize_engine(engine or config.get("engine"))
+    effective_config = deepcopy(effective_engine_config(config, selected_engine))
+    effective_config["engine"] = selected_engine
+
+    if selected_engine == "lite":
+        if len(items) != 1:
+            raise ValueError("Lite engine accepts exactly one input item per task.")
+        output_root = resolve_path(str(effective_config.get("output_dir", "output-lite")))
+        return _run_lite_engine_task(
+            items[0],
+            effective_config,
+            output_root,
+            event_callback,
+        )
+
+    project_items: List[str] = []
+    project_url_items: List[str] = []
+    if input_type == "arxiv":
+        effective_config["paper_list"] = list(items)
+    elif input_type == "local":
+        effective_config["paper_list"] = []
+        project_items = list(items)
+    elif input_type == "remote":
+        effective_config["paper_list"] = []
+        project_url_items = list(items)
+    else:
+        raise ValueError(f"Unsupported heavy input type: {input_type}")
+
+    projects, effective_config, projects_dir, output_dir = prepare_projects(
+        config=effective_config,
+        project_items=project_items,
+        project_url_items=project_url_items,
+        all_existing=False,
+        prepare_log_callback=lambda payload: _emit_heavy_prepare_log(
+            payload,
+            event_callback,
+        ),
+    )
+    project_status = run_projects(
+        config=effective_config,
+        projects=projects,
+        output_dir=output_dir,
+        event_callback=event_callback,
+    )
+    return {
+        "config": effective_config,
+        "projects": projects,
+        "projects_dir": projects_dir,
+        "output_dir": output_dir,
+        "completed_projects": project_status["completed_projects"],
+        "failed_projects": project_status["failed_projects"],
+    }
+
+
 def run_translation(
     config_path: str = "config/default.toml",
     overrides: Optional[Dict[str, Any]] = None,
@@ -462,7 +763,9 @@ def run_translation(
     all_existing: bool = False,
     event_callback: Optional[ProjectEventCallback] = None,
 ) -> Dict[str, Any]:
-    config = load_runtime_config(config_path=config_path, overrides=overrides)
+    """Run the legacy CLI through the effective heavy-engine configuration."""
+    loaded_config = load_runtime_config(config_path=config_path, overrides=overrides)
+    config = effective_engine_config(loaded_config, "heavy")
     projects, config, projects_dir, output_dir = prepare_projects(
         config=config,
         project_items=project_items,

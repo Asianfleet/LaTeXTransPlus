@@ -35,6 +35,33 @@ class _SuccessfulSession:
 
 
 class MultilingualPromptTests(unittest.TestCase):
+    def _guardrail_prompts(self):
+        """Prompts used by the translator that embed the shared structure guardrails."""
+        return [
+            pm.caption_system_prompt,
+            pm.section_system_prompt,
+            pm.env_system_prompt,
+            pm.caption_system_prompt_with_dict,
+            pm.section_system_prompt_with_dict,
+            pm.env_system_prompt_with_dict,
+            pm.retrans_error_parts_system_prompt,
+        ]
+
+    def test_prompts_forbid_escaping_real_newlines_inside_command_arguments(self):
+        for target_lang in ("ch", "ja", "ko", "fr"):
+            pm.init_prompts("en", target_lang)
+
+            for prompt in self._guardrail_prompts():
+                with self.subTest(target_lang=target_lang, prompt=prompt[:60]):
+                    self.assertIn(
+                        r"Never replace a real line break with a literal `\n`",
+                        prompt,
+                    )
+                    self.assertIn(
+                        "A real line break inside a command argument",
+                        prompt,
+                    )
+
     def test_language_codes_are_rendered_as_language_names(self):
         pm.init_prompts("de", "jp")
 

@@ -7,32 +7,49 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from src.engines.base import normalize_engine
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
 
 TUI_PROJECT_METADATA_FILENAME = ".latextrans-tui.json"
 
 
-def load_output_history(output_root: Path) -> list[TaskViewState]:
-    """Load project history rows from existing output directories."""
+def load_output_history(output_root: Path, engine: str = "heavy") -> list[TaskViewState]:
+    """Load only project history rows belonging to the selected engine."""
+    selected_engine = normalize_engine(engine)
     if not output_root.is_dir():
         return []
 
     tasks: list[TaskViewState] = []
     for project_output_dir in sorted(path for path in output_root.iterdir() if path.is_dir()):
         metadata = read_project_metadata(project_output_dir)
+        project_engine = _infer_project_engine(project_output_dir, metadata)
+        if project_engine != selected_engine:
+            continue
         project_name = str(metadata.get("project_name") or _legacy_project_name(project_output_dir))
         task_id = str(metadata.get("task_id") or "")
         input_type = str(metadata.get("input_type") or "history")
         input_item = str(metadata.get("input_item") or project_name)
-        status = infer_project_status(project_output_dir)
+        status = infer_project_status(project_output_dir, engine=project_engine)
+        pdf_path = _find_pdf(project_output_dir, project_engine)
         project = ProjectViewState(
             project_name=project_name,
+            engine=project_engine,
             status=status,
             output_dir=str(project_output_dir),
             project_dir=str(_infer_project_dir(project_output_dir, metadata, project_name)),
-            pdf_path=str(_find_pdf(project_output_dir)) if _find_pdf(project_output_dir) else None,
+            pdf_path=str(pdf_path) if pdf_path else None,
+            source_markdown_path=_metadata_or_artifact_path(
+                metadata,
+                "source_markdown_path",
+                project_output_dir / "source.md",
+            ),
+            translated_markdown_path=_metadata_or_artifact_path(
+                metadata,
+                "translated_markdown_path",
+                project_output_dir / "translated.md",
+            ),
             errors_report_path=str(project_output_dir / "errors_report.json")
-            if (project_output_dir / "errors_report.json").is_file()
+            if project_engine == "heavy" and (project_output_dir / "errors_report.json").is_file()
             else None,
             project_terms_path=str(project_output_dir / "project_terms.csv")
             if (project_output_dir / "project_terms.csv").is_file()
@@ -44,7 +61,12 @@ def load_output_history(output_root: Path) -> list[TaskViewState]:
             if (project_output_dir / "latextrans.log").is_file()
             else None,
         )
-        task = TaskViewState(input_type=input_type, inputs=[input_item], task_id=task_id)
+        task = TaskViewState(
+            input_type=input_type,
+            inputs=[input_item],
+            engine=project_engine,
+            task_id=task_id,
+        )
         task.projects.append(project)
         task.completed = 1 if status == ProjectStatus.COMPLETED else 0
         task.failed = 1 if status == ProjectStatus.FAILED else 0
@@ -72,16 +94,23 @@ def write_project_metadata(
     input_item: str,
     project_name: str,
     status: ProjectStatus,
+    engine: str = "heavy",
+    source_markdown_path: str | None = None,
+    translated_markdown_path: str | None = None,
 ) -> None:
     """Persist TUI task metadata for one output project."""
+    selected_engine = normalize_engine(engine)
     project_dir.mkdir(parents=True, exist_ok=True)
     metadata = {
-        "schema_version": 1,
+        "schema_version": 2,
+        "engine": selected_engine,
         "task_id": task_id,
         "input_type": input_type,
         "input_item": input_item,
         "project_name": project_name,
         "status": status.value,
+        "source_markdown_path": source_markdown_path,
+        "translated_markdown_path": translated_markdown_path,
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     (project_dir / TUI_PROJECT_METADATA_FILENAME).write_text(
@@ -90,15 +119,23 @@ def write_project_metadata(
     )
 
 
-def infer_project_status(project_dir: Path) -> ProjectStatus:
-    """Infer project status from output artifacts."""
+def infer_project_status(project_dir: Path, engine: str = "heavy") -> ProjectStatus:
+    """Infer project status from artifacts owned by the selected engine."""
+    selected_engine = normalize_engine(engine)
     metadata_status = _metadata_status(read_project_metadata(project_dir))
-    if metadata_status == ProjectStatus.FAILED:
-        return ProjectStatus.FAILED
+    if metadata_status in {ProjectStatus.FAILED, ProjectStatus.CANCELLED}:
+        return metadata_status
+
+    if selected_engine == "lite":
+        if _find_pdf(project_dir, selected_engine) is not None:
+            return ProjectStatus.COMPLETED
+        if _has_lite_artifacts(project_dir):
+            return ProjectStatus.FAILED
+        return ProjectStatus.PENDING
 
     if _errors_report_has_errors(project_dir / "errors_report.json"):
         return ProjectStatus.FAILED
-    if _find_pdf(project_dir) is not None:
+    if _find_pdf(project_dir, selected_engine) is not None:
         return ProjectStatus.COMPLETED
     if (project_dir / "project_terms.csv").is_file():
         return ProjectStatus.TERMS_READY
@@ -158,8 +195,11 @@ def _errors_report_has_errors(errors_report_path: Path) -> bool:
     return bool(data)
 
 
-def _find_pdf(project_dir: Path) -> Path | None:
-    """Find the first PDF artifact in a project output directory."""
+def _find_pdf(project_dir: Path, engine: str = "heavy") -> Path | None:
+    """Find the translated PDF artifact for the selected engine."""
+    if engine == "lite":
+        translated_pdf = project_dir / "translated.pdf"
+        return translated_pdf if translated_pdf.is_file() else None
     try:
         return next(path for path in sorted(project_dir.glob("*.pdf")) if path.is_file())
     except StopIteration:
@@ -178,3 +218,43 @@ def _has_intermediate_artifacts(project_dir: Path) -> bool:
         "latextrans.log",
     }
     return any((project_dir / name).exists() for name in artifact_names)
+
+
+def _has_lite_artifacts(project_dir: Path) -> bool:
+    """Return whether a lite directory contains evidence of an incomplete run."""
+    artifact_names = {
+        "source.pdf",
+        "source.md",
+        "translated.md",
+        "project_terms.csv",
+        "project_terms_decisions.json",
+        "latextrans.log",
+    }
+    return any((project_dir / name).exists() for name in artifact_names)
+
+
+def _infer_project_engine(project_dir: Path, metadata: dict[str, Any]) -> str | None:
+    """Infer engine identity while treating pre-v2 metadata as heavy."""
+    metadata_engine = metadata.get("engine")
+    if metadata_engine is not None:
+        try:
+            return normalize_engine(metadata_engine)
+        except ValueError:
+            return None
+    if metadata:
+        return "heavy"
+    if any((project_dir / name).is_file() for name in ("source.md", "translated.md", "translated.pdf")):
+        return "lite"
+    return "heavy"
+
+
+def _metadata_or_artifact_path(
+    metadata: dict[str, Any],
+    key: str,
+    artifact_path: Path,
+) -> str | None:
+    """Return a persisted artifact path or infer it from a local file."""
+    value = metadata.get(key)
+    if isinstance(value, str) and value:
+        return value
+    return str(artifact_path) if artifact_path.is_file() else None

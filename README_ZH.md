@@ -31,7 +31,7 @@ LaTeXTransPlus 是一个基于原 LaTeXTrans 项目开发的 LaTeX 论文翻译�
 
 当前实现会协调 Parser、Terminology Generator、Translator、Validator 和 PDF Generator 完成工作流。项目支持从 arXiv 下载源码、处理本地 LaTeX 项目、处理压缩源码包、生成项目级术语表、配置源语言与目标语言、基于校验结果自动重译，并为每个项目保存 workflow 日志。
 
-LaTeXTransPlus 也提供基于 Textual 的终端 UI，可通过 `latextrans-tui` 启动。TUI 支持新建任务、项目管理、设置调整、进度跟踪，并能在同一个终端界面中查看生成结果。
+LaTeXTransPlus 也提供基于 Textual 的终端 UI，可通过 `latextrans-tui` 启动。TUI 支持新建任务、项目管理、设置调整、进度跟踪，并能在同一个终端界面中查看生成结果；它分别支持处理 LaTeX 源码的 Heavy 引擎和 PDF 转 Markdown 的 Lite 引擎。
 
 ## 终端 UI 预览
 
@@ -77,6 +77,12 @@ latextrans-tui
 如果使用 MiKTeX，建议启用缺失宏包的自动安装。Windows 下部分 LaTeX 工具链还可能需要 Strawberry Perl。
 
 LaTeXTransPlus 使用 `latexmk` 编译译文项目，并会根据目标语言选择 `pdflatex`、`xelatex` 或 `lualatex`。请确保 TeX 发行版中已经安装所需引擎和语言宏包。中文输出会按需使用 `ctex`，日文输出使用 `luatexja`，韩文输出使用 `kotex`。
+
+## 3. Lite 引擎依赖
+
+Lite 引擎使用 Python 依赖 `mineru-open-sdk` 提供的 MinerU SDK，从 PDF 提取 Markdown 和图片资源。最终生成 `translated.pdf` 还需要单独安装 `pandoc` 可执行文件和 XeLaTeX。MinerU 请求需要 API token：`[lite].mineru_api_key_env` 指定的环境变量（默认 `MINERU_TOKEN`）必须已设置且非空，否则 Lite 会在访问 MinerU 之前直接失败。请填入 MinerU API token 的原始值；外层引号和 `Bearer ` 前缀会被自动去掉，但 token 无效或过期时 MinerU 会返回 HTTP 401。
+
+中文（以及日文、韩文）目标需要给 Pandoc 指定一个 CJK 字体，否则 XeLaTeX 会静默丢弃全部汉字且仍然返回成功。Lite 用 `[lite].cjk_mainfont_candidates` 配置候选字体（逗号分隔，按顺序探测），借助 fontconfig（`fc-list`，随 TeX Live 一起安装）取出本机真实可解析的字体名，选中第一个可用项并把结果写入日志。正文里的非拉丁符号（例如希腊字母）由 `[lite].mainfont` 决定：留空时使用 Pandoc 默认的 Latin Modern，该字体不含希腊字母，相应字符会被静默丢弃。TUI 设置页在字体字段下方用「可用字体」面板列出检测到的字体，默认折叠：中文字体候选只列中文字体，正文字体列出全部字体。翻译提示词同时要求把 Markdown 正文里孤立的数学符号（例如单独的希腊字母）写成行内公式。字体名必须与 `fc-list` 报告的一致（例如本机实际是 `Noto Sans SC`，写成 `Noto Sans CJK SC` 会让 XeLaTeX 直接失败）。
 
 ## 可选：使用 Conda 环境
 
@@ -136,12 +142,24 @@ sys_name = "LaTeXTrans"
 version = "0.1.0"
 source_language = "en"
 target_language = "ch"
-paper_list = []
-tex_sources_dir = "tex source"
-output_dir = "outputs"
 update_term = "False"
 mode = "plain"
 user_term = ""
+engine = "heavy"
+
+[heavy]
+paper_list = []
+tex_sources_dir = "tex source"
+output_dir = "outputs"
+retranslate_with_terms = false
+
+[lite]
+output_dir = "output-lite"
+mineru_api_key_env = "MINERU_TOKEN"
+translate_appendix = true
+cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
+mainfont = ""
+geometry = ""
 ```
 
 `source_language` 和 `target_language` 使用 prompt 层支持的短语言代码，例如 `en`、`ch`、`zh`、`ja`、`jp`、`de`、`fr`、`es`、`ko`、`ru`、`pt`、`it` 和 `ar`。默认翻译方向是 English to Chinese。
@@ -152,6 +170,19 @@ user_term = ""
 
 - `plain`：使用可用的默认术语、用户术语和项目术语进行翻译。
 - `terms`：强制使用偏 glossary 的翻译 prompt。
+
+## TUI 引擎配置
+
+`engine` 是 TUI 下次启动时使用的默认引擎。设置页会把该值持久化到 `config/ui.toml`，但保存不会切换当前 TUI 会话。启动参数和入口页的引擎切换只影响当前会话，不会写入 `ui.toml`：
+
+```bash
+latextrans-tui --engine heavy
+latextrans-tui -e lite
+```
+
+启动优先级为 `--engine`/`-e`、`ui.toml.engine`、`heavy`。Heavy 和 Lite 使用相互独立的输出根目录：`[heavy].output_dir` 默认是 `outputs`，`[lite].output_dir` 默认是 `output-lite`。Lite 还会从 `[lite].mineru_api_key_env` 指定的环境变量读取 MinerU API token，该配置默认是 `MINERU_TOKEN`。
+
+`[lite].translate_appendix` 默认是 `true`。设为 `false` 时，Lite 按配置的源语言识别附录 ATX 标题，保留首个附录及其后的原始 Markdown，并将这部分内容排除在翻译和项目术语生成之外。支持的标题包括 `Appendix`/`Appendices`、“附录”/“附錄”、`Anhang`、`Annexe`、“付録”和“부록”；`Supplementary Material` 不视为附录。对于附录标题与这些词无关的论文，Lite 还会把 `References` 标题之后的所有章节视为附录内容。
 
 ## LLM 配置
 
@@ -202,7 +233,7 @@ max_llm_candidates = 30
 - `project_terms.csv`
 - `project_terms_decisions.json`
 
-如果 `review_before_translate = true`，workflow 会在生成项目术语后停止。审核 `project_terms.csv` 后，再使用 `--retranslate-with-terms` 重新运行。
+在 Heavy workflow 中，如果 `review_before_translate = true`，workflow 会在生成项目术语后停止。审核 `project_terms.csv` 后，再使用 `--retranslate-with-terms` 重新运行。
 
 也可以通过 `user_term` 提供自定义 CSV 术语表。CSV 需要使用以下列名：
 
@@ -212,7 +243,7 @@ Source Term,Target Translation
 
 对于 English-to-Chinese 翻译，项目还可能合并 `terms/` 下的默认术语。
 
-## 校验配置
+## Heavy 校验配置
 
 ```toml
 [validation.retry]
@@ -233,7 +264,7 @@ severity = "error"
 retryable = true
 ```
 
-Validator 会检查 command 数量、placeholder 保留情况和括号平衡。可重试的问题会被发送回 Translator 进行定向重译。
+Heavy Validator 会检查 command 数量、placeholder 保留情况和括号平衡。可重试的问题会被发送回 Translator 进行定向重译。
 
 # 📚 使用方法
 
@@ -243,9 +274,13 @@ LaTeXTransPlus 也提供基于 Textual 的终端 UI：
 
 ```bash
 latextrans-tui
+latextrans-tui --engine heavy
+latextrans-tui -e lite
 ```
 
-UI 每次任务只支持一种输入类型：arXiv ID 或 URL、本地项目路径或压缩包、远程压缩包 URL。它会显示项目级进度、结果文件、日志、校验报告和 UI 专用配置。Zotero 集成是可选动作，不会阻断翻译结果。
+Heavy 任务支持 arXiv ID 或 URL、本地 LaTeX 项目路径或压缩包，以及远程源码压缩包 URL。Lite 任务每次只接受一个输入：arXiv ID、arXiv 摘要页或 PDF URL、普通 PDF 直链，或本地 PDF 路径。Lite 会拒绝换行、逗号和批量分隔的输入；需要处理更多 PDF 时，在同一个 TUI 会话中分别创建任务。
+
+`latextrans` 命令行 workflow 仍只处理基于源码的 Heavy 翻译。Lite 通过 `latextrans-tui` 启动，不从 `main.py` 启动。TUI 会显示项目级进度、结果文件、日志和与当前引擎匹配的详情。Zotero 集成是可选动作，不会阻断翻译结果。
 
 ## 根据 arXiv ID 翻译
 
@@ -273,7 +308,7 @@ latextrans --arxiv 2508.18791 --json-events stdout --json-events-file outputs/ev
 - `project_error`
 - `run_complete`
 
-每条事件都包含 `schema_version`、`type` 和 `timestamp`。项目事件还包含 `project_name`、`project_dir`、`output_dir` 和 `log_path`；完成与失败事件还包含 `pdf_path`、`errors_report_path`、`validation_summary` 和 `error`。
+这套 JSON Lines schema 仅由 Heavy CLI workflow 输出。每条事件都包含 `schema_version`、`type` 和 `timestamp`。Heavy 项目事件还包含 `project_name`、`project_dir`、`output_dir` 和 `log_path`；Heavy 的完成与失败事件还包含 `pdf_path`、`errors_report_path`、`validation_summary` 和 `error`。Lite TUI 任务不会输出这些 JSON Lines 事件，也没有 `errors_report_path` 或 `validation_summary`。
 
 支持带版本号的 arXiv ID：
 
@@ -367,7 +402,7 @@ latextrans --model deepseek-chat --url https://api.deepseek.com/chat/completions
 
 真实 API key 建议优先放在环境变量中，不建议直接通过命令行传入。
 
-## 翻译前审核术语
+## Heavy 翻译前审核术语
 
 在配置中设置：
 
@@ -391,6 +426,8 @@ latextrans --arxiv 2508.18791 --retranslate-with-terms
 
 # 📂 输出结果
 
+## Heavy 输出
+
 每个项目会写入：
 
 ```text
@@ -412,6 +449,27 @@ outputs/<target_language>_<project_name>/
 如果仍有校验错误，是否继续生成 PDF 取决于 `validation.retry.generate_pdf_on_error`。如果 `validation.retry.fail_on_error = true`，即使生成了 PDF，残留的校验错误也会导致 CLI 以失败状态退出。
 
 如果某个编译器生成了 PDF，但对应 `.log` 中存在严重 LaTeX 错误，LaTeXTransPlus 会把该次编译视为失败，并在可用时尝试下一个编译引擎。未生成最终 PDF 时，请优先查看对应的 build 日志目录。
+
+## Lite TUI 输出
+
+每个 Lite 任务在 `output-lite/` 下使用独立的日期目录，将获取到的 PDF 和全部产物放在一起：
+
+```text
+output-lite/<stable_name>_YYMMDD/
+├── source.pdf
+├── source.md
+├── translated.md
+├── translated.pdf
+├── project_terms.csv
+├── project_terms_decisions.json
+└── latextrans.log
+```
+
+arXiv 输入的 `<stable_name>` 是 arXiv ID；PDF URL 或本地 PDF 输入使用去掉 `.pdf` 后的文件名；同一天重复翻译同一来源时依次追加 `_1`、`_2`。Lite 不生成校验报告；输入获取、Markdown 或翻译失败时，已经生成的中间产物仍保留在该目录，项目状态会标记为失败。
+
+Pandoc/XeLaTeX 生成 PDF 失败不会丢弃已完成的 Markdown 译文：项目仍标记为完成，`pdf_error` 记录退出码和 PDF 引擎输出，TUI 发出警告提示并在错误表保留一行，完整内容写入 `latextrans.log`。Pandoc 退出码为 0 但报告了缺字警告（`Missing character`）时同样写入 `pdf_error`：这类“成功但缺字形”的 PDF 不会被当作正常产物。图片按 Markdown 所在目录解析（`--resource-path`），因此无论从哪里启动都不会丢失插图。
+
+MinerU 抽取的 Markdown 偶尔会包含 `x^{\prime}^{(i)}` 这类链式上标，XeLaTeX 会直接以 “Double superscript” 失败。Lite 在写出 `source.md` 和 `translated.md` 后（只限数学区间内）合并这类上标，并把修复数量写入日志。
 
 <!-- # 🖼️ 翻译示例
 

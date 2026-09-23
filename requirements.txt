@@ -14,3 +14,4 @@ datetime
 textual>=0.86.0
 tree-sitter>=0.25,<0.26
 tree-sitter-toml==0.7.0
+mineru-open-sdk>=0.2.5,<0.3

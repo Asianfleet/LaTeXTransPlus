@@ -11,6 +11,7 @@ LaTeXTrans is a Python package for translating LaTeX paper sources and generatin
 - `latextrans --arxiv 2508.18791`: run the translation workflow for an arXiv ID.
 - `latextrans --project D:\path\to\paper_source.tar.gz`: process a local LaTeX project or archive.
 - `python -m unittest discover tests`: run the current test suite.
+- If a change is unrelated to TUI behavior, do not run TUI tests. For TUI-related changes, run only the newly added tests by default unless the user explicitly requests the full TUI test suite.
 
 Install MiKTeX or TeXLive before testing PDF compilation paths.
 

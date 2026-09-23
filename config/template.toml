@@ -2,35 +2,17 @@ sys_name = "LaTeXTransPlus"
 version = "0.1.0"
 target_language = "ch"
 source_language = "en"
-paper_list = []
-tex_sources_dir = "tex source"
-output_dir = "outputs"
-category = {}
 update_term = "False"
 mode = "plain"
 user_term = ""
+engine = "heavy"
+
+[category]
 
 [terminology]
 enabled = false
 review_before_translate = false
 max_llm_candidates = 30
-
-[validation.retry]
-max_attempts = 3
-generate_pdf_on_error = true
-fail_on_error = true
-
-[validation.issues.command_mismatch]
-severity = "error"
-retryable = true
-
-[validation.issues.placeholder_mismatch]
-severity = "error"
-retryable = true
-
-[validation.issues.bracket_mismatch]
-severity = "error"
-retryable = true
 
 [llm_config]
 profile = "default"
@@ -38,3 +20,39 @@ profile = "default"
 [zotero]
 local_api_base = "http://127.0.0.1:23119/api"
 web_api_key_env = "ZOTERO_API_KEY"
+
+[heavy]
+paper_list = []
+tex_sources_dir = "tex source"
+output_dir = "outputs"
+retranslate_with_terms = false
+
+[lite]
+output_dir = "output-lite"
+mineru_api_key_env = "MINERU_TOKEN"
+translate_appendix = true
+# 保护标记校验失败后的额外翻译次数，不含首次请求。
+protected_token_retry_attempts = 2
+# CJK 字体候选，逗号分隔，按顺序取第一个本机可解析的字体；留空表示不指定。
+cjk_mainfont_candidates = "SimSun, Noto Serif SC, FandolSong, Microsoft YaHei"
+# 正文（拉丁/希腊）字体，需覆盖正文里出现的符号；留空使用 Pandoc 默认字体。
+mainfont = ""
+# Pandoc geometry 变量，例如 "margin=2cm"；留空使用 Pandoc 默认版式。
+geometry = ""
+
+[heavy.validation.retry]
+max_attempts = 3
+generate_pdf_on_error = true
+fail_on_error = true
+
+[heavy.validation.issues.command_mismatch]
+severity = "error"
+retryable = true
+
+[heavy.validation.issues.placeholder_mismatch]
+severity = "error"
+retryable = true
+
+[heavy.validation.issues.bracket_mismatch]
+severity = "error"
+retryable = true
