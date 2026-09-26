@@ -53,12 +53,17 @@ class MultilingualPromptTests(unittest.TestCase):
 
             for prompt in self._guardrail_prompts():
                 with self.subTest(target_lang=target_lang, prompt=prompt[:60]):
+                    # \n 必须被明确定义为“反斜杠 + n”两个字符，避免模型读成换行符。
                     self.assertIn(
-                        r"Never replace a real line break with a literal `\n`",
+                        r"Never emit the two characters backslash + `n` (that is, `\n`).",
                         prompt,
                     )
                     self.assertIn(
-                        "A real line break inside a command argument",
+                        r"`\n` always means exactly those two characters, never the newline character",
+                        prompt,
+                    )
+                    self.assertIn(
+                        "Do not try to reproduce the source line wrapping",
                         prompt,
                     )
 
