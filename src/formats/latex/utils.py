@@ -713,6 +713,11 @@ def _is_escaped_at(text, index):
     return backslashes % 2 == 1
 
 
+def _is_inside_ranges(index, ranges):
+    """判断某个位置是否落在任一个保护区间内。"""
+    return any(start <= index < end for start, end in ranges)
+
+
 def _find_matching_brace(text, open_index):
     depth = 0
     pos = open_index
@@ -764,9 +769,6 @@ def escape_unescaped_percent_signs(latex_code):
 
     protected_ranges = _protected_percent_ranges(latex_code)
 
-    def is_protected(index):
-        return any(start <= index < end for start, end in protected_ranges)
-
     def follows_latex_linebreak(index):
         return index >= 2 and latex_code[index - 2:index] == r"\\"
 
@@ -775,12 +777,81 @@ def escape_unescaped_percent_signs(latex_code):
         if (
             char == "%"
             and not _is_escaped_at(latex_code, index)
-            and not is_protected(index)
+            and not _is_inside_ranges(index, protected_ranges)
             and not follows_latex_linebreak(index)
         ):
             result.append(r"\%")
         else:
             result.append(char)
+    return "".join(result)
+
+
+# 内容按字面处理的 verbatim 类环境：其中的反斜杠序列属于文档原文，
+# 不能当作翻译引入的坏转义来修复。
+LITERAL_VERBATIM_ENVIRONMENTS = (
+    "verbatim",
+    "verbatim*",
+    "Verbatim",
+    "Verbatim*",
+    "BVerbatim",
+    "LVerbatim",
+    "lstlisting",
+    "lstlisting*",
+    "minted",
+    "alltt",
+    "comment",
+    "filecontents",
+    "filecontents*",
+)
+
+# 译文里可能被误写的字面转义序列：反斜杠 + n/t/r。
+# 后面紧跟字母、数字或 ^ _ * 的写法更像合法宏或数学用法，因此不纳入修复范围。
+LITERAL_ESCAPE_SEQUENCE_PATTERN = re.compile(r"\\([ntr])(?![a-zA-Z0-9_^*])")
+
+# 还原位置右侧是这些字符时，应直接删除转义痕迹而不是补一个空格。
+LITERAL_ESCAPE_TRAILING_CHARS = "}])>）】》」』，。；：！？"
+
+
+def _literal_verbatim_ranges(text):
+    """返回 verbatim 类环境的字符区间，这些区间内的反斜杠序列是文档内容。"""
+    ranges = []
+    for env in LITERAL_VERBATIM_ENVIRONMENTS:
+        pattern = re.compile(
+            r"\\begin\s*\{\s*" + re.escape(env) + r"\s*\}.*?\\end\s*\{\s*" + re.escape(env) + r"\s*\}",
+            re.DOTALL,
+        )
+        ranges.extend((match.start(), match.end()) for match in pattern.finditer(text))
+    return ranges
+
+
+def strip_literal_backslash_escapes(latex_code):
+    """
+    还原译文里被误写成字面转义的常见空白序列（\\n、\\t、\\r）。
+
+    LaTeX 没有 \\n 这类命令，字面 \\n 会被读作未定义控制序列，中断编译并吞掉
+    其后的词。这里按这些序列的本意（空白）还原：右侧是右定界符或标点时直接
+    删除，否则补一个空格。verbatim 类环境与 url 类命令参数中的内容属于文档
+    原文，予以保护。
+    """
+    if not LITERAL_ESCAPE_SEQUENCE_PATTERN.search(latex_code):
+        return latex_code
+
+    protected_ranges = _protected_percent_ranges(latex_code) + _literal_verbatim_ranges(latex_code)
+
+    result = []
+    last_end = 0
+    for match in LITERAL_ESCAPE_SEQUENCE_PATTERN.finditer(latex_code):
+        # 双反斜杠（如 \\n 表示换行后的字母 n）不是坏转义，保持原样。
+        if _is_inside_ranges(match.start(), protected_ranges) or _is_escaped_at(latex_code, match.start()):
+            continue
+        result.append(latex_code[last_end:match.start()])
+        next_char = latex_code[match.end()] if match.end() < len(latex_code) else ""
+        if next_char == "" or next_char.isspace() or next_char in LITERAL_ESCAPE_TRAILING_CHARS:
+            result.append("")
+        else:
+            result.append(" ")
+        last_end = match.end()
+    result.append(latex_code[last_end:])
     return "".join(result)
 
 

@@ -464,6 +464,7 @@ class TranslatorAgent(BaseToolAgent):
             )
 
         transed_section["trans_content"] = escape_unescaped_percent_signs(transed_section["trans_content"])
+        transed_section["trans_content"] = strip_literal_backslash_escapes(transed_section["trans_content"])
         return transed_section
 
     async def _translate_caption(self, caption: Dict[str, Any], session: aiohttp.ClientSession, error_message=None) -> Dict[str, Any]:
@@ -519,6 +520,7 @@ class TranslatorAgent(BaseToolAgent):
                                                         )
 
         transed_caption["trans_content"] = escape_unescaped_percent_signs(transed_caption["trans_content"])
+        transed_caption["trans_content"] = strip_literal_backslash_escapes(transed_caption["trans_content"])
         return transed_caption
 
     async def _translate_env(self, env: Dict[str, Any], session: aiohttp.ClientSession, error_message=None) -> Dict[str, Any]:
@@ -585,6 +587,7 @@ class TranslatorAgent(BaseToolAgent):
                 transed_env["trans_content"] = env["content"]
 
         transed_env["trans_content"] = escape_unescaped_percent_signs(transed_env["trans_content"])
+        transed_env["trans_content"] = strip_literal_backslash_escapes(transed_env["trans_content"])
         return transed_env
 
     async def _request_llm_for_trans(self,

@@ -154,6 +154,27 @@ class TranslatorRetryPromptTests(unittest.TestCase):
 
         self.assertEqual(result["trans_content"], r"准确率为 64.2\% \citep{MATH}")
 
+    def test_plain_caption_strips_literal_backslash_n(self):
+        """回归：caption 译文里误写的字面 \\n 必须在写回前被还原。"""
+        agent = TranslatorAgent(config={"llm_config": {}}, trans_mode="plain")
+        literal_escape = chr(92) + "n"
+
+        with patch.object(
+            agent,
+            "_request_llm_for_trans",
+            new_callable=AsyncMock,
+            return_value="\\caption{显著降低长上下文场景的计算成本。" + literal_escape + "}",
+        ):
+            result = asyncio.run(
+                agent._translate_caption(
+                    {"placeholder": "<PLACEHOLDER_CAP_3>", "cap_type": "caption", "content": "\\caption{cost.\n}"},
+                    session=None,
+                )
+            )
+
+        self.assertNotIn(literal_escape, result["trans_content"])
+        self.assertTrue(result["trans_content"].endswith("计算成本。}"))
+
 
 class TranslatorRetryRequestTests(unittest.IsolatedAsyncioTestCase):
     async def test_plain_retranslation_prompt_does_not_include_glossary(self):

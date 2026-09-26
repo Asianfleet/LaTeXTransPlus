@@ -7,7 +7,7 @@ from unittest.mock import patch
 from src.agents.tool_agents.generator_agent import GeneratorAgent
 from src.formats.latex.compile import LaTexCompiler
 from src.formats.latex.reconstruct import LatexConstructor
-from src.formats.latex.utils import add_language_support_package, escape_unescaped_percent_signs, latex_engine_order_for_language
+from src.formats.latex.utils import add_language_support_package, escape_unescaped_percent_signs, latex_engine_order_for_language, strip_literal_backslash_escapes
 
 
 BASE_TEX = "\\documentclass{article}\n\\begin{document}\nHello\n\\end{document}\n"
@@ -154,6 +154,56 @@ class LatexPercentEscapingTests(unittest.TestCase):
         self.assertIn(r"邹凯是谁？\\%", result)
         self.assertIn(r"64.2\%\\%", result)
         self.assertNotIn(r"邹凯是谁？\\\%", result)
+
+
+class LatexLiteralEscapeSequenceTests(unittest.TestCase):
+    """译文里被误写成字面转义的空白序列（\\n/\\t/\\r）应被还原。"""
+
+    def test_strips_literal_backslash_n_at_caption_end(self):
+        # 本次真实失败样本：caption 末尾为真实换行，译文误写成字面 \n
+        text = "\\caption{显著降低长上下文场景的计算成本。" + chr(92) + "n}"
+
+        result = strip_literal_backslash_escapes(text)
+
+        self.assertNotIn(chr(92) + "n", result)
+        self.assertTrue(result.endswith("计算成本。}"))
+
+    def test_replaces_literal_escape_with_space_between_words(self):
+        text = "前半句" + chr(92) + "n后半句"
+
+        result = strip_literal_backslash_escapes(text)
+
+        self.assertEqual(result, "前半句 后半句")
+
+    def test_preserves_literal_escapese_in_verbatim_environments(self):
+        # 代码清单里的 JSON 内容属于文档原文，不能当作坏转义
+        body = '{"description": "Launch a new agent.' + chr(92) + "nUsage notes:" + chr(92) + "n" + '"}'
+        text = "\\begin{verbatim}\n" + body + "\n\\end{verbatim}"
+
+        result = strip_literal_backslash_escapes(text)
+
+        self.assertEqual(result, text)
+
+    def test_preserves_double_backslash_before_letter_n(self):
+        text = "\\section{标题}" + chr(92) * 2 + "next word"
+
+        result = strip_literal_backslash_escapes(text)
+
+        self.assertEqual(result, text)
+
+    def test_preserves_legitimate_commands_starting_with_n(self):
+        text = "第一行\\newline 第二行 \\nopagebreak 继续"
+
+        result = strip_literal_backslash_escapes(text)
+
+        self.assertEqual(result, text)
+
+    def test_trims_trailing_escape_before_space(self):
+        text = "句子" + chr(92) + "n 下一句"
+
+        result = strip_literal_backslash_escapes(text)
+
+        self.assertEqual(result, "句子 下一句")
 
 
 class LatexConstructorLanguageSupportTests(unittest.TestCase):
