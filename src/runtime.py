@@ -325,6 +325,7 @@ def classify_project_result(
             {"warnings": 0, "errors": 0, "total": 0},
         ),
         "error": workflow_result.get("error"),
+        "pdf_error": workflow_result.get("pdf_error"),
     }
     if output_dir is not None:
         result["output_dir"] = output_dir
@@ -501,7 +502,7 @@ def run_projects(
                     "error": project_result.get("error"),
                     "log_path": log_path,
                 }
-                for key in ("status", "project_terms_path", "project_terms_decisions_path"):
+                for key in ("status", "pdf_error", "project_terms_path", "project_terms_decisions_path"):
                     if key in project_result:
                         event_payload[key] = project_result[key]
                 event_callback(event_payload)

@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, Mock, patch
 from src.agents import coordinator_agent
 from src.agents.coordinator_agent import (
     INITIAL_ERRORS_REPORT_FILENAME,
+    build_pdf_failure_result,
     build_review_required_result,
     build_unsupported_source_result,
     build_workflow_result,
@@ -177,6 +178,35 @@ class CoordinatorMessageTests(unittest.TestCase):
 
         self.assertTrue(result["ok"])
         self.assertIsNone(result["pdf_path"])
+
+    def test_build_pdf_failure_result_completes_project_with_pdf_error(self):
+        """PDF 生成失败应作为项目警告，而不是把整个项目判定为失败。"""
+        result = build_pdf_failure_result(
+            project_name="2510.14901",
+            pdf_error="PDF generation returned no output path",
+            errors_report_path=r"outputs\ch_2510.14901\errors_report.json",
+            validation_summary={"warnings": 0, "errors": 0, "total": 0},
+            validation_failed=False,
+        )
+
+        self.assertTrue(result["ok"])
+        self.assertIsNone(result["pdf_path"])
+        self.assertIsNone(result["error"])
+        self.assertEqual(result["pdf_error"], "PDF generation returned no output path")
+
+    def test_build_pdf_failure_result_keeps_validation_failure_as_error(self):
+        """校验已失败时仍应以校验错误为准，只额外附带 pdf_error。"""
+        result = build_pdf_failure_result(
+            project_name="2510.14901",
+            pdf_error="Generation failed (RuntimeError): boom",
+            errors_report_path=r"outputs\ch_2510.14901\errors_report.json",
+            validation_summary={"warnings": 1, "errors": 2, "total": 3},
+            validation_failed=True,
+        )
+
+        self.assertFalse(result["ok"])
+        self.assertIn("remaining validation errors: 2", result["error"])
+        self.assertEqual(result["pdf_error"], "Generation failed (RuntimeError): boom")
 
     def test_save_initial_validation_report_preserves_first_report_snapshot(self):
         initial_report = [{"part": "sec", "num_or_ph": "1", "severity": "error"}]

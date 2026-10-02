@@ -267,6 +267,8 @@ retryable = true
 
 The Heavy validator checks command counts, placeholder preservation, and bracket balance. Retryable issues are sent back to the translator for targeted retranslation.
 
+Heavy PDF generation is best-effort once validation succeeds: if the translated LaTeX artifacts are complete but no PDF is produced, the project is still reported as completed with `pdf_error` set, so the TUI raises a warning notification (and an errors-table warning row) instead of a project error. A validation failure keeps its project-error status.
+
 # 📚 Usage
 
 ## Terminal UI
@@ -309,7 +311,7 @@ The first schema version emits these event types:
 - `project_error`
 - `run_complete`
 
-This JSON Lines schema is emitted by the Heavy CLI workflow only. Each event includes `schema_version`, `type`, and `timestamp`. Heavy project events also include `project_name`, `project_dir`, `output_dir`, and `log_path`; Heavy completion and error events include `pdf_path`, `errors_report_path`, `validation_summary`, and `error`. Lite TUI tasks do not emit these JSON Lines events and have no `errors_report_path` or `validation_summary`.
+This JSON Lines schema is emitted by the Heavy CLI workflow only. Each event includes `schema_version`, `type`, and `timestamp`. Heavy project events also include `project_name`, `project_dir`, `output_dir`, and `log_path`; Heavy completion and error events include `pdf_path`, `pdf_error`, `errors_report_path`, `validation_summary`, and `error`. Lite TUI tasks do not emit these JSON Lines events and have no `errors_report_path` or `validation_summary`.
 
 Versioned arXiv IDs are supported:
 

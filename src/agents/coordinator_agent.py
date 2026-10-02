@@ -117,6 +117,34 @@ def build_workflow_result(
     return result
 
 
+def build_pdf_failure_result(
+    project_name: str,
+    pdf_error: str,
+    errors_report_path: str,
+    validation_summary: Dict[str, int],
+    validation_failed: bool,
+    project_terms_path: Optional[str] = None,
+    project_terms_decisions_path: Optional[str] = None,
+) -> Dict[str, Any]:
+    """构建“翻译完成但 PDF 生成失败”的项目结果。
+
+    翻译后的 LaTeX 产物仍然可用，因此 PDF 失败只记录在 ``pdf_error`` 中，
+    让项目以完成态进入 UI，并显示黄色警告而不是红色异常。若校验本身已经
+    失败（``validation_failed`` 为真），则保留校验错误作为项目错误原因。
+    """
+    result = build_workflow_result(
+        project_name=project_name,
+        pdf_path=None,
+        errors_report_path=errors_report_path,
+        validation_summary=validation_summary,
+        validation_failed=validation_failed,
+        project_terms_path=project_terms_path,
+        project_terms_decisions_path=project_terms_decisions_path,
+    )
+    result["pdf_error"] = pdf_error
+    return result
+
+
 def format_validation_failure_message(
     errors_report_path: str,
     validation_summary: Dict[str, int],
@@ -478,18 +506,17 @@ class CoordinatorAgent:
         
             PDF_file_path = generator_agent.execute()
         except Exception as e:
-            error = f"Generation failed ({type(e).__name__}): {e}"
+            pdf_error = f"Generation failed ({type(e).__name__}): {e}"
             self._log(
-                f"{self.name}: Failed to translate {os.path.basename(self.project_dir)}. {error}",
-                level="error",
+                f"{self.name}: PDF generation failed for {os.path.basename(self.project_dir)}. {pdf_error}",
+                level="warning",
             )
-            return build_workflow_result(
+            return build_pdf_failure_result(
                 project_name=base_name,
-                pdf_path=None,
+                pdf_error=pdf_error,
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
-                validation_failed=True,
-                error=error,
+                validation_failed=validation_failed,
                 project_terms_path=terminology_result.get("project_terms_path"),
                 project_terms_decisions_path=terminology_result.get("project_terms_decisions_path"),
             )
@@ -516,18 +543,18 @@ class CoordinatorAgent:
                 project_terms_decisions_path=terminology_result.get("project_terms_decisions_path"),
             )
         else:
+            pdf_error = "PDF generation returned no output path"
             self._log(
-                f"{self.name}: Failed to translate {os.path.basename(self.project_dir)}. "
-                "PDF generation returned no output path.",
-                level="error",
+                f"{self.name}: PDF generation failed for {os.path.basename(self.project_dir)}. "
+                f"{pdf_error}",
+                level="warning",
             )
-            return build_workflow_result(
+            return build_pdf_failure_result(
                 project_name=base_name,
-                pdf_path=None,
+                pdf_error=pdf_error,
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
-                validation_failed=True,
-                error="PDF generation returned no output path",
+                validation_failed=validation_failed,
                 project_terms_path=terminology_result.get("project_terms_path"),
                 project_terms_decisions_path=terminology_result.get("project_terms_decisions_path"),
             )
@@ -615,33 +642,32 @@ class CoordinatorAgent:
         try:
             pdf_file_path = generator_agent.execute()
         except Exception as e:
-            error = f"Generation failed ({type(e).__name__}): {e}"
+            pdf_error = f"Generation failed ({type(e).__name__}): {e}"
             self._log(
-                f"{self.name}: Failed to translate {os.path.basename(self.project_dir)}. {error}",
-                level="error",
+                f"{self.name}: PDF generation failed for {os.path.basename(self.project_dir)}. {pdf_error}",
+                level="warning",
             )
-            return build_workflow_result(
+            return build_pdf_failure_result(
                 project_name=base_name,
-                pdf_path=None,
+                pdf_error=pdf_error,
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
-                validation_failed=True,
-                error=error,
+                validation_failed=validation_failed,
             )
 
         if not pdf_file_path:
+            pdf_error = "PDF generation returned no output path"
             self._log(
-                f"{self.name}: Failed to translate {os.path.basename(self.project_dir)}. "
-                "PDF generation returned no output path.",
-                level="error",
+                f"{self.name}: PDF generation failed for {os.path.basename(self.project_dir)}. "
+                f"{pdf_error}",
+                level="warning",
             )
-            return build_workflow_result(
+            return build_pdf_failure_result(
                 project_name=base_name,
-                pdf_path=None,
+                pdf_error=pdf_error,
                 errors_report_path=errors_report_path,
                 validation_summary=validation_summary,
-                validation_failed=True,
-                error="PDF generation returned no output path",
+                validation_failed=validation_failed,
             )
 
         new_pdf_path = os.path.join(transed_project_dir, f"{self.target_language}_{base_name}.pdf")

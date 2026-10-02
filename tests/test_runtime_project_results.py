@@ -675,6 +675,24 @@ profile = "test"
         self.assertFalse(result["ok"])
         self.assertEqual(result["validation_summary"]["errors"], 1)
 
+    def test_classify_project_result_preserves_pdf_error(self):
+        """PDF 警告应透传到项目结果，供 UI 渲染警告行。"""
+        result = classify_project_result(
+            index=1,
+            total=1,
+            project_name="paper",
+            project_dir=r"D:\paper",
+            workflow_result={
+                "ok": True,
+                "pdf_path": None,
+                "pdf_error": "PDF generation returned no output path",
+                "validation_summary": {"warnings": 0, "errors": 0, "total": 0},
+            },
+        )
+
+        self.assertEqual(result["type"], "completed")
+        self.assertEqual(result["pdf_error"], "PDF generation returned no output path")
+
     def test_classify_project_result_preserves_term_review_status(self):
         result = classify_project_result(
             index=1,
@@ -745,6 +763,40 @@ profile = "test"
         self.assertEqual(len(status["completed_projects"]), 1)
         self.assertEqual(status["failed_projects"][0]["project_name"], "first")
         self.assertEqual(status["completed_projects"][0]["project_name"], "second")
+
+    def test_run_projects_emits_project_complete_with_pdf_error(self):
+        """heavy 模式 PDF 失败应发出 project_complete 事件并携带 pdf_error。"""
+        events = []
+
+        class FakeCoordinatorAgent:
+            def __init__(self, config, project_dir, output_dir):
+                pass
+
+            def workflow_latextrans(self):
+                return {
+                    "ok": True,
+                    "pdf_path": None,
+                    "pdf_error": "PDF generation returned no output path",
+                    "errors_report_path": None,
+                    "validation_summary": {"warnings": 0, "errors": 0, "total": 0},
+                    "error": None,
+                }
+
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            with patch("src.runtime.CoordinatorAgent", FakeCoordinatorAgent):
+                with redirect_stdout(StringIO()):
+                    status = run_projects(
+                        config={},
+                        projects=[r"D:\paper"],
+                        output_dir=tmp_dir,
+                        event_callback=events.append,
+                    )
+
+        terminal = events[-1]
+        self.assertEqual(terminal["type"], "project_complete")
+        self.assertEqual(terminal["pdf_error"], "PDF generation returned no output path")
+        self.assertEqual(len(status["completed_projects"]), 1)
+        self.assertEqual(status["failed_projects"], [])
 
     def test_run_projects_failure_status_includes_output_and_log_paths(self):
         class FakeCoordinatorAgent:
