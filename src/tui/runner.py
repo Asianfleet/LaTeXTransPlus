@@ -44,6 +44,7 @@ def run_tui_task(
             raise ValueError(f"Unsupported input type: {input_type}")
 
     config = runtime.load_runtime_config(config_path=resolved_config_path, overrides=runtime_overrides)
+    translation_model = str(config.get("llm_config", {}).get("model", "gpt-4o") or "")
     prepare_project_names = _prepare_project_names(input_type, items)
 
     def emit_full_input_start() -> None:
@@ -65,6 +66,8 @@ def run_tui_task(
         nonlocal remote_start_emitted
         tagged_event = dict(event)
         tagged_event["engine"] = selected_engine
+        if tagged_event.get("project_name"):
+            tagged_event["translation_model"] = translation_model
         if (
             selected_engine == "heavy"
             and input_type in {"arxiv", "local"}

@@ -73,7 +73,7 @@ SHARED_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("terminology", "enabled"), "启用项目术语", "switch", "术语", True),
     ConfigField(("terminology", "review_before_translate"), "术语审核后再翻译", "switch", "术语", False),
     ConfigField(("terminology", "max_llm_candidates"), "候选术语上限", "integer", "术语", 30),
-    ConfigField(("llm_config", "profile"), "LLM 配置 profile", "input", "LLM", ""),
+    ConfigField(("llm_config", "profile"), "LLM 配置 profile", "select", "LLM", ""),
     ConfigField(("zotero", "local_api_base"), "Zotero 本地 API", "input", "Zotero", "http://127.0.0.1:23119/api"),
     ConfigField(("zotero", "web_api_key_env"), "Zotero Web API key 环境变量", "input", "Zotero", "ZOTERO_API_KEY"),
 )

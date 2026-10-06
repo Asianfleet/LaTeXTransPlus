@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from src.engines.base import normalize_engine
+from src.project_metadata import read_project_title
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
 
 TUI_PROJECT_METADATA_FILENAME = ".latextrans-tui.json"
@@ -33,6 +34,10 @@ def load_output_history(output_root: Path, engine: str = "heavy") -> list[TaskVi
         pdf_path = _find_pdf(project_output_dir, project_engine)
         project = ProjectViewState(
             project_name=project_name,
+            title=str(metadata.get("title") or read_project_title(
+                project_output_dir, project_engine, metadata.get("source_markdown_path")
+            )),
+            translation_model=str(metadata.get("translation_model") or ""),
             engine=project_engine,
             status=status,
             output_dir=str(project_output_dir),
@@ -97,12 +102,17 @@ def write_project_metadata(
     engine: str = "heavy",
     source_markdown_path: str | None = None,
     translated_markdown_path: str | None = None,
+    title: str | None = None,
+    translation_model: str | None = None,
 ) -> None:
     """Persist TUI task metadata for one output project."""
     selected_engine = normalize_engine(engine)
     project_dir.mkdir(parents=True, exist_ok=True)
+    previous = read_project_metadata(project_dir)
+    if previous.get("task_id") != task_id or previous.get("engine", "heavy") != selected_engine:
+        previous = {}
     metadata = {
-        "schema_version": 2,
+        "schema_version": 3,
         "engine": selected_engine,
         "task_id": task_id,
         "input_type": input_type,
@@ -111,6 +121,8 @@ def write_project_metadata(
         "status": status.value,
         "source_markdown_path": source_markdown_path,
         "translated_markdown_path": translated_markdown_path,
+        "title": title or previous.get("title") or "",
+        "translation_model": translation_model or previous.get("translation_model") or "",
         "updated_at": datetime.now().isoformat(timespec="seconds"),
     }
     (project_dir / TUI_PROJECT_METADATA_FILENAME).write_text(

@@ -39,6 +39,8 @@ class ProjectViewState:
     source_markdown_path: str | None = None
     translated_markdown_path: str | None = None
     pdf_error: str | None = None
+    title: str = ""
+    translation_model: str = ""
 
 
 @dataclass
@@ -80,6 +82,11 @@ class TaskViewState:
             self._copy_project_fields(project, event)
             return
 
+        if event_type == "project_metadata":
+            project = self._get_or_create_project(str(event.get("project_name") or "project"))
+            self._copy_project_fields(project, event)
+            return
+
         if event_type == "project_log":
             project = self._get_or_create_project(str(event.get("project_name") or "project"))
             line = str(event.get("line") or event.get("message") or "")
@@ -110,6 +117,9 @@ class TaskViewState:
         event_engine = event.get("engine")
         if event_engine in {"heavy", "lite"}:
             project.engine = str(event_engine)
+        for key in ("title", "translation_model"):
+            if isinstance(event.get(key), str) and event[key].strip():
+                setattr(project, key, event[key].strip())
         for key in (
             "project_dir",
             "output_dir",

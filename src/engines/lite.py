@@ -8,6 +8,8 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from src.project_metadata import title_from_markdown
+
 from src.agents.tool_agents.markdown_terminology_agent import MarkdownTerminologyAgent
 from src.agents.tool_agents.markdown_translator_agent import MarkdownTranslatorAgent
 from src.engines.lite_inputs import (
@@ -96,6 +98,10 @@ class LiteEngine:
             self._repair_markdown_math(source_markdown, "source", result, log_callback)
 
             source_text = source_markdown.read_text(encoding="utf-8")
+            result["title"] = title_from_markdown(source_text)
+            metadata_callback = project_config.get("_project_metadata_callback")
+            if callable(metadata_callback):
+                metadata_callback(self._artifact_fields(result) | {"type": "project_metadata"})
             translate_appendix = project_config.get("translate_appendix", True) is not False
             blocks = split_markdown(
                 source_text,
@@ -363,6 +369,7 @@ class LiteEngine:
             key: result.get(key)
             for key in (
                 "engine",
+                "title",
                 "project_name",
                 "project_dir",
                 "output_dir",

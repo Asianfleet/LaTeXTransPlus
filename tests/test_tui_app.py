@@ -796,12 +796,14 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
             self.assertEqual(len(app.tasks), 1)
             self.assertEqual(str(table.ordered_columns[0].label), "选中")
             self.assertEqual(str(table.ordered_columns[1].label), "项目")
-            self.assertEqual(str(table.ordered_columns[2].label), "状态")
-            self.assertEqual(str(table.ordered_columns[3].label), "任务 id")
-            self.assertEqual(len(table.ordered_columns), 4)
+            self.assertEqual(str(table.ordered_columns[2].label), "标题")
+            self.assertEqual(str(table.ordered_columns[3].label), "翻译模型")
+            self.assertEqual(str(table.ordered_columns[4].label), "状态")
+            self.assertEqual(str(table.ordered_columns[5].label), "任务 id")
+            self.assertEqual(len(table.ordered_columns), 6)
             self.assertEqual(table.row_count, 2)
-            self.assertEqual(table.get_cell_at((0, 3)), task.task_id)
-            self.assertEqual(table.get_cell_at((1, 3)), task.task_id)
+            self.assertEqual(table.get_cell_at((0, 5)), task.task_id)
+            self.assertEqual(table.get_cell_at((1, 5)), task.task_id)
 
     async def test_sidebar_marks_projects_from_running_task_orange(self):
         """确认左侧项目属于进行中任务时用橙色文字展示。"""
@@ -885,9 +887,9 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
                     self.assertEqual(len(list_view.children), 1)
                     self.assertIn("2308.10248", str(list_view.children[0].query_one(Static).content))
                     self.assertEqual(table.get_cell_at((0, 0)), "[]")
-                    self.assertEqual(table.get_cell_at((0, 1)), "2308.10248")
-                    self.assertEqual(table.get_cell_at((0, 2)), "completed")
-                    self.assertEqual(table.get_cell_at((0, 3)), "")
+                    self.assertEqual(str(table.get_cell_at((0, 1))), "2308.10248")
+                    self.assertEqual(table.get_cell_at((0, 4)), "completed")
+                    self.assertEqual(table.get_cell_at((0, 5)), "")
 
     async def test_selecting_history_project_loads_tex_preview(self):
         """确认点击历史项目时右侧 TeX 页能显示项目源码。"""
@@ -1170,14 +1172,16 @@ class TuiConfigPageTests(TuiAppTests):
         """确认延迟处理的配置变更不会越过测试生命周期写入真实文件。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
         async with app.run_test() as pilot:
-            with patch("src.tui.app.load_ui_config", return_value={"llm_config": {"profile": "profile-ja"}}):
+            with patch("src.tui.app.load_ui_config", return_value={"llm_config": {"profile": "profile-ja"}}), patch(
+                "src.tui.app.list_llm_profiles", return_value=[("profile-ja", "profile-ja"), ("profile-fr", "profile-fr")]
+            ):
                 app.load_config_page()
             await app.workers.wait_for_complete()
             await pilot.pause()
 
             self.assertFalse(app.loading_config_form)
             self.save_ui_config.assert_not_called()
-            app.query_one("#config-llm_config-profile", Input).value = "profile-fr"
+            app.query_one("#config-llm_config-profile", Select).value = "profile-fr"
             await pilot.pause(delay=0.1)
 
             self.save_ui_config.assert_called_once()
@@ -1222,7 +1226,9 @@ class TuiConfigPageTests(TuiAppTests):
         }
         async with app.run_test() as pilot:
             with patch("src.tui.app.save_ui_config") as save_config:
-                with patch("src.tui.app.load_ui_config", return_value=config):
+                with patch("src.tui.app.load_ui_config", return_value=config), patch(
+                    "src.tui.app.list_llm_profiles", return_value=[("deepseek", "deepseek"), ("profile-x", "profile-x")]
+                ):
                     app.load_config_page()
 
                 app.query_one("#config-target_language", Select).value = "fr"
@@ -1233,7 +1239,7 @@ class TuiConfigPageTests(TuiAppTests):
                 app.query_one("#config-heavy-validation-retry-max_attempts", Input).value = "2"
                 app.query_one("#config-heavy-validation-issues-command_mismatch-severity", Select).value = "warning"
                 app.query_one("#config-heavy-validation-issues-command_mismatch-retryable", Switch).value = False
-                app.query_one("#config-llm_config-profile", Input).value = "profile-x"
+                app.query_one("#config-llm_config-profile", Select).value = "profile-x"
                 app.query_one("#config-zotero-local_api_base", Input).value = "http://localhost:23119/api"
                 app.query_one("#config-zotero-web_api_key_env", Input).value = "MY_ZOTERO_API_KEY"
                 app.persist_config_form_change()
@@ -1829,8 +1835,8 @@ class TuiResultViewsTests(TuiAppTests):
 
             table = app.query_one("#task-table", DataTable)
             self.assertEqual(table.row_count, 1)
-            self.assertEqual(table.get_cell_at((0, 1)), "paper")
-            self.assertEqual(table.get_cell_at((0, 2)), "completed")
+            self.assertEqual(str(table.get_cell_at((0, 1))), "paper")
+            self.assertEqual(table.get_cell_at((0, 4)), "completed")
 
     async def test_refresh_project_list_adds_selectable_items(self):
         """确认侧栏项目列表会展示当前任务下的项目。"""
@@ -2291,7 +2297,7 @@ class TuiProjectManagerTests(TuiAppTests):
             app.refresh_task_table()
 
             table = app.query_one("#task-table", DataTable)
-            self.assertEqual([str(column.label) for column in table.ordered_columns], ["选中", "项目", "状态", "任务 id"])
+            self.assertEqual([str(column.label) for column in table.ordered_columns], ["选中", "项目", "标题", "翻译模型", "状态", "任务 id"])
             self.assertEqual(table.get_cell_at((0, 0)), "[]")
 
             app._toggle_project_selection(0)

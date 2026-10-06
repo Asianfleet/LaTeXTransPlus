@@ -419,6 +419,7 @@ def run_projects(
                 else:
                     log_file.write(f"{processing_line}\n")
                 project_config = dict(config)
+                project_config["_project_metadata_callback"] = event_callback
                 project_config["_project_log_callback"] = _build_project_log_callback(
                     event_callback=event_callback,
                     log_file=log_file,
@@ -513,6 +514,7 @@ def run_projects(
 
 
 _LITE_ARTIFACT_FIELDS = (
+    "title",
     "project_name",
     "project_dir",
     "output_dir",
@@ -627,8 +629,16 @@ def _run_lite_engine_task(
         else:
             buffered_logs.append(dict(payload))
 
+    def metadata_callback(payload: Dict[str, Any]) -> None:
+        """独立转发 lite 标题事件，保持现有日志回调的契约。"""
+        observed_artifacts.update(_merge_lite_artifacts(payload, observed_artifacts))
+        emit_start(observed_artifacts)
+        event_callback(dict(observed_artifacts) | {"type": "project_metadata"})
+
+    project_config = dict(config)
+    project_config["_project_metadata_callback"] = metadata_callback
     try:
-        workflow_result = LiteEngine().run(item, config, output_root, log_callback)
+        workflow_result = LiteEngine().run(item, project_config, output_root, log_callback)
     except Exception as exc:
         workflow_result = {
             "ok": False,

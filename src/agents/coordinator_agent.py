@@ -18,6 +18,7 @@ from .tool_agents.validator_agent import ValidatorAgent
 from .tool_agents.terminology_agent import TerminologyAgent
 from src.terminology import TerminologyConfig, require_retranslation_inputs
 from src.validation_policy import ValidationPolicy
+from src.project_metadata import title_from_latex_captions
 import gc
 
 
@@ -399,6 +400,17 @@ class CoordinatorAgent:
             return
         print(line)
 
+    def _emit_project_metadata(self, captions: List[Dict[str, Any]], output_dir: str) -> None:
+        """解析后立即发送原文标题，重译和后续失败也保留项目识别信息。"""
+        callback = self.config.get("_project_metadata_callback")
+        if callable(callback):
+            callback({
+                "type": "project_metadata",
+                "project_name": Path(self.project_dir).name,
+                "output_dir": output_dir,
+                "title": title_from_latex_captions(captions),
+            })
+
     async def workflow_latextrans_async(self) -> Dict[str, Any]:
         """
         initializes the tool agent based on the provided agent name key.
@@ -414,6 +426,7 @@ class CoordinatorAgent:
         parser_agent.execute()  
 
         sections, captions, envs = read_parsed_latex_maps(Path(transed_project_dir))
+        self._emit_project_metadata(captions, transed_project_dir)
         errors_report_path = os.path.join(transed_project_dir, "errors_report.json")
         if is_pdf_only_latex_source(sections, captions, envs):
             save_unsupported_source_report(Path(transed_project_dir), PDF_ONLY_SOURCE_ERROR)
@@ -573,6 +586,7 @@ class CoordinatorAgent:
 
         sections = translator_agent.read_file(Path(transed_project_dir, "sections_map.json"), "json")
         captions = translator_agent.read_file(Path(transed_project_dir, "captions_map.json"), "json")
+        self._emit_project_metadata(captions, transed_project_dir)
         envs = translator_agent.read_file(Path(transed_project_dir, "envs_map.json"), "json")
         errors_report_path = os.path.join(transed_project_dir, "errors_report.json")
         if is_pdf_only_latex_source(sections, captions, envs):

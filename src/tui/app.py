@@ -43,7 +43,7 @@ from textual.widgets import (
     TextArea,
 )
 
-from src.tui.config import UI_CONFIG_PATH, load_ui_config, save_ui_config
+from src.tui.config import UI_CONFIG_PATH, list_llm_profiles, load_ui_config, save_ui_config
 from src.tui.config_schema import (
     FONT_HINT_LANGUAGE_BY_KIND,
     ConfigField,
@@ -269,6 +269,11 @@ class ProjectManagementTable(DataTable):
 
         self._suppress_next_row_selected = False
 
+    def on_resize(self, event: events.Resize) -> None:
+        """尺寸变化后重新分配标题空间，保持选中状态及游标位置。"""
+        if self.columns:
+            self.app.call_after_refresh(self.app.refresh_task_table)
+
     def on_mouse_down(self, event: events.MouseDown) -> None:
         """在鼠标按下时切换项目行，并抑制后续重复行事件。"""
         if self._toggle_clicked_row(event):
@@ -451,6 +456,17 @@ class LaTeXTransTuiApp(App[None]):
 
     #project-list ListItem:hover {
         background: $surface;
+    }
+
+    #project-list ListItem {
+        height: 1;
+    }
+
+    #project-list Static {
+        width: 1fr;
+        height: 1;
+        text-wrap: nowrap;
+        text-overflow: ellipsis;
     }
 
     .running-task-project {
@@ -983,10 +999,15 @@ class LaTeXTransTuiApp(App[None]):
         list_view.clear()
 
         for task, project in self._iter_project_states():
-            label = Static(project.project_name)
+            text = project.project_name + (f" · {project.title}" if project.title else "")
+            label = Static(Text(text, overflow="ellipsis", no_wrap=True))
+            tooltip = Text(project.project_name + "\n" + (project.title or "未识别标题"))
+            label.tooltip = tooltip
             if self._task_is_running(task):
                 label.add_class("running-task-project")
-            list_view.append(ListItem(label))
+            item = ListItem(label)
+            item.tooltip = tooltip
+            list_view.append(item)
 
     def refresh_detail_page(self) -> None:
         """Refresh read-only detail widgets for the selected project."""
@@ -1014,18 +1035,36 @@ class LaTeXTransTuiApp(App[None]):
         project_states = self._iter_project_states()
         valid_keys = {(task.task_id, project.project_name) for task, project in project_states}
         self.selected_project_keys.intersection_update(valid_keys)
+        cursor = table.cursor_coordinate
+        scroll_x, scroll_y = table.scroll_x, table.scroll_y
         table.clear(columns=True)
-        table.add_columns("选中", "项目", "状态", "任务 id")
+        for label, width in zip(
+            ("选中", "项目", "标题", "翻译模型", "状态", "任务 id"),
+            self._project_column_widths(table),
+        ):
+            table.add_column(label, width=width)
 
         for task, project in project_states:
             key = (task.task_id, project.project_name)
             table.add_row(
                 "[√]" if key in self.selected_project_keys else "[]",
-                project.project_name,
+                Text(project.project_name, overflow="ellipsis", no_wrap=True),
+                Text(project.title or "未识别标题", overflow="ellipsis", no_wrap=True),
+                Text(project.translation_model or "unknown", overflow="ellipsis", no_wrap=True),
                 project.status.value,
                 task.task_id,
             )
+        if table.row_count:
+            table.move_cursor(row=min(cursor.row, table.row_count - 1), column=min(cursor.column, 5), scroll=False)
+        table.scroll_to(x=scroll_x, y=scroll_y, animate=False)
         self._refresh_project_action_buttons()
+
+    def _project_column_widths(self, table: DataTable) -> tuple[int, int, int, int, int, int]:
+        """将剩余可视宽度分配给标题；窄屏保留最小宽度并允许横向滚动。"""
+        available = table.size.width or self.query_one("#main-switcher").size.width
+        fixed = (4, 18, 20, 17, 23)
+        title_width = max(18, available - sum(fixed) - 12 * table.cell_padding - 2)
+        return fixed[0], fixed[1], title_width, fixed[2], fixed[3], fixed[4]
 
     def _selected_project_states(self) -> list[tuple[TaskViewState, ProjectViewState]]:
         """返回当前选中的任务和项目状态。"""
@@ -1336,6 +1375,8 @@ class LaTeXTransTuiApp(App[None]):
 
     def _config_field_hint(self, field: ConfigField) -> Widget | None:
         """返回设置项下方的可用字体折叠面板；不需要提示时返回 None。"""
+        if field.path == ("llm_config", "profile"):
+            return Static("", id=f"{field.widget_id}-hint", classes="config-field-hint")
         if field.kind not in FONT_HINT_LANGUAGE_BY_KIND:
             return None
         families = self._available_font_families(FONT_HINT_LANGUAGE_BY_KIND[field.kind])
@@ -1375,13 +1416,34 @@ class LaTeXTransTuiApp(App[None]):
         with self.prevent(Input.Changed, Select.Changed, Switch.Changed, TextArea.Changed):
             for field in config_fields_for_engine(self.effective_engine):
                 if field.kind == "select":
-                    self.query_one(f"#{field.widget_id}", Select).value = select_value_for_field(field, config)
+                    select = self.query_one(f"#{field.widget_id}", Select)
+                    if field.path == ("llm_config", "profile"):
+                        self._populate_profile_select(select, config)
+                    else:
+                        select.value = select_value_for_field(field, config)
                 elif field.kind == "switch":
                     self.query_one(f"#{field.widget_id}", Switch).value = bool_for_field(field, config)
                 elif field.kind == "textarea":
                     self.query_one(f"#{field.widget_id}", TextArea).text = form_text_for_field(field, config)
                 else:
                     self.query_one(f"#{field.widget_id}", Input).value = form_text_for_field(field, config)
+
+    def _populate_profile_select(self, select: Select, config: dict[str, object]) -> None:
+        """刷新 profile 文件名选项并保留失效的当前配置，不自动切换模型。"""
+        options = list_llm_profiles(Path.cwd() / UI_CONFIG_PATH)
+        llm_config = config.get("llm_config")
+        current = str(llm_config.get("profile") or "") if isinstance(llm_config, dict) else ""
+        names = {value for _, value in options}
+        hint = ""
+        if not options:
+            hint = "没有可用 profile，请在 config/provider 中添加 TOML 配置文件。"
+        if current and current not in names:
+            options.append((f"{current}（文件不存在）", current))
+            hint += " 当前 profile 文件不存在，运行前请重新选择。"
+        select.set_options(options)
+        select.value = current if current else Select.NULL
+        select.prompt = "选择 profile" if names else "没有可用 profile"
+        self.query_one(f"#{select.id}-hint", Static).update(hint.strip())
 
     def _collect_config_form_values(self) -> dict[tuple[str, ...], object]:
         """从设置页表单控件读取并校验配置值。"""
@@ -1705,16 +1767,16 @@ class LaTeXTransTuiApp(App[None]):
     def _persist_project_event(self, event: dict[str, object], task: TaskViewState) -> None:
         """Persist metadata for project events with an output directory."""
         event_type = event.get("type")
-        if event_type not in {"project_start", "project_complete", "project_error", "project_cancelled"}:
+        if event_type not in {"project_start", "project_metadata", "project_complete", "project_error", "project_cancelled"}:
             return
-        output_dir = event.get("output_dir")
         project_name = str(event.get("project_name") or "")
-        if not output_dir or not project_name:
-            return
         project = next(
             (item for item in task.projects if item.project_name == project_name),
             None,
         )
+        output_dir = event.get("output_dir") or (project.output_dir if project else None)
+        if not output_dir or not project_name:
+            return
         status = project.status if project is not None else ProjectStatus.PENDING
         input_item = self._input_item_for_project(task, project_name)
         write_project_metadata(
@@ -1725,6 +1787,8 @@ class LaTeXTransTuiApp(App[None]):
             project_name=project_name,
             status=status,
             engine=task.engine,
+            title=project.title if project else None,
+            translation_model=project.translation_model if project else None,
             source_markdown_path=(
                 project.source_markdown_path if project is not None else None
             ),

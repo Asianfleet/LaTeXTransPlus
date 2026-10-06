@@ -22,7 +22,7 @@ class TuiConfigSchemaTests(unittest.TestCase):
 
         self.assertEqual([field.path for field in llm_fields], [("llm_config", "profile")])
         self.assertEqual(llm_fields[0].label, "LLM 配置 profile")
-        self.assertEqual(llm_fields[0].kind, "input")
+        self.assertEqual(llm_fields[0].kind, "select")
 
     def test_grouped_fields_preserve_llm_profile_section(self):
         sections = dict(grouped_config_fields("heavy"))

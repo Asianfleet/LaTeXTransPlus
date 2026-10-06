@@ -10,6 +10,17 @@ from typing import Any
 import toml
 
 UI_CONFIG_PATH = Path("config") / "ui.toml"
+
+
+def list_llm_profiles(config_path: Path) -> list[tuple[str, str]]:
+    """仅枚举主配置旁 provider 目录中的文件名，不读取配置或凭据内容。"""
+    return [
+        (path.stem, path.stem)
+        for path in sorted(config_path.resolve().parent.joinpath("provider").glob("*.toml"))
+        if path.is_file()
+    ]
+
+
 _LEGACY_HEAVY_KEYS = (
     "paper_list",
     "tex_sources_dir",
