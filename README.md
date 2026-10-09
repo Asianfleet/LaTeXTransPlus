@@ -127,6 +127,19 @@ They activate the `latextrans` environment before calling the installed programs
 chmod +x scripts/linux/latextrans scripts/linux/latextrans-tui
 ```
 
+On macOS, equivalent shell wrappers are available under:
+
+```text
+scripts/macos/latextrans
+scripts/macos/latextrans-tui
+```
+
+They activate the `latextrans` environment before calling the installed programs. Install the project into that environment first, then add `scripts/macos` to your `PATH` or place the scripts in another PATH directory. Make them executable before use:
+
+```bash
+chmod +x scripts/macos/latextrans scripts/macos/latextrans-tui
+```
+
 # ⚙️ Configuration
 
 The default configuration lives at:

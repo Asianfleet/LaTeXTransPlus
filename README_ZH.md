@@ -127,6 +127,19 @@ scripts/linux/latextrans-tui
 chmod +x scripts/linux/latextrans scripts/linux/latextrans-tui
 ```
 
+macOS 下也提供了对应的 shell 包装脚本：
+
+```text
+scripts/macos/latextrans
+scripts/macos/latextrans-tui
+```
+
+它们会先激活 `latextrans` 环境，再调用其中已安装的程序。先把项目安装到该环境，再把 `scripts/macos` 加入 `PATH`，或将脚本放到其他已在 `PATH` 中的目录。使用前记得赋予可执行权限：
+
+```bash
+chmod +x scripts/macos/latextrans scripts/macos/latextrans-tui
+```
+
 # ⚙️ 配置
 
 默认配置文件位于：

@@ -43,6 +43,24 @@ class LauncherScriptTests(unittest.TestCase):
 
         self.assertIn('exec latextrans-tui "$@"', content)
 
+    def test_macos_launchers_change_to_project_root(self):
+        """macOS launchers should derive and enter the repository root."""
+        for name in ("latextrans", "latextrans-tui"):
+            content = (PROJECT_ROOT / "scripts" / "macos" / name).read_text(encoding="utf-8")
+
+            self.assertIn('cd "$(dirname "$0")/../.."', content)
+            self.assertIn('eval "$(conda shell.bash hook)"', content)
+            self.assertIn("conda activate latextrans", content)
+            self.assertNotIn("conda run", content)
+
+    def test_macos_tui_launcher_forwards_all_arguments_to_the_tui(self):
+        """The macOS TUI launcher should preserve every caller argument."""
+        content = (PROJECT_ROOT / "scripts" / "macos" / "latextrans-tui").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn('exec latextrans-tui "$@"', content)
+
 
 if __name__ == "__main__":
     unittest.main()

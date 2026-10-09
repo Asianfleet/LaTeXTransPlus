@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+cd "$(dirname "$0")/../.." || exit 1
+eval "$(conda shell.bash hook)" || exit 1
+conda activate latextrans || exit 1
+exec latextrans-tui "$@"
