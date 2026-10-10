@@ -871,11 +871,14 @@ class LaTeXTransTuiApp(App[None]):
         for task in current_tasks:
             for project in task.projects:
                 if project.output_dir:
+                    # 历史配置可能使用相对路径，运行事件则使用绝对路径。
+                    output_dir = Path(project.output_dir).resolve()
                     merged = [
                         history_task
                         for history_task in merged
                         if not any(
-                            history_project.output_dir == project.output_dir
+                            history_project.output_dir
+                            and Path(history_project.output_dir).resolve() == output_dir
                             for history_project in history_task.projects
                         )
                     ]

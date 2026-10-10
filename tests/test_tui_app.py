@@ -41,7 +41,7 @@ from src.tui.app import (
     compact_progress_log_for_display,
     run,
 )
-from src.tui.history import TUI_PROJECT_METADATA_FILENAME
+from src.tui.history import TUI_PROJECT_METADATA_FILENAME, write_project_metadata
 from src.tui.config import UI_CONFIG_PATH
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
 
@@ -129,6 +129,48 @@ class TuiAppTests(unittest.IsolatedAsyncioTestCase):
 
 class TuiEngineModeTests(TuiAppTests):
     """Verify the TUI keeps heavy and lite session state isolated."""
+
+    async def test_mode_round_trip_does_not_duplicate_completed_project(self):
+        """确认相对历史路径与绝对运行路径在模式往返切换后仍是同一项目。"""
+        for engine, other_engine in (("heavy", "lite"), ("lite", "heavy")):
+            with self.subTest(engine=engine):
+                app = LaTeXTransTuiApp(initial_engine=engine)
+                app.current_config = {
+                    "heavy": {"output_dir": str(Path(engine) / "outputs")},
+                    "lite": {"output_dir": str(Path(engine) / "output-lite")},
+                }
+                async with app.run_test() as pilot:
+                    output = Path(engine) / ("outputs" if engine == "heavy" else "output-lite") / "paper"
+                    task = TaskViewState(
+                        input_type="arxiv", inputs=["2508.18791"],
+                        task_id=f"completed-{engine}", engine=engine, total=1,
+                    )
+                    task.apply_event({
+                        "type": "project_complete", "project_name": "paper",
+                        "output_dir": str(output.resolve()),
+                    })
+                    write_project_metadata(
+                        output, task.task_id, task.input_type, task.inputs[0],
+                        "paper", ProjectStatus.COMPLETED, engine=engine,
+                    )
+                    app.tasks = [task]
+                    app.current_task = task
+                    app.refresh_project_list()
+                    await pilot.pause()
+                    self.assertEqual(len(app.query_one("#project-list", ListView).children), 1)
+
+                    for _ in range(2):
+                        app.set_engine(other_engine)
+                        await app.workers.wait_for_complete()
+                        await pilot.pause()
+                        self.assertEqual(len(app.query_one("#project-list", ListView).children), 0)
+                        app.set_engine(engine)
+                        await app.workers.wait_for_complete()
+                        await pilot.pause()
+                        self.assertEqual(len(app.query_one("#project-list", ListView).children), 1)
+                        self.assertEqual(len(app.tasks), 1)
+                        self.assertIs(app.tasks[0], task)
+                        self.assertEqual(task.projects[0].status, ProjectStatus.COMPLETED)
 
     async def test_initial_engine_mount_does_not_persist_configuration(self):
         """Mounting an engine-specific form must not overwrite the saved UI default."""
