@@ -3,63 +3,35 @@
 from __future__ import annotations
 
 import argparse
-import csv
-import json
-import os
 import re
 import shutil
 import time
 from datetime import datetime
 from pathlib import Path
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
-import toml
-from rich.cells import cell_len
 from rich.text import Text
-from rich.syntax import Syntax
-from textual import events, work
+from textual import work
 from textual.app import App, ComposeResult
-from textual.binding import Binding
-from textual.coordinate import Coordinate
 from textual.css.query import NoMatches
-from textual.containers import Horizontal, Vertical, VerticalScroll
-from textual.widget import Widget
+from textual.containers import Horizontal, Vertical
 from textual.widgets import (
     Button,
-    Collapsible,
     ContentSwitcher,
     DataTable,
     Footer,
-    Input,
     ListItem,
     ListView,
-    RichLog,
     Rule,
     Select,
     Static,
     Switch,
-    TabPane,
-    TabbedContent,
     TextArea,
 )
 
-from src.tui.config import UI_CONFIG_PATH, list_llm_profiles, load_ui_config, save_ui_config
-from src.tui.config_schema import (
-    FONT_HINT_LANGUAGE_BY_KIND,
-    ConfigField,
-    bool_for_field,
-    config_fields_for_engine,
-    form_text_for_field,
-    grouped_config_fields,
-    normalized_config_from_form,
-    parse_font_family_value,
-    parse_font_list_value,
-    parse_integer_value,
-    parse_textarea_value,
-    select_value_for_field,
-)
+from src.tui.config import UI_CONFIG_PATH, load_ui_config
+from src.tui.config_page import ConfigPage
 from src.engines.base import normalize_engine
-from src.engines.lite_fonts import list_available_font_families
 from src.tui.history import load_output_history, write_project_metadata
 from src.tui.input_parser import (
     parse_input_items,
@@ -72,28 +44,40 @@ from src.tui.process_runner import (
     start_tui_task_process,
     terminate_tui_task_process,
 )
+from src.tui.project_detail import (
+    ProjectDetail,
+    _merge_project_log_text,
+    compact_progress_log_for_display,
+)
 from src.tui.runner import run_tui_task as _DEFAULT_RUN_TUI_TASK
 from src.tui.runner import run_tui_task
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
+from src.tui.widgets import (
+    APP_TITLE_ART,
+    APP_TITLE_ART_COMPACT,
+    APP_TITLE_LINE_STYLES,
+    APP_TITLE_LITE_LINE_STYLES,
+    APP_TITLE_PLAIN,
+    ConfigTabbedContent,
+    DetailTabbedContent,
+    EntryBatchTextArea,
+    ErrorReportsTable,
+    ProjectManagementTable,
+    ResponsiveAppTitle,
+    ZoteroResultsTable,
+    ZoteroSearchInput,
+    app_title_art_width,
+    build_app_title,
+    build_app_title_for_width,
+    build_art_title,
+)
 from src.tui.zotero_adapter import ZoteroAdapter
+from src.tui.zotero_panel import ZoteroPanel
 
 PAGE_ENTRY = "entry"
 PAGE_DETAIL = "detail"
 PAGE_TASKS = "tasks"
 PAGE_CONFIG = "config"
-ZOTERO_SELECTION_COLUMN_WIDTH = 4
-ZOTERO_MIN_TITLE_COLUMN_WIDTH = 20
-ZOTERO_MIN_LIBRARY_COLUMN_WIDTH = 10
-ZOTERO_MAX_LIBRARY_COLUMN_WIDTH = 18
-ZOTERO_MIN_COLLECTION_COLUMN_WIDTH = 12
-ZOTERO_MAX_COLLECTION_COLUMN_WIDTH = 24
-ERROR_POSITION_COLUMN_WIDTH = 10
-ERROR_TYPE_COLUMN_WIDTH = 5
-ERROR_PROBLEM_COLUMN_WIDTH = 24
-ERROR_STATUS_COLUMN_WIDTH = 8
-ERROR_MIN_CONTENT_COLUMN_WIDTH = 6
-PROGRESS_LOG_LINE_RE = re.compile(r"^\[[#-]+\]\s+\d{1,3}(?:\.\d+)?%")
-APP_TITLE_PLAIN = "LaTeXTransPlus"
 NOTIFY_MESSAGE_LIMIT = 400
 NOTIFICATION_SEVERITY = Literal["information", "warning", "error"]
 
@@ -106,630 +90,17 @@ def _compact_notification(message: str, limit: int = NOTIFY_MESSAGE_LIMIT) -> st
     return f"{collapsed[:limit]} …"
 
 
-def _merge_project_log_text(file_text: str, memory_lines: list[str]) -> str:
-    """合并日志文件与尚未落盘的准备阶段日志，并保持准备日志在前。"""
-    file_lines = file_text.splitlines()
-    file_line_set = set(file_lines)
-    pending_lines = [line for line in memory_lines if line and line not in file_line_set]
-    return "\n".join(pending_lines + file_lines)
-
-
-APP_TITLE_ART = "\n".join(
-    (
-        "  ██╗      █████╗ ████████╗███████╗██╗  ██╗████████╗██████╗  █████╗ ███╗   ██╗███████╗      ██╗",
-        "  ██║     ██╔══██╗╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝██╔══██╗██╔══██╗████╗  ██║██╔════╝    ██████╗",
-        "  ██║     ███████║   ██║   █████╗   ╚███╔╝    ██║   ██████╔╝███████║██╔██╗ ██║███████╗    ╚═██╔═╝",
-        "  ██║     ██╔══██║   ██║   ██╔══╝   ██╔██╗    ██║   ██╔══██╗██╔══██║██║╚██╗██║╚════██║      ╚═╝",
-        "  ███████╗██║  ██║   ██║   ███████╗██╔╝ ██╗   ██║   ██║  ██║██║  ██║██║ ╚████║███████║",
-        "  ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝╚══════╝",
-    )
-)
-APP_TITLE_ART_COMPACT = "\n".join(
-    (
-        "  ██╗      █████╗ ████████╗███████╗██╗  ██╗████████╗      ██╗",
-        "  ██║     ██╔══██╗╚══██╔══╝██╔════╝╚██╗██╔╝╚══██╔══╝    ██████╗",
-        "  ██║     ███████║   ██║   █████╗   ╚███╔╝    ██║       ╚═██╔═╝",
-        "  ██║     ██╔══██║   ██║   ██╔══╝   ██╔██╗    ██║         ╚═╝",
-        "  ███████╗██║  ██║   ██║   ███████╗██╔╝ ██╗   ██║",
-        "  ╚══════╝╚═╝  ╚═╝   ╚═╝   ╚══════╝╚═╝  ╚═╝   ╚═╝",
-    )
-)
-APP_TITLE_LINE_STYLES = (
-    "bold bright_white",
-    "bold #dbeafe",
-    "bold #93c5fd",
-    "bold #60a5fa",
-    "bold #3b82f6",
-    "bold #1d4ed8",
-)
-APP_TITLE_LITE_LINE_STYLES = (
-    "bold bright_white",
-    "bold #e5e7eb",
-    "bold #d1d5db",
-    "bold #9ca3af",
-    "bold #6b7280",
-    "bold #4b5563",
-)
-
-
-def app_title_art_width(art: str) -> int:
-    """计算艺术字标题的最大终端显示宽度。"""
-    return max(cell_len(line) for line in art.splitlines())
-
-
-def build_art_title(art: str, line_styles: tuple[str, ...] = APP_TITLE_LINE_STYLES) -> Text:
-    """用入口页标题样式构建指定艺术字文本。"""
-    title = Text()
-    for index, line in enumerate(art.splitlines()):
-        if index:
-            title.append("\n")
-        title.append(line, style=line_styles[index])
-    return title
-
-
-def build_app_title(engine: str = "heavy") -> Text:
-    """构建入口页宽屏蓝白色多行艺术字标题。"""
-    return build_art_title(APP_TITLE_ART, _title_line_styles(engine))
-
-
-def build_app_title_for_width(width: int, engine: str = "heavy") -> Text:
-    """根据可用宽度构建入口页标题，避免艺术字被终端换行错位。"""
-    if width >= app_title_art_width(APP_TITLE_ART):
-        return build_art_title(APP_TITLE_ART, _title_line_styles(engine))
-    if width >= app_title_art_width(APP_TITLE_ART_COMPACT):
-        return build_art_title(APP_TITLE_ART_COMPACT, _title_line_styles(engine))
-    return Text(APP_TITLE_PLAIN, style=_title_line_styles(engine)[2])
-
-
-def _title_line_styles(engine: str) -> tuple[str, ...]:
-    """Return the title palette for one validated TUI engine."""
-    return APP_TITLE_LITE_LINE_STYLES if normalize_engine(engine) == "lite" else APP_TITLE_LINE_STYLES
-
-
-class ResponsiveAppTitle(Static):
-    """入口页标题控件，根据自身宽度切换宽版、窄版和普通标题。"""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        """初始化时先使用普通标题，等待布局完成后再按实际宽度刷新。"""
-        super().__init__(build_app_title_for_width(0), *args, **kwargs)
-        self._engine = "heavy"
-
-    def set_engine(self, engine: str) -> None:
-        """Apply the selected engine's title palette without changing layout."""
-        self._engine = normalize_engine(engine)
-        self._refresh_for_width(self.size.width)
-
-    def on_mount(self) -> None:
-        """控件挂载后按当前宽度刷新标题。"""
-        self._refresh_for_width(self.size.width)
-
-    def on_resize(self, event: events.Resize) -> None:
-        """控件尺寸变化时按新的可绘制宽度刷新标题。"""
-        self._refresh_for_width(event.size.width)
-
-    def _refresh_for_width(self, width: int) -> None:
-        """按给定宽度更新标题内容。"""
-        next_title = build_app_title_for_width(width, self._engine)
-        if self.content == next_title:
-            return
-        self.update(next_title, layout=False)
-
-
-def compact_progress_log_for_display(log_text: str) -> str:
-    """压缩连续进度日志块，展示时只保留首行、中间行和末行。"""
-    displayed_lines: list[str] = []
-    progress_block: list[str] = []
-
-    def flush_progress_block() -> None:
-        """将当前连续进度块按展示规则写入输出行。"""
-        if not progress_block:
-            return
-        if len(progress_block) <= 3:
-            displayed_lines.extend(progress_block)
-        else:
-            middle_index = len(progress_block) // 2
-            displayed_lines.extend(
-                [
-                    progress_block[0],
-                    progress_block[middle_index],
-                    progress_block[-1],
-                ]
-            )
-        progress_block.clear()
-
-    for line in log_text.splitlines():
-        stripped_line = line.rstrip()
-        if PROGRESS_LOG_LINE_RE.match(stripped_line):
-            progress_block.append(stripped_line)
-            continue
-        flush_progress_block()
-        displayed_lines.append(stripped_line)
-
-    flush_progress_block()
-    return "\n".join(displayed_lines)
-
-
-class ErrorReportsTable(DataTable):
-    """错误记录表，尺寸变化时按新的可视宽度重新生成列。"""
-
-    def on_resize(self, event: events.Resize) -> None:
-        """表格尺寸变化时重新分配错误记录列宽。"""
-        if self.columns:
-            app = self.app
-            if hasattr(app, "_refresh_selected_errors_table"):
-                app.call_after_refresh(app._refresh_selected_errors_table)
-
-
-class ProjectManagementTable(DataTable):
-    """项目管理表，单击数据行即可切换项目选择状态。"""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        """初始化项目表的行选择抑制状态。"""
-        super().__init__(*args, **kwargs)
-
-        self._suppress_next_row_selected = False
-
-    def on_resize(self, event: events.Resize) -> None:
-        """尺寸变化后重新分配标题空间，保持选中状态及游标位置。"""
-        if self.columns:
-            self.app.call_after_refresh(self.app.refresh_task_table)
-
-    def on_mouse_down(self, event: events.MouseDown) -> None:
-        """在鼠标按下时切换项目行，并抑制后续重复行事件。"""
-        if self._toggle_clicked_row(event):
-            self._suppress_next_row_selected = True
-            event.stop()
-
-    def _toggle_clicked_row(self, event: events.MouseEvent) -> bool:
-        """根据点击事件切换项目行，返回是否成功处理。"""
-        meta = event.style.meta or {}
-        has_cell_meta = "row" in meta and "column" in meta
-        row_index = int(meta["row"]) if has_cell_meta else self._row_index_from_click(event)
-        column_index = int(meta["column"]) if has_cell_meta else 0
-        if not meta.get("out_of_bounds", False) and 0 <= row_index < self.row_count and column_index >= 0:
-            self.cursor_coordinate = Coordinate(row_index, column_index)
-            app = self.app
-            if hasattr(app, "_toggle_project_selection"):
-                app._toggle_project_selection(row_index)
-            self._scroll_cursor_into_view(animate=True)
-            return True
-        return False
-
-    def _row_index_from_click(self, event: events.MouseEvent) -> int:
-        """从 Textual 鼠标坐标推导项目表行索引。"""
-        row_index = int(event.y) - self.header_height
-        if 0 <= row_index < self.row_count or event.screen_y is None:
-            return row_index
-        return int(event.screen_y - self.region.y) - self.header_height
-
-
-class ZoteroResultsTable(DataTable):
-    """Zotero 搜索结果表，单击数据行即可切换选中状态。"""
-
-    def __init__(self, *args: object, **kwargs: object) -> None:
-        """初始化 Zotero 表格的鼠标点击防抖状态。"""
-        super().__init__(*args, **kwargs)
-        self._ignore_next_click = False
-
-    def on_mouse_down(self, event: events.MouseDown) -> None:
-        """在鼠标按下时立即切换数据行，保证单击即可选中。"""
-        if self._toggle_clicked_row(event):
-            self._ignore_next_click = True
-            event.stop()
-
-    def on_resize(self, event: events.Resize) -> None:
-        """表格尺寸变化时重新收紧列宽，避免出现水平滚动。"""
-        if self.columns:
-            app = self.app
-            if hasattr(app, "_fit_zotero_results_table_columns"):
-                app._fit_zotero_results_table_columns()
-
-    def on_click(self, event: events.Click) -> None:
-        """把数据行单击解释为 Zotero 条目选择，并保留非数据区默认行为。"""
-        if self._ignore_next_click:
-            self._ignore_next_click = False
-            event.stop()
-            return
-        if self._toggle_clicked_row(event):
-            event.stop()
-
-    async def _on_click(self, event: events.Click) -> None:
-        """在默认 DataTable 处理前拦截 Zotero 数据行点击。"""
-        if self._toggle_clicked_row(event):
-            event.stop()
-            return
-        await super()._on_click(event)
-
-    def _toggle_clicked_row(self, event: events.MouseEvent) -> bool:
-        """根据点击事件切换对应 Zotero 数据行，返回是否已处理。"""
-        meta = event.style.meta
-        has_cell_meta = "row" in meta and "column" in meta
-        row_index = int(meta["row"]) if has_cell_meta else self._row_index_from_click(event)
-        column_index = int(meta["column"]) if has_cell_meta else 0
-        if not meta.get("out_of_bounds", False):
-            if 0 <= row_index < self.row_count and column_index >= 0:
-                self.cursor_coordinate = Coordinate(row_index, column_index)
-                app = self.app
-                if hasattr(app, "toggle_zotero_row_selection"):
-                    app.toggle_zotero_row_selection(row_index)
-                self._scroll_cursor_into_view(animate=True)
-                return True
-        return False
-
-    def _row_index_from_click(self, event: events.MouseEvent) -> int:
-        """从 Textual 鼠标事件坐标推导数据行索引。"""
-        row_index = int(event.y) - self.header_height
-        if 0 <= row_index < self.row_count or event.screen_y is None:
-            return row_index
-        return int(event.screen_y - self.region.y) - self.header_height
-
-
-class EntryBatchTextArea(TextArea):
-    """入口页批量输入框，负责把 Enter 解释为提交任务。"""
-
-    BINDINGS = [
-        *TextArea.BINDINGS,
-        Binding("enter", "submit_entry", "发送", priority=True),
-    ]
-
-    def action_submit_entry(self) -> None:
-        """提交入口页表单，不在输入框中插入换行。"""
-        app = self.app
-        if hasattr(app, "submit_entry_form"):
-            app.submit_entry_form()
-
-
-class ZoteroSearchInput(Input):
-    """Zotero 搜索输入框，负责把 Enter 解释为搜索。"""
-
-    BINDINGS = [
-        *Input.BINDINGS,
-        Binding("enter", "submit_search", "搜索", priority=True),
-    ]
-
-    def action_submit_search(self) -> None:
-        """提交当前 Zotero 搜索词。"""
-        app = self.app
-        if hasattr(app, "search_zotero_items"):
-            app.search_zotero_items()
-
-
-class ConfigTabbedContent(TabbedContent):
-    """设置页 tab 容器，提供只在设置上下文显示的 tab 快捷键。"""
-
-    BINDINGS = [
-        Binding("c", "show_tab('config-form-tab')", "配置"),
-        Binding("p", "show_tab('config-preview-tab')", "预览"),
-    ]
-
-    def action_show_tab(self, tab_id: str) -> None:
-        """切换到指定设置 tab。"""
-        self.active = tab_id
-
-
-class DetailTabbedContent(TabbedContent):
-    """项目详情 tab 容器，提供只在详情上下文显示的 tab 快捷键。"""
-
-    BINDINGS = [
-        Binding("t", "show_tab('tex-tab')", "TeX"),
-        Binding("r", "show_tab('terms-tab')", "术语"),
-        Binding("e", "show_tab('errors-tab')", "错误"),
-        Binding("l", "show_tab('log-tab')", "日志"),
-        Binding("z", "show_tab('zotero-tab')", "Zotero"),
-    ]
-
-    def action_show_tab(self, tab_id: str) -> None:
-        """切换到指定项目详情 tab。"""
-        try:
-            tab = self.get_tab(tab_id)
-        except (NoMatches, ValueError):
-            return
-        if not tab.has_class("-hidden"):
-            self.active = tab_id
-
-
 class LaTeXTransTuiApp(App[None]):
     """Main Textual application for LaTeXTransPlus."""
 
-    DEFAULT_CSS = """
-
-    #sidebar {
-        width: 1fr;
-        padding: 0 1 0 1;
-    }
-
-    #sidebar Button {
-        width: 100%;
-        height: auto;
-    }
-
-    #project-list {
-        background: transparent;
-        padding: 0;
-        scrollbar-size: 1 1;
-    }
-
-    #sidebar-rule {
-        margin: 0;
-        padding: 0;
-    }
-
-    #project-list ListItem:hover {
-        background: $surface;
-    }
-
-    #project-list ListItem {
-        height: 1;
-    }
-
-    #project-list Static {
-        width: 1fr;
-        height: 1;
-        text-wrap: nowrap;
-        text-overflow: ellipsis;
-    }
-
-    .running-task-project {
-        color: orange;
-    }
-
-    #main-switcher {
-        width: 4fr;
-    }
-
-    #config,
-    #tasks,
-    #detail {
-        padding-top: 1;
-    }
-
-    #config,
-    #config-tabs,
-    #config-form-tab,
-    #config-preview-tab {
-        height: 1fr;
-    }
-
-    #project-actions {
-        height: auto;
-        margin-bottom: 1;
-    }
-
-    #project-actions Button {
-        width: auto;
-        margin-right: 1;
-    }
-
-    #tex-preview-scroll {
-        height: 1fr;
-    }
-
-    #source-markdown-preview-scroll,
-    #translated-markdown-preview-scroll {
-        height: 1fr;
-    }
-
-    #tex-preview {
-        width: 100%;
-    }
-
-    #source-markdown-preview,
-    #translated-markdown-preview {
-        width: 100%;
-    }
-
-    #log-tab,
-    #project-log {
-        height: 1fr;
-    }
-
-    #terms-table,
-    #errors-table {
-        height: 1fr;
-    }
-
-    #entry {
-        align: center top;
-        padding-top: 0;
-    }
-
-    #entry-form {
-        width: 100%;
-        min-width: 50;
-        max-width: 124;
-        height: 100%;
-        align-horizontal: center;
-    }
-
-    #entry-top-spacer,
-    #entry-bottom-spacer {
-        height: 1fr;
-    }
-
-    #entry-bottom-offset {
-        height: 3;
-    }
-
-    #app-title {
-        width: 100%;
-        height: 6;
-        content-align: center middle;
-        text-style: bold;
-        margin: 0 0 2 0;
-    }
-
-    #batch-input {
-        width: 1fr;
-        height: 3;
-        margin: 0;
-    }
-
-    #entry-actions {
-        width: 100%;
-        height: 3;
-        padding: 0 4;
-    }
-
-    #engine-mode-control {
-        height: 3;
-        margin-top: 1;
-        padding: 0 4;
-        align-horizontal: left;
-    }
-
-    #engine-mode-label {
-        width: auto;
-        padding: 1 0 0 1;
-    }
-
-    #input-type-select {
-        width: 22;
-    }
-
-    #start-task-button {
-        width: 10;
-        min-width: 10;
-        height: 3;
-        border: tall $border-blurred;
-    }
-
-    #start-task-button:hover,
-    #start-task-button:focus {
-        border: tall $border;
-    }
-
-    #entry-error {
-        width: 100%;
-        margin: 1 0 0 0;
-    }
-
-    #config-form {
-        height: 1fr;
-        padding: 1 2;
-    }
-
-    #config-fields {
-        height: auto;
-    }
-
-    #config-preview {
-        height: 1fr;
-    }
-
-    .config-section-title {
-        text-style: bold;
-        margin: 1 0 0 0;
-    }
-
-    .config-field-row {
-        height: auto;
-        margin: 0 0 1 0;
-    }
-
-    .config-field-block-with-hint .config-field-row {
-        margin-bottom: 0;
-    }
-
-    .config-field-block {
-        height: auto;
-    }
-
-    .config-field-hint {
-        width: 1fr;
-        height: auto;
-        margin: 0 1 1 25;
-        padding: 0 1 1 0;
-        color: $text-muted;
-    }
-
-    .config-font-list {
-        width: 1fr;
-        height: auto;
-        text-wrap: wrap;
-        color: $text-muted;
-    }
-
-    .config-field-label {
-        width: 24;
-        padding: 1 1 0 0;
-    }
-
-    .config-field-row Input,
-    .config-field-row Select {
-        width: 1fr;
-    }
-
-    .config-field-row TextArea {
-        width: 1fr;
-        height: 5;
-    }
-
-    #zotero-controls {
-        width: 100%;
-        height: 3;
-        margin-bottom: 1;
-    }
-
-    #zotero-library-select {
-        width: 16;
-        height: 3;
-    }
-
-    #zotero-search-input {
-        width: 1fr;
-        min-width: 24;
-        height: 3;
-    }
-
-    #zotero-search-button,
-    #import-zotero-button,
-    #import-zotero-markdown-button {
-        width: 8;
-        min-width: 8;
-        height: 3;
-        border: tall $border-blurred;
-    }
-
-    #zotero-auto-match-button {
-        width: 14;
-        min-width: 14;
-        height: 3;
-        border: tall $border-blurred;
-    }
-
-    #zotero-search-button:hover,
-    #zotero-search-button:focus,
-    #zotero-auto-match-button:hover,
-    #zotero-auto-match-button:focus,
-    #import-zotero-button:hover,
-    #import-zotero-button:focus,
-    #import-zotero-markdown-button:hover,
-    #import-zotero-markdown-button:focus {
-        border: tall $border;
-    }
-
-    #import-zotero-markdown-button {
-        width: 14;
-        min-width: 14;
-    }
-
-    #zotero-import-rule {
-        width: 1;
-        height: 3;
-        margin: 0 1;
-    }
-
-    #zotero-results {
-        height: 1fr;
-    }
-    """
+    CSS_PATH = "app.tcss"
 
     current_task: TaskViewState | None = None
     tasks: list[TaskViewState]
     selected_project_name: str | None = None
     selected_task_id: str | None = None
     selected_project_keys: set[tuple[str, str]]
-    zotero_adapter_factory = staticmethod(
+    _default_zotero_adapter_factory = staticmethod(
         lambda api_key, local_api_base: ZoteroAdapter(
             api_key=api_key,
             local_api_base=local_api_base,
@@ -747,20 +118,52 @@ class LaTeXTransTuiApp(App[None]):
         """Initialize in-memory task history for the terminal UI."""
         super().__init__()
         self.effective_engine = normalize_engine(initial_engine)
+        self.config_page = ConfigPage(self.effective_engine)
+        self.project_detail = ProjectDetail(
+            self.effective_engine,
+            adapter_factory=self._default_zotero_adapter_factory,
+        )
         self.current_task = None
         self.tasks = []
         self.selected_project_name = None
         self.selected_task_id = None
         self.selected_project_keys = set()
         self.load_history_on_mount = load_history_on_mount
-        self.current_config: dict[str, object] = {}
-        self.loading_config_form = True
-        self.zotero_libraries: list[dict[str, object]] = []
-        self.zotero_results: list[dict[str, object]] = []
-        self.zotero_selected_keys: set[str] = set()
         self.task_processes: dict[str, TuiTaskProcess] = {}
         self.cancelled_task_ids: set[str] = set()
-        self._font_families_cache: dict[str | None, list[str]] = {}
+
+    @property
+    def current_config(self) -> dict[str, object]:
+        """提供当前配置快照的兼容读取入口。"""
+        return self.config_page.get_config()
+
+    @current_config.setter
+    def current_config(self, config: dict[str, object]) -> None:
+        """把兼容赋值转交配置页的唯一状态。"""
+        self.config_page.set_config(config)
+
+    @property
+    def zotero_adapter_factory(self) -> Callable[[str, str], ZoteroAdapter]:
+        """提供直接代理面板 adapter 工厂的兼容入口。"""
+        project_detail = self.__dict__.get("project_detail")
+        if isinstance(project_detail, ProjectDetail):
+            return project_detail.zotero_panel.adapter_factory
+        return self._default_zotero_adapter_factory
+
+    @zotero_adapter_factory.setter
+    def zotero_adapter_factory(
+        self,
+        factory: Callable[[str, str], ZoteroAdapter],
+    ) -> None:
+        """把运行时注入的 adapter 工厂直接写入面板。"""
+        project_detail = self.__dict__.get("project_detail")
+        if isinstance(project_detail, ProjectDetail):
+            project_detail.zotero_panel.adapter_factory = factory
+
+    @property
+    def zotero_panel(self) -> ZoteroPanel:
+        """提供详情组件唯一 Zotero 面板的兼容入口。"""
+        return self.project_detail.zotero_panel
 
     def compose(self) -> ComposeResult:
         """Compose the persistent sidebar, content switcher, and footer."""
@@ -793,57 +196,19 @@ class LaTeXTransTuiApp(App[None]):
                         yield Static("", id="entry-error")
                         yield Static("", id="entry-bottom-offset")
                         yield Static("", id="entry-bottom-spacer")
-                with Vertical(id=PAGE_DETAIL):
-                    with DetailTabbedContent(initial="tex-tab", id="detail-tabs"):
-                        with TabPane("TeX", id="tex-tab"):
-                            with VerticalScroll(id="tex-preview-scroll"):
-                                yield Static("", id="tex-preview")
-                        with TabPane("源 Markdown", id="source-markdown-tab"):
-                            with VerticalScroll(id="source-markdown-preview-scroll"):
-                                yield Static("", id="source-markdown-preview")
-                        with TabPane("译文 Markdown", id="translated-markdown-tab"):
-                            with VerticalScroll(id="translated-markdown-preview-scroll"):
-                                yield Static("", id="translated-markdown-preview")
-                        with TabPane("术语表", id="terms-tab"):
-                            yield DataTable(id="terms-table")
-                        with TabPane("错误记录", id="errors-tab"):
-                            yield ErrorReportsTable(id="errors-table")
-                        with TabPane("日志", id="log-tab"):
-                            yield RichLog(id="project-log")
-                        with TabPane("Zotero", id="zotero-tab"):
-                            with Horizontal(id="zotero-controls"):
-                                yield Select([], id="zotero-library-select")
-                                yield ZoteroSearchInput(id="zotero-search-input")
-                                yield Button("搜索", id="zotero-search-button", flat=True)
-                                yield Button("自动匹配", id="zotero-auto-match-button", flat=True)
-                                yield Rule(orientation="vertical", id="zotero-import-rule")
-                                yield Button("导入 PDF", id="import-zotero-button", flat=True)
-                                yield Button("导入 Markdown", id="import-zotero-markdown-button", flat=True)
-                            yield ZoteroResultsTable(id="zotero-results", cursor_type="row")
+                yield self.project_detail
                 with Vertical(id=PAGE_TASKS):
                     with Horizontal(id="project-actions"):
                         yield Button("终止翻译", id="terminate-translation-button", flat=True, disabled=True)
                         yield Button("删除", id="delete-project-button", flat=True, disabled=True)
                         yield Button("重新翻译", id="retry-translation-button", flat=True, disabled=True)
                     yield ProjectManagementTable(id="task-table", cursor_type="row")
-                with Vertical(id=PAGE_CONFIG):
-                    with ConfigTabbedContent(initial="config-form-tab", id="config-tabs"):
-                        with TabPane("配置", id="config-form-tab"):
-                            with VerticalScroll(id="config-form"):
-                                with Vertical(id="config-fields"):
-                                    yield from self._config_form_widgets()
-                                yield Static("", id="config-error")
-                        with TabPane("预览", id="config-preview-tab"):
-                            preview = TextArea(id="config-preview", language="toml")
-                            preview.read_only = True
-                            yield preview
+                yield self.config_page
         yield Footer()
 
     def on_mount(self) -> None:
         """Load existing output projects into the sidebar when the app starts."""
-        self._initialize_zotero_results_table()
         self._apply_engine_view(rebuild_config_form=False)
-        self.call_after_refresh(self._enable_config_persistence)
         if not self.load_history_on_mount:
             return
         self.theme = "nord"
@@ -852,16 +217,15 @@ class LaTeXTransTuiApp(App[None]):
     def set_engine(self, engine: str, persist: bool = False) -> None:
         """Select the engine for this UI session and optionally save a future default."""
         self.effective_engine = normalize_engine(engine)
-        if not self.is_mounted:
+        self.config_page.set_engine(self.effective_engine, rebuild=False)
+        self.project_detail.set_engine(self.effective_engine)
+        if not self.is_running:
             return
         self._apply_engine_view(rebuild_config_form=True)
         if self.load_history_on_mount:
             self.load_output_history()
         if persist:
-            config = dict(self.current_config) or load_ui_config(Path.cwd())
-            config["engine"] = self.effective_engine
-            save_ui_config(Path.cwd(), config)
-            self.current_config = config
+            self.config_page.save_default_engine(self.effective_engine)
 
     def _apply_engine_view(self, rebuild_config_form: bool) -> None:
         """Synchronize visible TUI controls with the current session engine."""
@@ -877,10 +241,12 @@ class LaTeXTransTuiApp(App[None]):
         input_type_select = self.query_one("#input-type-select", Select)
         input_type_select.set_options(self._entry_input_options())
         input_type_select.value = self._entry_input_type()
-        self._refresh_detail_tabs()
+        self.project_detail.set_engine(self.effective_engine)
         self._clear_incompatible_selected_project()
-        if rebuild_config_form:
-            self._rebuild_config_fields()
+        self.config_page.set_engine(
+            self.effective_engine,
+            rebuild=rebuild_config_form,
+        )
         self.refresh_project_list()
         self.refresh_task_table()
         self.refresh_detail_page()
@@ -899,32 +265,6 @@ class LaTeXTransTuiApp(App[None]):
         """Return the current mode's sole default entry type."""
         return "pdf" if self.effective_engine == "lite" else "arxiv"
 
-    def _refresh_detail_tabs(self) -> None:
-        """Show only the current engine's compatible project-detail tabs."""
-        tabs = self.query_one("#detail-tabs", DetailTabbedContent)
-        visible_ids = (
-            {"source-markdown-tab", "translated-markdown-tab", "terms-tab", "log-tab", "zotero-tab"}
-            if self.effective_engine == "lite"
-            else {"tex-tab", "terms-tab", "errors-tab", "log-tab", "zotero-tab"}
-        )
-        all_ids = {
-            "tex-tab",
-            "source-markdown-tab",
-            "translated-markdown-tab",
-            "terms-tab",
-            "errors-tab",
-            "log-tab",
-            "zotero-tab",
-        }
-        for tab_id in all_ids:
-            if tab_id in visible_ids:
-                tabs.show_tab(tab_id)
-            else:
-                tabs.hide_tab(tab_id)
-        preferred_tab = "source-markdown-tab" if self.effective_engine == "lite" else "tex-tab"
-        if tabs.active not in visible_ids:
-            tabs.active = preferred_tab
-
     def _clear_incompatible_selected_project(self) -> None:
         """Clear selection when a mode switch hides its task's project details."""
         if self.selected_task_id is None:
@@ -936,25 +276,6 @@ class LaTeXTransTuiApp(App[None]):
         if selected_task is not None and selected_task.engine != self.effective_engine:
             self.selected_project_name = None
             self.selected_task_id = None
-            self.clear_zotero_results()
-
-    @work(group="config-form", exclusive=True)
-    async def _rebuild_config_fields(self) -> None:
-        """Replace and populate settings fields after their Textual mounts complete."""
-        fields = self.query_one("#config-fields", Vertical)
-        self.loading_config_form = True
-        try:
-            await fields.remove_children()
-            await fields.mount(*self._config_form_widgets())
-            self._populate_config_form(dict(self.current_config))
-        except Exception:
-            self.loading_config_form = False
-            raise
-        self.call_after_refresh(self._enable_config_persistence)
-
-    def _enable_config_persistence(self) -> None:
-        """Re-enable immediate settings persistence after a mode-driven rebuild."""
-        self.loading_config_form = False
 
     def switch_page(self, page_id: str) -> None:
         """Switch the right-side content area to the given page."""
@@ -989,8 +310,7 @@ class LaTeXTransTuiApp(App[None]):
             task_id = project_identity[0]
         self.selected_project_name = project_name
         self.selected_task_id = task_id
-        self.clear_zotero_results()
-        self.refresh_detail_page()
+        self.refresh_detail_page(reset_zotero=True)
         self.switch_page(PAGE_DETAIL)
 
     def refresh_project_list(self) -> None:
@@ -1009,25 +329,36 @@ class LaTeXTransTuiApp(App[None]):
             item.tooltip = tooltip
             list_view.append(item)
 
-    def refresh_detail_page(self) -> None:
-        """Refresh read-only detail widgets for the selected project."""
+    def refresh_detail_page(self, *, reset_zotero: bool = False) -> None:
+        """解析完整项目身份并把展示上下文交给详情组件。"""
         project = self._selected_project()
-        if project is None:
-            return
-
-        if project.engine == "lite":
-            self._refresh_markdown_previews(project)
-        else:
-            self._refresh_tex_preview(project)
-            self._refresh_errors_table(project)
-        task_log_lines: list[str] | None = None
-        for task, candidate in self._iter_project_states():
-            if candidate is project:
-                task_log_lines = task.task_log_lines
-                break
-        self._refresh_project_log(project, task_log_lines)
-        self._refresh_terms_table(project)
-        self._refresh_zotero_controls()
+        selected_task: TaskViewState | None = None
+        if project is not None:
+            selected_task = next(
+                (
+                    task
+                    for task, candidate in self._iter_project_states()
+                    if candidate is project
+                    and (
+                        self.selected_task_id is None
+                        or task.task_id == self.selected_task_id
+                    )
+                ),
+                None,
+            )
+        config = self.current_config
+        zotero_config = config.get("zotero", {}) if isinstance(config, dict) else {}
+        self.project_detail.show_project(
+            project,
+            task_id=selected_task.task_id if selected_task is not None else None,
+            task_log_lines=(
+                selected_task.task_log_lines if selected_task is not None else []
+            ),
+            input_type=selected_task.input_type if selected_task is not None else "",
+            arxiv_id=self._arxiv_id_for_project(project, selected_task),
+            zotero_config=zotero_config if isinstance(zotero_config, dict) else {},
+            reset_zotero=reset_zotero,
+        )
 
     def refresh_task_table(self) -> None:
         """Refresh the project management table from all known task states."""
@@ -1226,7 +557,7 @@ class LaTeXTransTuiApp(App[None]):
             self.select_project(project.project_name, task.task_id)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
-        """切换项目管理或 Zotero 结果行的选中状态。"""
+        """切换项目管理表结果行的选中状态。"""
         if event.data_table.id == "task-table":
             table = event.data_table
             if getattr(table, "_suppress_next_row_selected", False):
@@ -1234,12 +565,6 @@ class LaTeXTransTuiApp(App[None]):
                 return
             if event.cursor_row is not None:
                 self._toggle_project_selection(event.cursor_row)
-            return
-        if event.data_table.id != "zotero-results":
-            return
-        row_index = event.cursor_row
-        if row_index is not None:
-            self.toggle_zotero_row_selection(row_index)
 
     def on_button_pressed(self, event: Button.Pressed) -> None:
         """处理主导航和任务入口按钮。"""
@@ -1252,14 +577,6 @@ class LaTeXTransTuiApp(App[None]):
         elif event.button.id == "settings-button":
             self.switch_page(PAGE_CONFIG)
             self.load_config_page()
-        elif event.button.id == "zotero-search-button":
-            self.search_zotero_items()
-        elif event.button.id == "zotero-auto-match-button":
-            self.auto_match_zotero_items()
-        elif event.button.id == "import-zotero-button":
-            self.import_selected_project_to_zotero()
-        elif event.button.id == "import-zotero-markdown-button":
-            self.import_selected_project_markdown_to_zotero()
         elif event.button.id == "terminate-translation-button":
             if hasattr(self, "_terminate_selected_projects"):
                 self._terminate_selected_projects()
@@ -1270,212 +587,34 @@ class LaTeXTransTuiApp(App[None]):
             if hasattr(self, "_retry_selected_projects"):
                 self._retry_selected_projects()
 
-    def on_input_changed(self, event: Input.Changed) -> None:
-        """配置输入框变化时立即保存并刷新预览。"""
-        if self._is_config_widget(event.input.id):
-            self.persist_config_form_change()
-
-    def on_input_submitted(self, event: Input.Submitted) -> None:
-        """搜索框回车时触发 Zotero 搜索。"""
-        if event.input.id == "zotero-search-input":
-            self.search_zotero_items()
-
-    def on_select_changed(self, event: Select.Changed) -> None:
-        """配置下拉框变化时立即保存并刷新预览。"""
-        if self._is_config_widget(event.select.id):
-            self.persist_config_form_change()
-
     def on_switch_changed(self, event: Switch.Changed) -> None:
-        """配置开关变化时立即保存并刷新预览。"""
+        """入口引擎开关变化时切换当前会话。"""
         if event.switch.id == "engine-mode-switch":
             self.set_engine("lite" if event.value else "heavy")
-            return
-        if self._is_config_widget(event.switch.id):
-            self.persist_config_form_change()
 
-    def on_text_area_changed(self, event: TextArea.Changed) -> None:
-        """配置多行文本变化时立即保存并刷新预览。"""
-        if self._is_config_widget(event.text_area.id):
-            self.persist_config_form_change()
-
-    def on_tabbed_content_tab_activated(self, event: TabbedContent.TabActivated) -> None:
-        """切到配置预览页时刷新未保存表单对应的 TOML。"""
-        if event.tabbed_content.id == "config-tabs" and event.pane.id == "config-preview-tab":
-            self.persist_config_form_change()
-        elif event.tabbed_content.id == "detail-tabs" and event.pane.id == "errors-tab":
-            self.call_after_refresh(self._refresh_selected_errors_table)
-        elif event.tabbed_content.id == "detail-tabs" and event.pane.id == "zotero-tab":
-            self.load_zotero_libraries()
-
-    def load_config_page(self) -> None:
-        """将 UI 配置加载到结构化表单和 TOML 预览区。"""
-        config = load_ui_config(Path.cwd())
-        self.current_config = dict(config)
-        self.loading_config_form = True
-        try:
-            self._populate_config_form(config)
-        finally:
-            self.loading_config_form = False
-        self._update_config_preview(config)
-        self.query_one("#config-error", Static).update("")
-
-    def persist_config_form_change(self) -> None:
-        """从当前表单刷新 TOML 预览并立即保存 UI 配置。"""
-        if self.loading_config_form:
-            return
-        try:
-            config = self._config_from_form()
-        except NoMatches:
-            return
-        except ValueError as exc:
-            self.query_one("#config-error", Static).update(str(exc))
-            return
-        save_ui_config(Path.cwd(), config)
-        self.current_config = dict(config)
-        self._update_config_preview(config)
-        self.query_one("#config-error", Static).update("")
-
-    def _is_config_widget(self, widget_id: str | None) -> bool:
-        """判断事件来源是否为设置页配置控件。"""
-        return bool(widget_id and widget_id.startswith("config-") and widget_id != "config-preview")
-
-    def _config_from_form(self) -> dict[str, object]:
-        """将当前表单转换为完整配置对象。"""
-        values = self._collect_config_form_values()
-        return normalized_config_from_form(dict(self.current_config), values)
-
-    def _compose_config_field(self, field: ConfigField) -> ComposeResult:
-        """组合单个设置项的标签和编辑控件。"""
-        yield self._config_field_row(field)
-
-    def _config_form_widgets(self) -> list[Widget]:
-        """Build settings section widgets for the current session engine."""
-        widgets: list[Widget] = []
-        for section, fields in grouped_config_fields(self.effective_engine):
-            widgets.append(Static(section, classes="config-section-title"))
-            widgets.extend(self._config_field_row(field) for field in fields)
-        return widgets
-
-    def _config_field_row(self, field: ConfigField) -> Vertical:
-        """Create one labeled configuration row, with a hint below it when needed."""
-        children: list[Widget] = [
-            Horizontal(
-                Static(field.label, classes="config-field-label"),
-                self._config_field_input(field),
-                classes="config-field-row",
-            )
-        ]
-        hint = self._config_field_hint(field)
-        if hint is not None:
-            children.append(hint)
-        classes = "config-field-block"
-        if hint is not None:
-            classes += " config-field-block-with-hint"
-        return Vertical(*children, classes=classes)
-
-    def _config_field_hint(self, field: ConfigField) -> Widget | None:
-        """返回设置项下方的可用字体折叠面板；不需要提示时返回 None。"""
-        if field.path == ("llm_config", "profile"):
-            return Static("", id=f"{field.widget_id}-hint", classes="config-field-hint")
-        if field.kind not in FONT_HINT_LANGUAGE_BY_KIND:
-            return None
-        families = self._available_font_families(FONT_HINT_LANGUAGE_BY_KIND[field.kind])
-        hint_id = f"{field.widget_id}-hint"
-        if not families:
-            return Static(
-                "未检测到可用字体：需要随 TeX Live 一起安装的 fc-list。",
-                id=hint_id,
-                classes="config-field-hint",
-            )
-        return Collapsible(
-            Static(", ".join(families), classes="config-font-list"),
-            title=f"可用字体 ({len(families)})",
-            collapsed=True,
-            id=hint_id,
-            classes="config-field-hint",
+    def on_config_page_config_changed(self, message: ConfigPage.ConfigChanged) -> None:
+        """接收配置变化通知，不在 App 中缓存第二份配置。"""
+        message.stop()
+        zotero_config = message.config.get("zotero", {})
+        self.zotero_panel.update_config(
+            zotero_config if isinstance(zotero_config, dict) else {}
         )
 
-    def _available_font_families(self, language: str | None) -> list[str]:
-        """按语言过滤缓存 fontconfig 报告的可用字体列表。"""
-        if language not in self._font_families_cache:
-            self._font_families_cache[language] = list_available_font_families(language)
-        return self._font_families_cache[language]
+    def on_zotero_panel_status_changed(
+        self,
+        message: ZoteroPanel.StatusChanged,
+    ) -> None:
+        """将 Zotero 面板状态转交统一通知入口。"""
+        message.stop()
+        self._notify(message.message)
 
-    def _config_field_input(self, field: ConfigField) -> Widget:
-        """Create the Textual input widget required by one configuration field."""
-        if field.kind == "select":
-            return Select(field.options, id=field.widget_id)
-        if field.kind == "switch":
-            return Switch(id=field.widget_id)
-        if field.kind == "textarea":
-            return TextArea(id=field.widget_id)
-        return Input(id=field.widget_id)
+    def load_config_page(self) -> None:
+        """委托配置页加载配置和填充表单。"""
+        self.config_page.load_config()
 
-    def _populate_config_form(self, config: dict[str, object]) -> None:
-        """把配置值填入设置页表单控件。"""
-        with self.prevent(Input.Changed, Select.Changed, Switch.Changed, TextArea.Changed):
-            for field in config_fields_for_engine(self.effective_engine):
-                if field.kind == "select":
-                    select = self.query_one(f"#{field.widget_id}", Select)
-                    if field.path == ("llm_config", "profile"):
-                        self._populate_profile_select(select, config)
-                    else:
-                        select.value = select_value_for_field(field, config)
-                elif field.kind == "switch":
-                    self.query_one(f"#{field.widget_id}", Switch).value = bool_for_field(field, config)
-                elif field.kind == "textarea":
-                    self.query_one(f"#{field.widget_id}", TextArea).text = form_text_for_field(field, config)
-                else:
-                    self.query_one(f"#{field.widget_id}", Input).value = form_text_for_field(field, config)
-
-    def _populate_profile_select(self, select: Select, config: dict[str, object]) -> None:
-        """刷新 profile 文件名选项并保留失效的当前配置，不自动切换模型。"""
-        options = list_llm_profiles(Path.cwd() / UI_CONFIG_PATH)
-        llm_config = config.get("llm_config")
-        current = str(llm_config.get("profile") or "") if isinstance(llm_config, dict) else ""
-        names = {value for _, value in options}
-        hint = ""
-        if not options:
-            hint = "没有可用 profile，请在 config/provider 中添加 TOML 配置文件。"
-        if current and current not in names:
-            options.append((f"{current}（文件不存在）", current))
-            hint += " 当前 profile 文件不存在，运行前请重新选择。"
-        select.set_options(options)
-        select.value = current if current else Select.NULL
-        select.prompt = "选择 profile" if names else "没有可用 profile"
-        self.query_one(f"#{select.id}-hint", Static).update(hint.strip())
-
-    def _collect_config_form_values(self) -> dict[tuple[str, ...], object]:
-        """从设置页表单控件读取并校验配置值。"""
-        values: dict[tuple[str, ...], object] = {}
-        for field in config_fields_for_engine(self.effective_engine):
-            if field.kind == "select":
-                select = self.query_one(f"#{field.widget_id}", Select)
-                values[field.path] = "" if select.is_blank() else str(select.value)
-            elif field.kind == "switch":
-                value = self.query_one(f"#{field.widget_id}", Switch).value
-                values[field.path] = "True" if field.path == ("update_term",) and value else (
-                    "False" if field.path == ("update_term",) else value
-                )
-            elif field.kind == "textarea":
-                text = self.query_one(f"#{field.widget_id}", TextArea).text
-                values[field.path] = parse_textarea_value(field, text)
-            elif field.kind == "integer":
-                text = self.query_one(f"#{field.widget_id}", Input).value
-                values[field.path] = parse_integer_value(field, text)
-            elif field.kind == "font_list":
-                text = self.query_one(f"#{field.widget_id}", Input).value
-                values[field.path] = parse_font_list_value(field, text)
-            elif field.kind == "font_family":
-                text = self.query_one(f"#{field.widget_id}", Input).value
-                values[field.path] = parse_font_family_value(field, text)
-            else:
-                values[field.path] = self.query_one(f"#{field.widget_id}", Input).value
-        return values
-
-    def _update_config_preview(self, config: dict[str, object]) -> None:
-        """刷新设置页 TOML 预览。"""
-        self.query_one("#config-preview", TextArea).text = toml.dumps(config)
+    def persist_config_form_change(self) -> None:
+        """委托配置页保存当前表单。"""
+        self.config_page.persist_form()
 
     def submit_entry_form(self) -> None:
         """校验入口页表单并创建任务视图状态。"""
@@ -1551,19 +690,24 @@ class LaTeXTransTuiApp(App[None]):
         event: dict[str, object],
         task: TaskViewState | None = None,
     ) -> None:
-        """如果日志事件属于当前详情项目，立即刷新日志控件。"""
-        if event.get("type") not in {"project_log", "task_log"}:
+        """仅将当前任务项目的日志事件交给详情组件。"""
+        event_type = event.get("type")
+        if event_type not in {"project_log", "task_log"}:
             return
         project = self._selected_project()
-        if project is None:
+        target_task = task or self.current_task
+        if project is None or target_task is None:
             return
-        if event.get("type") == "task_log":
-            if task is not None:
-                self._refresh_project_log(project, task.task_log_lines)
+        if target_task.task_id != self.selected_task_id:
             return
-        if project.project_name == str(event.get("project_name") or ""):
-            self._refresh_project_log(project, task.task_log_lines if task is not None else None)
-            self._refresh_terms_table(project)
+        if event_type == "project_log" and project.project_name != str(
+            event.get("project_name") or ""
+        ):
+            return
+        if event_type == "task_log":
+            self.project_detail.refresh_log(target_task.task_log_lines)
+        else:
+            self.project_detail.refresh_log_and_terms(target_task.task_log_lines)
 
     def _notify(
         self,
@@ -1804,744 +948,59 @@ class LaTeXTransTuiApp(App[None]):
                 return item
         return task.inputs[0] if task.inputs else project_name
 
-    def _refresh_tex_preview(self, project: ProjectViewState) -> None:
-        """Load the first TeX source as a read-only preview."""
-        tex_preview = self.query_one("#tex-preview", Static)
-        tex_path = self._find_tex_preview_path(project)
-        if tex_path is None:
-            tex_preview.update("")
-            return
-
-        try:
-            tex_preview.update(self._latex_syntax(tex_path.read_text(encoding="utf-8")))
-        except OSError as exc:
-            tex_preview.update(f"无法读取 TeX 文件：{exc}")
-
-    def _refresh_markdown_previews(self, project: ProjectViewState) -> None:
-        """Render source and translated Markdown artifacts for a lite project."""
-        self._refresh_markdown_preview(
-            "#source-markdown-preview",
-            project.source_markdown_path,
-            "源",
-        )
-        self._refresh_markdown_preview(
-            "#translated-markdown-preview",
-            project.translated_markdown_path,
-            "译文",
-        )
-
-    def _refresh_markdown_preview(
-        self,
-        widget_id: str,
-        markdown_path: str | None,
-        label: str,
-    ) -> None:
-        """Render one Markdown artifact or a clear unavailable-artifact message."""
-        preview = self.query_one(widget_id, Static)
-        if not markdown_path:
-            preview.update(f"没有可用的{label} Markdown 文件。")
-            return
-        path = Path(markdown_path)
-        if not path.is_file():
-            preview.update(f"Markdown 文件不存在：{path}")
-            return
-        try:
-            preview.update(
-                Syntax(
-                    path.read_text(encoding="utf-8"),
-                    "markdown",
-                    theme="ansi_dark",
-                    line_numbers=True,
-                    word_wrap=True,
-                )
-            )
-        except OSError as exc:
-            preview.update(f"无法读取 Markdown 文件：{exc}")
-
-    def _latex_syntax(self, source: str) -> Syntax:
-        """把 TeX 源码转换为离线 Rich LaTeX 高亮对象。"""
-        return Syntax(
-            source,
-            "latex",
-            theme="ansi_dark",
-            line_numbers=True,
-            word_wrap=True,
-        )
-
-    def _find_tex_preview_path(self, project: ProjectViewState) -> Path | None:
-        """Find a representative TeX file for the project preview."""
-        if project.project_dir is None:
-            return None
-
-        project_dir = Path(project.project_dir)
-        if not project_dir.exists():
-            return None
-
-        if project_dir.is_file() and project_dir.suffix.lower() == ".tex":
-            return project_dir
-
-        main_tex = project_dir / "main.tex"
-        if main_tex.is_file():
-            return main_tex
-
-        try:
-            return next(path for path in sorted(project_dir.glob("*.tex")) if path.is_file())
-        except StopIteration:
-            return None
-
-    def _refresh_project_log(
-        self,
-        project: ProjectViewState,
-        task_log_lines: list[str] | None = None,
-    ) -> None:
-        """Load the selected project's log file into the log panel."""
-        log_widget = self.query_one("#project-log", RichLog)
-        log_widget.clear()
-        if project.log_path is None:
-            for line in [*(task_log_lines or []), *project.log_lines]:
-                log_widget.write(line)
-            return
-
-        try:
-            log_text = Path(project.log_path).read_text(encoding="utf-8")
-            log_text = _merge_project_log_text(log_text, [*(task_log_lines or []), *project.log_lines])
-            log_text = compact_progress_log_for_display(log_text)
-        except OSError as exc:
-            fallback_lines = [*(task_log_lines or []), *project.log_lines]
-            log_text = "\n".join(fallback_lines) if fallback_lines else f"无法读取日志文件：{exc}"
-        log_widget.write(log_text)
-
-    def _refresh_errors_table(self, project: ProjectViewState) -> None:
-        """刷新选中项目的错误记录表，展示错误内容和解决状态。"""
-        table = self.query_one("#errors-table", DataTable)
-        table.clear(columns=True)
-        widths = self._errors_column_widths(table)
-        for label, width in zip(("位置", "类型", "问题", "状态", "原文", "译文"), widths):
-            table.add_column(label, width=width)
-
-        for report, status in self._error_reports_with_status(project):
-            source, translation = self._error_report_content(report, project)
-            table.add_row(
-                self._error_report_position(report),
-                self._error_report_type(report),
-                self._truncated_plain_text(self._error_report_problem(report), widths[2]),
-                self._error_status_text(status),
-                self._truncated_plain_text(source, widths[4]),
-                self._truncated_plain_text(translation, widths[5]),
-                height=1,
-            )
-
-    def _refresh_selected_errors_table(self) -> None:
-        """在错误 tab 可见后按真实表格宽度重绘错误表。"""
-        project = self._selected_project()
-        if project is not None:
-            self._refresh_errors_table(project)
-
-    def _errors_column_widths(self, table: DataTable) -> tuple[int, int, int, int, int, int]:
-        """按错误表可视宽度分配固定列宽，避免长内容撑出横向滚动。"""
-        visible_width = self._errors_table_available_width(table)
-        padding_budget = 2 * table.cell_padding * 6
-        content_budget = max(
-            visible_width - padding_budget,
-            (
-                ERROR_POSITION_COLUMN_WIDTH
-                + ERROR_TYPE_COLUMN_WIDTH
-                + ERROR_PROBLEM_COLUMN_WIDTH
-                + ERROR_STATUS_COLUMN_WIDTH
-                + ERROR_MIN_CONTENT_COLUMN_WIDTH * 2
-            ),
-        )
-        fixed_width = (
-            ERROR_POSITION_COLUMN_WIDTH
-            + ERROR_TYPE_COLUMN_WIDTH
-            + ERROR_PROBLEM_COLUMN_WIDTH
-            + ERROR_STATUS_COLUMN_WIDTH
-        )
-        content_width = max(content_budget - fixed_width, ERROR_MIN_CONTENT_COLUMN_WIDTH * 2)
-        source_width = max(ERROR_MIN_CONTENT_COLUMN_WIDTH, content_width // 2)
-        translation_width = max(ERROR_MIN_CONTENT_COLUMN_WIDTH, content_width - source_width)
-        return (
-            ERROR_POSITION_COLUMN_WIDTH,
-            ERROR_TYPE_COLUMN_WIDTH,
-            ERROR_PROBLEM_COLUMN_WIDTH,
-            ERROR_STATUS_COLUMN_WIDTH,
-            source_width,
-            translation_width,
-        )
-
-    def _errors_table_available_width(self, table: DataTable) -> int:
-        """返回错误表可用于分配列宽的当前宽度。"""
-        if table.size.width:
-            return table.size.width
-        for selector in ("#detail-tabs", "#main-switcher"):
-            try:
-                width = self.query_one(selector).size.width
-            except NoMatches:
-                width = 0
-            if width:
-                return width
-        screen_width = self.screen.size.width if self.screen else 0
-        return max((screen_width * 4) // 5, 80)
-
-    def _error_reports_with_status(self, project: ProjectViewState) -> list[tuple[dict[str, object], str]]:
-        """读取最终和初始错误报告，合并为带解决状态的展示行。"""
-        report_path = self._project_errors_report_path(project)
-        final_reports = self._read_error_report(str(report_path) if report_path else None)
-        initial_path = self._initial_error_report_path(str(report_path) if report_path else None)
-        initial_reports = self._read_error_report(str(initial_path) if initial_path else None)
-        if not final_reports and not initial_reports:
-            if project.error:
-                return [
-                    (
-                        {"part": "project", "num_or_ph": "-", "error": project.error},
-                        "unresolved",
-                    )
-                ]
-            if project.pdf_error:
-                return [
-                    (
-                        {"part": "project", "num_or_ph": "-", "error": project.pdf_error},
-                        "warning",
-                    )
-                ]
-            return []
-
-        final_by_key = {self._error_report_key(report): report for report in final_reports}
-        initial_by_key = {self._error_report_key(report): report for report in initial_reports}
-        rows: list[tuple[dict[str, object], str]] = []
-        for key, report in final_by_key.items():
-            rows.append((report, "unresolved"))
-            initial_by_key.pop(key, None)
-        for report in initial_by_key.values():
-            rows.append((report, "resolved"))
-        return rows
-
-    def _read_error_report(self, report_path: str | None) -> list[dict[str, object]]:
-        """从 JSON 错误报告读取列表格式记录。"""
-        if not report_path:
-            return []
-        path = Path(report_path)
-        if not path.is_file():
-            return []
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
-        return [item for item in data if isinstance(item, dict)]
-
-    def _initial_error_report_path(self, report_path: str | None) -> Path | None:
-        """返回最终错误报告同目录下的初始错误报告路径。"""
-        if not report_path:
-            return None
-        return Path(report_path).parent / "initial_errors_report.json"
-
-    def _project_errors_report_path(self, project: ProjectViewState) -> Path | None:
-        """返回项目错误报告路径，必要时从输出目录发现并回填。"""
-        if project.errors_report_path:
-            report_path = Path(project.errors_report_path)
-            if report_path.is_file():
-                return report_path
-        if project.output_dir:
-            fallback_path = Path(project.output_dir) / "errors_report.json"
-            if fallback_path.is_file():
-                project.errors_report_path = str(fallback_path)
-                return fallback_path
-        return None
-
-    def _error_report_key(self, report: dict[str, object]) -> tuple[str, str]:
-        """返回用于判断同一错误位置是否仍未解决的稳定键。"""
-        return (str(report.get("part") or ""), str(report.get("num_or_ph") or ""))
-
-    def _error_report_position(self, report: dict[str, object]) -> str:
-        """把错误记录的位置字段转换为表格显示文本。"""
-        part = str(report.get("part") or "")
-        identifier = str(report.get("num_or_ph") or "-")
-        part_labels = {"sec": "章节", "cap": "图题", "env": "环境", "project": "项目"}
-        label = part_labels.get(part, part or "项目")
-        return f"{label} {identifier}".strip()
-
-    def _error_report_type(self, report: dict[str, object]) -> str:
-        """从 issue 类型和旧字段推断错误类型显示文本。"""
-        issue_labels = {
-            "command_mismatch": "命令",
-            "placeholder_mismatch": "占位符",
-            "bracket_mismatch": "括号",
-        }
-        labels: list[str] = []
-        issues = report.get("issues")
-        if isinstance(issues, list):
-            for issue in issues:
-                if isinstance(issue, dict):
-                    issue_type = str(issue.get("type") or "")
-                    label = issue_labels.get(issue_type, issue_type)
-                    if label and label not in labels:
-                        labels.append(label)
-        legacy_fields = [
-            ("command_error", "命令"),
-            ("ph_error", "占位符"),
-            ("bracket_error", "括号"),
-        ]
-        for field, label in legacy_fields:
-            if report.get(field) and label not in labels:
-                labels.append(label)
-        return "、".join(labels) if labels else "项目"
-
-    def _error_report_problem(self, report: dict[str, object]) -> str:
-        """从新旧错误报告字段拼接问题说明。"""
-        messages: list[str] = []
-        issues = report.get("issues")
-        if isinstance(issues, list):
-            for issue in issues:
-                if isinstance(issue, dict) and issue.get("message"):
-                    messages.append(str(issue["message"]))
-        for field in ("command_error", "ph_error", "bracket_error", "error"):
-            value = report.get(field)
-            if value:
-                messages.append(str(value))
-        return "\n".join(messages)
-
-    def _error_status_text(self, status: str) -> Text:
-        """返回仅状态单元格使用的彩色 Rich 文本。"""
-        if status == "resolved":
-            return Text("已解决", style="green")
-        if status == "warning":
-            return Text("警告", style="yellow")
-        return Text("未解决", style="yellow")
-
-    def _error_report_content(self, report: dict[str, object], project: ProjectViewState) -> tuple[str, str]:
-        """反查错误位置对应的原文和译文内容。"""
-        content_root = self._error_content_root(project)
-        if content_root is None:
-            return "", ""
-        part = str(report.get("part") or "")
-        identifier = str(report.get("num_or_ph") or "")
-        part_record = self._find_error_part_record(content_root, part, identifier)
-        if part_record is None:
-            return "", ""
-        return str(part_record.get("content") or ""), str(part_record.get("trans_content") or "")
-
-    def _error_content_root(self, project: ProjectViewState) -> Path | None:
-        """确定错误报告关联的输出目录，用于读取 map JSON。"""
-        if project.errors_report_path:
-            return Path(project.errors_report_path).parent
-        if project.output_dir:
-            return Path(project.output_dir)
-        return None
-
-    def _find_error_part_record(
-        self,
-        content_root: Path,
-        part: str,
-        identifier: str,
-    ) -> dict[str, object] | None:
-        """在 sections/captions/envs map 中查找错误位置对应的内容记录。"""
-        map_specs = {
-            "sec": ("sections_map.json", "section"),
-            "cap": ("captions_map.json", "placeholder"),
-            "env": ("envs_map.json", "placeholder"),
-        }
-        spec = map_specs.get(part)
-        if spec is None:
-            return None
-        filename, key = spec
-        for record in self._read_json_list(content_root / filename):
-            if str(record.get(key) or "") == identifier:
-                return record
-        return None
-
-    def _read_json_list(self, path: Path) -> list[dict[str, object]]:
-        """读取 JSON 列表文件，并过滤非对象元素。"""
-        if not path.is_file():
-            return []
-        try:
-            data = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            return []
-        if not isinstance(data, list):
-            return []
-        return [item for item in data if isinstance(item, dict)]
-
-    def _truncated_plain_text(self, value: str, width: int) -> Text:
-        """按列宽截断普通文本，不对内容本身做额外高亮。"""
-        collapsed = re.sub(r"\s+", " ", value).strip()
-        limit = max(width, 3)
-        if len(collapsed) > limit:
-            collapsed = collapsed[: max(limit - 3, 0)] + "..."
-        return Text(collapsed, overflow="ellipsis", no_wrap=True)
-
-    def _refresh_terms_table(self, project: ProjectViewState) -> None:
-        """Refresh the selected project's read-only terminology table."""
-        table = self.query_one("#terms-table", DataTable)
-        table.clear(columns=True)
-        table.add_columns("术语", "译文")
-        terms_path = self._project_terms_path(project)
-        if terms_path is None:
-            return
-
-        try:
-            with terms_path.open("r", encoding="utf-8", newline="") as terms_file:
-                rows = list(csv.reader(terms_file))
-        except OSError as exc:
-            table.add_row("术语表读取错误", str(exc))
-            return
-
-        for row in rows[1:]:
-            if len(row) >= 2:
-                table.add_row(row[0], row[1])
-
-    def _project_terms_path(self, project: ProjectViewState) -> Path | None:
-        """Return the terminology CSV path for a project, including output-dir fallback."""
-        if project.project_terms_path:
-            terms_path = Path(project.project_terms_path)
-            if terms_path.is_file():
-                return terms_path
-        if project.output_dir:
-            fallback_path = Path(project.output_dir) / "project_terms.csv"
-            if fallback_path.is_file():
-                project.project_terms_path = str(fallback_path)
-                return fallback_path
-        return None
-
-    def _initialize_zotero_results_table(self) -> None:
-        """初始化 Zotero 结果表的固定列。"""
-        table = self.query_one("#zotero-results", DataTable)
-        table.cursor_type = "row"
-        table.clear(columns=True)
-        selection_width, title_width, library_width, collection_width = self._zotero_column_widths(table)
-        table.add_column("选中", width=selection_width)
-        table.add_column("标题", width=title_width)
-        table.add_column("所在库", width=library_width)
-        table.add_column("所在分类", width=collection_width)
-
-    def _zotero_column_widths(self, table: DataTable) -> tuple[int, int, int, int]:
-        """按表格可视宽度分配 Zotero 结果列宽，避免触发水平滚动。"""
-        visible_width = table.size.width or 100
-        padding_budget = 2 * table.cell_padding * 4
-        content_budget = max(
-            visible_width - padding_budget,
-            ZOTERO_SELECTION_COLUMN_WIDTH + ZOTERO_MIN_TITLE_COLUMN_WIDTH,
-        )
-        remaining = max(content_budget - ZOTERO_SELECTION_COLUMN_WIDTH, ZOTERO_MIN_TITLE_COLUMN_WIDTH)
-        library_width = min(
-            ZOTERO_MAX_LIBRARY_COLUMN_WIDTH,
-            max(ZOTERO_MIN_LIBRARY_COLUMN_WIDTH, remaining // 5),
-        )
-        collection_width = min(
-            ZOTERO_MAX_COLLECTION_COLUMN_WIDTH,
-            max(ZOTERO_MIN_COLLECTION_COLUMN_WIDTH, remaining // 4),
-        )
-        title_width = remaining - library_width - collection_width
-
-        if title_width < ZOTERO_MIN_TITLE_COLUMN_WIDTH:
-            shortage = ZOTERO_MIN_TITLE_COLUMN_WIDTH - title_width
-            collection_reduction = min(shortage, max(collection_width - ZOTERO_MIN_COLLECTION_COLUMN_WIDTH, 0))
-            collection_width -= collection_reduction
-            shortage -= collection_reduction
-            library_reduction = min(shortage, max(library_width - ZOTERO_MIN_LIBRARY_COLUMN_WIDTH, 0))
-            library_width -= library_reduction
-            title_width = remaining - library_width - collection_width
-
-        return (
-            ZOTERO_SELECTION_COLUMN_WIDTH,
-            max(title_width, ZOTERO_MIN_TITLE_COLUMN_WIDTH),
-            library_width,
-            collection_width,
-        )
-
-    def _fit_zotero_results_table_columns(self) -> None:
-        """在布局稳定后重新收紧 Zotero 结果列宽。"""
-        table = self.query_one("#zotero-results", DataTable)
-        widths = self._zotero_column_widths(table)
-        for column, width in zip(table.ordered_columns, widths):
-            column.width = width
-            column.auto_width = False
-        table._require_update_dimensions = True
-        table._line_cache.clear()
-        table.refresh(layout=True)
-
-    def _refresh_zotero_controls(self) -> None:
-        """按当前项目及其引擎刷新 Zotero 导入控件可见性。"""
-        project = self._selected_project()
-        has_pdf = bool(project and project.pdf_path)
-        has_markdown = bool(project and project.engine == "lite")
-        self.query_one("#zotero-import-rule", Rule).display = has_pdf
-        self.query_one("#import-zotero-button", Button).display = has_pdf
-        self.query_one("#import-zotero-markdown-button", Button).display = has_markdown
-
     def load_zotero_libraries(self) -> None:
-        """从本地 Zotero API 加载可选库到搜索范围下拉框。"""
-        try:
-            libraries = self._zotero_adapter().list_libraries()
-        except Exception as exc:
-            self.zotero_libraries = []
-            self._set_zotero_status(f"本地 API 不可用：{exc}")
-            return
-
-        self.zotero_libraries = libraries
-        options = [
-            (str(item.get("name") or item.get("library_id")), self._zotero_library_value(item))
-            for item in libraries
-        ]
-        select = self.query_one("#zotero-library-select", Select)
-        select.set_options(options)
-        if options:
-            select.value = options[0][1]
-            self._set_zotero_status("")
-        else:
-            self._set_zotero_status("没有可选库。")
+        """同步可替换工厂并委托面板加载 Zotero 库。"""
+        self._sync_zotero_adapter_factory()
+        self.zotero_panel.load_zotero_libraries()
 
     def search_zotero_items(self) -> None:
-        """使用搜索框文本和当前库执行 Zotero 本地 API 搜索。"""
-        query = self.query_one("#zotero-search-input", Input).value.strip()
-        if not query:
-            self._set_zotero_status("搜索框为空。")
-            return
-        library = self._selected_zotero_library()
-        if library is None:
-            self._set_zotero_status("未选择库。")
-            return
-
-        try:
-            results = self._zotero_adapter().search_items(
-                query,
-                str(library["library_id"]),
-                str(library["library_type"]),
-            )
-        except Exception as exc:
-            self._set_zotero_status(f"搜索失败：{exc}")
-            return
-
-        self.populate_zotero_results(results)
-        self._set_zotero_status("搜索无结果。" if not results else f"找到 {len(results)} 个条目。")
+        """同步可替换工厂并委托面板搜索条目。"""
+        self._sync_zotero_adapter_factory()
+        self.zotero_panel.search_zotero_items()
 
     def auto_match_zotero_items(self) -> None:
-        """按当前 arXiv ID 匹配 Zotero 存档 id 字段。"""
-        arxiv_id = self._selected_arxiv_id()
-        if not arxiv_id:
-            self._set_zotero_status("自动匹配缺少 arXiv ID。")
-            return
-        library = self._selected_zotero_library()
-        if library is None:
-            self._set_zotero_status("未选择库。")
-            return
-
-        try:
-            results = self._zotero_adapter().match_items_by_archive_id(
-                arxiv_id,
-                str(library["library_id"]),
-                str(library["library_type"]),
-            )
-        except Exception as exc:
-            self._set_zotero_status(f"自动匹配失败：{exc}")
-            return
-
-        self.populate_zotero_results(results)
-        self._set_zotero_status("搜索无结果。" if not results else f"找到 {len(results)} 个条目。")
+        """同步可替换工厂并委托面板自动匹配。"""
+        self._sync_zotero_adapter_factory()
+        self.zotero_panel.auto_match_zotero_items()
 
     def populate_zotero_results(self, results: list[dict[str, object]]) -> None:
-        """把 Zotero 搜索结果写入固定列数据表，并清空选择。"""
-        self.zotero_results = list(results)
-        self.zotero_selected_keys = set()
-        self._initialize_zotero_results_table()
-        table = self.query_one("#zotero-results", DataTable)
-        for item in self.zotero_results:
-            table.add_row(
-                "[]",
-                Text(str(item.get("title") or ""), overflow="ellipsis", no_wrap=True),
-                str(item.get("library_name") or item.get("library_id") or ""),
-                ", ".join(str(value) for value in item.get("collection_names", []) or []),
-            )
-        table.call_after_refresh(self._fit_zotero_results_table_columns)
+        """委托面板写入 Zotero 搜索结果。"""
+        self.zotero_panel.populate_zotero_results(results)
 
     def clear_zotero_results(self) -> None:
-        """清空当前项目的 Zotero 搜索结果和选择状态。"""
-        self.zotero_results = []
-        self.zotero_selected_keys = set()
-        self._initialize_zotero_results_table()
+        """委托面板清空 Zotero 搜索结果和选择状态。"""
+        self.zotero_panel.clear_zotero_results()
 
     def toggle_zotero_row_selection(self, row_index: int) -> None:
-        """切换指定 Zotero 结果行的多选状态。"""
-        if row_index < 0 or row_index >= len(self.zotero_results):
-            return
-        table = self.query_one("#zotero-results", DataTable)
-        item = self.zotero_results[row_index]
-        item_key = str(item.get("item_key") or "")
-        if item_key in self.zotero_selected_keys:
-            self.zotero_selected_keys.remove(item_key)
-            table.update_cell_at((row_index, 0), "[]")
-        else:
-            self.zotero_selected_keys.add(item_key)
-            table.update_cell_at((row_index, 0), "[√]")
+        """委托面板切换指定 Zotero 结果行。"""
+        self.zotero_panel.toggle_zotero_row_selection(row_index)
 
     def import_selected_project_to_zotero(self) -> None:
-        """把当前选中项目的译文 PDF 附加到所有选中 Zotero 条目。"""
-        project = self._selected_project()
-        if project is None:
-            self._set_zotero_status("请选择一个项目。")
-            return
-        if not project.pdf_path:
-            project.zotero_status = "失败：当前项目没有 PDF。"
-            self._set_zotero_status(project.zotero_status)
-            return
-
-        selected_items = [
-            item
-            for item in self.zotero_results
-            if str(item.get("item_key") or "") in self.zotero_selected_keys
-        ]
-        if not selected_items:
-            project.zotero_status = "失败：未选择任何条目。"
-            self._set_zotero_status(project.zotero_status)
-            return
-
-        api_key_env = self._zotero_config().get("web_api_key_env", "ZOTERO_API_KEY")
-        api_key = os.environ.get(str(api_key_env), "").strip()
-        if not api_key:
-            project.zotero_status = f"失败：Web API key 环境变量未设置：{api_key_env}。"
-            self._set_zotero_status(project.zotero_status)
-            return
-
-        adapter = self._zotero_adapter(api_key=api_key)
-        success_count = 0
-        failures: list[str] = []
-        for item in selected_items:
-            item_key = str(item.get("item_key") or "")
-            library_id = str(item.get("library_id") or "")
-            library_type = str(item.get("library_type") or "")
-            try:
-                adapter.attach_pdf(item_key, project.pdf_path, library_id, library_type)
-                success_count += 1
-            except Exception as exc:
-                failures.append(f"{item_key}: {exc}")
-
-        project.zotero_status = f"导入完成：成功 {success_count}，失败 {len(failures)}。"
-        if failures:
-            project.zotero_status = f"{project.zotero_status} {'; '.join(failures)}"
-        self._set_zotero_status(project.zotero_status)
+        """同步可替换工厂并委托面板导入 PDF。"""
+        self._sync_zotero_adapter_factory()
+        self.zotero_panel.import_selected_project_to_zotero()
 
     def import_selected_project_markdown_to_zotero(self) -> None:
-        """Import the selected lite project's translated Markdown as Zotero child notes."""
-        project = self._selected_project()
-        if project is None:
-            self._set_zotero_status("请选择一个项目。")
-            return
-        if project.engine != "lite":
-            project.zotero_status = "失败：Markdown 导入仅支持 Lite 引擎。"
-            self._set_zotero_status(project.zotero_status)
-            return
+        """同步可替换工厂并委托面板导入 Markdown。"""
+        self._sync_zotero_adapter_factory()
+        self.zotero_panel.import_selected_project_markdown_to_zotero()
 
-        selected_items = [
-            item
-            for item in self.zotero_results
-            if str(item.get("item_key") or "") in self.zotero_selected_keys
-        ]
-        if not selected_items:
-            project.zotero_status = "失败：未选择任何条目。"
-            self._set_zotero_status(project.zotero_status)
-            return
+    def _sync_zotero_adapter_factory(self) -> None:
+        """把调用方最新注入的 Zotero 工厂同步给面板。"""
+        self.zotero_panel.adapter_factory = self.zotero_adapter_factory
 
-        markdown_path = self._translated_markdown_path(project)
-        if markdown_path is None or not markdown_path.is_file():
-            project.zotero_status = "失败：当前项目没有译文 Markdown 文件。"
-            self._set_zotero_status(project.zotero_status)
-            return
-        try:
-            markdown = markdown_path.read_text(encoding="utf-8")
-        except (OSError, UnicodeError) as exc:
-            project.zotero_status = f"失败：无法读取译文 Markdown 文件：{exc}"
-            self._set_zotero_status(project.zotero_status)
-            return
-
-        api_key_env = self._zotero_config().get("web_api_key_env", "ZOTERO_API_KEY")
-        api_key = os.environ.get(str(api_key_env), "").strip()
-        if not api_key:
-            project.zotero_status = f"失败：Web API key 环境变量未设置：{api_key_env}。"
-            self._set_zotero_status(project.zotero_status)
-            return
-
-        adapter = self._zotero_adapter(api_key=api_key)
-        success_count = 0
-        failures: list[str] = []
-        for item in selected_items:
-            item_key = str(item.get("item_key") or "")
-            library_id = str(item.get("library_id") or "")
-            library_type = str(item.get("library_type") or "")
-            try:
-                adapter.create_note(item_key, project.project_name or markdown_path.stem, markdown, library_id, library_type)
-                success_count += 1
-            except Exception as exc:
-                failures.append(f"{item_key}: {exc}")
-
-        project.zotero_status = f"导入完成：成功 {success_count}，失败 {len(failures)}。"
-        if failures:
-            project.zotero_status = f"{project.zotero_status} {'; '.join(failures)}"
-        self._set_zotero_status(project.zotero_status)
-
-    def _translated_markdown_path(self, project: ProjectViewState) -> Path | None:
-        """Return the selected project's translated Markdown artifact when known."""
-        if project.translated_markdown_path:
-            return Path(project.translated_markdown_path)
-        if project.output_dir:
-            return Path(project.output_dir) / "translated.md"
-        return None
-
-    def _set_zotero_status(self, message: str) -> None:
-        """记录 Zotero 操作状态，并在可见 UI 中发出轻量提示。"""
-        project = self._selected_project()
-        if project is not None and message:
-            project.zotero_status = message
-        if message:
-            self._notify(message)
-
-    def _zotero_config(self) -> dict[str, object]:
-        """返回当前 UI 配置中的 Zotero 配置段。"""
-        config = self.current_config or load_ui_config(Path.cwd())
-        zotero_config = config.get("zotero", {}) if isinstance(config, dict) else {}
-        if not isinstance(zotero_config, dict):
-            return {}
-        return zotero_config
-
-    def _zotero_adapter(self, api_key: str = "") -> ZoteroAdapter:
-        """按当前配置创建 Zotero adapter。"""
-        local_api_base = str(self._zotero_config().get("local_api_base", "http://127.0.0.1:23119/api"))
-        try:
-            return self.zotero_adapter_factory(api_key, local_api_base)
-        except TypeError:
-            return self.zotero_adapter_factory(api_key, "")
-
-    def _zotero_library_value(self, library: dict[str, object]) -> str:
-        """返回 Zotero 库下拉框内部值。"""
-        return f"{library.get('library_type')}:{library.get('library_id')}"
-
-    def _selected_zotero_library(self) -> dict[str, object] | None:
-        """返回当前下拉框选中的 Zotero 库数据。"""
-        select = self.query_one("#zotero-library-select", Select)
-        if select.is_blank():
-            return None
-        value = str(select.value)
-        return next((item for item in self.zotero_libraries if self._zotero_library_value(item) == value), None)
-
-    def _selected_task_input_type(self) -> str:
-        """返回当前选中项目所属任务的输入类型。"""
-        if self.selected_project_name is None:
-            return self.current_task.input_type if self.current_task is not None else ""
-        for task, project in self._iter_project_states():
-            if self.selected_task_id is not None and task.task_id != self.selected_task_id:
-                continue
-            if project.project_name == self.selected_project_name:
-                return task.input_type
-        return ""
-
-    def _selected_arxiv_id(self) -> str:
-        """从当前选中项目或任务输入中提取 arXiv ID。"""
+    def _arxiv_id_for_project(
+        self,
+        project: ProjectViewState | None,
+        task: TaskViewState | None,
+    ) -> str:
+        """按项目名优先、所属任务输入其次提取 arXiv ID。"""
         pattern = re.compile(r"\d{4}\.\d{4,5}(?:v\d+)?")
         candidates: list[str] = []
-        if self.selected_project_name:
-            candidates.append(self.selected_project_name)
-        if self.current_task is not None:
-            candidates.extend(self.current_task.inputs)
+        if project is not None:
+            candidates.append(project.project_name)
+        if task is not None:
+            candidates.extend(task.inputs)
         for candidate in candidates:
             match = pattern.search(candidate)
             if match:

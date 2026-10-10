@@ -19,6 +19,7 @@ if __name__ == "__main__":
         name="LaTeXTrans",
         version="0.1.0",
         packages=find_packages(),
+        package_data={"src.tui": ["app.tcss"]},
         py_modules=["main"],
         install_requires=load_requirements("requirements.txt"),
         entry_points={
