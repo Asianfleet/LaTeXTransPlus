@@ -217,6 +217,21 @@ class TuiEngineModeTests(TuiAppTests):
 
             self.assertEqual(mode_control.styles.margin.top, 1)
 
+    async def test_engine_mode_colors_follow_switch_state(self):
+        """模式切换及悬停时，滑块和文字保持对应的颜色。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
+        async with app.run_test() as pilot:
+            mode_switch = app.query_one("#engine-mode-switch", Switch)
+            label = app.query_one("#engine-mode-label", Static)
+            for engine, expected in (("heavy", "#87CEFA"), ("lite", "#FFFFFF"), ("heavy", "#87CEFA")):
+                mode_switch.value = engine == "lite"
+                await pilot.pause()
+                await pilot.hover("#engine-mode-switch")
+                await pilot.pause()
+                self.assertEqual(app.effective_engine, engine)
+                self.assertEqual(mode_switch.get_component_rich_style("switch--slider").color.triplet.hex.upper(), expected)
+                self.assertEqual(label.styles.color.hex.upper(), expected)
+
     async def test_lite_settings_only_show_shared_and_lite_fields(self):
         """The settings form must not show heavy-only runtime controls in lite mode."""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")

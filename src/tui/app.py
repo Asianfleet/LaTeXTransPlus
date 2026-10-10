@@ -582,6 +582,16 @@ class LaTeXTransTuiApp(App[None]):
         padding: 1 0 0 1;
     }
 
+    #engine-mode-control #engine-mode-switch .switch--slider,
+    #engine-mode-control #engine-mode-label {
+        color: #87CEFA;
+    }
+
+    #engine-mode-control.lite #engine-mode-switch .switch--slider,
+    #engine-mode-control.lite #engine-mode-label {
+        color: #FFFFFF;
+    }
+
     #input-type-select {
         width: 22;
     }
@@ -867,6 +877,7 @@ class LaTeXTransTuiApp(App[None]):
         """Synchronize visible TUI controls with the current session engine."""
         title = self.query_one("#app-title", ResponsiveAppTitle)
         title.set_engine(self.effective_engine)
+        self.query_one("#engine-mode-control").set_class(self.effective_engine == "lite", "lite")
         mode_switch = self.query_one("#engine-mode-switch", Switch)
         with self.prevent(Switch.Changed):
             mode_switch.value = self.effective_engine == "lite"
