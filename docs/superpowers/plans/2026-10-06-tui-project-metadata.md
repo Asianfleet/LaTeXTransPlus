@@ -74,3 +74,12 @@ git diff --check
 ```
 
 新增模块共 11 项测试通过，相关 Lite/runtime 回归共 48 项通过；diff 检查通过。配置哈希校验通过，`config/ui.toml` 无 diff；没有生成产物或无关配置改动。按项目要求未执行旧 TUI 整套测试，已同步更新受影响的旧断言；未进行远程 LLM/MinerU/PDF 编译端到端翻译验证。当前分支保留未提交变更。
+
+## 补充修复：Heavy 复杂标题（2026-10-10）
+
+- [x] 复现模型宏丢失、logo 位置及图片占位文本污染标题、旧缓存标题无法修正的问题。
+- [x] 使用 pylatexenc 独立标题上下文，从 `newcommands_map.json` 展开文字宏及参数；忽略图片，保留 `raisebox` 的正文；限制循环及过量宏展开。
+- [x] Heavy 运行事件读取项目宏映射；历史展示优先重新提取原文标题，产物不可用时保留缓存。Lite 保留原有缓存优先顺序。
+- [x] 在 `latextrans` 环境运行新增 `test_project_title_extraction.py` 的 6 项测试和 `test_project_metadata_events.py` 的 3 项测试，均通过；执行 `git diff --check`。
+
+实施说明：覆盖用户提供的两类标题、嵌套带参数宏、循环宏、Heavy 事件、错误历史缓存和损坏／缺失产物。测试使用临时目录，不启动 TUI、不保存真实 UI 配置；未进行实际论文的远程翻译或 PDF 编译验证。

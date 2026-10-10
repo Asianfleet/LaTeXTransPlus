@@ -32,11 +32,16 @@ def load_output_history(output_root: Path, engine: str = "heavy") -> list[TaskVi
         input_item = str(metadata.get("input_item") or project_name)
         status = infer_project_status(project_output_dir, engine=project_engine)
         pdf_path = _find_pdf(project_output_dir, project_engine)
+        source_title = read_project_title(
+            project_output_dir, project_engine, metadata.get("source_markdown_path")
+        )
+        # Heavy 的旧缓存可能丢失宏文字或混入 logo 参数，优先从原文重新提取。
+        title = (source_title or metadata.get("title")) if project_engine == "heavy" else (
+            metadata.get("title") or source_title
+        )
         project = ProjectViewState(
             project_name=project_name,
-            title=str(metadata.get("title") or read_project_title(
-                project_output_dir, project_engine, metadata.get("source_markdown_path")
-            )),
+            title=str(title or ""),
             translation_model=str(metadata.get("translation_model") or ""),
             engine=project_engine,
             status=status,

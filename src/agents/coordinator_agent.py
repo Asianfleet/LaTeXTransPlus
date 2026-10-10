@@ -18,7 +18,7 @@ from .tool_agents.validator_agent import ValidatorAgent
 from .tool_agents.terminology_agent import TerminologyAgent
 from src.terminology import TerminologyConfig, require_retranslation_inputs
 from src.validation_policy import ValidationPolicy
-from src.project_metadata import title_from_latex_captions
+from src.project_metadata import read_project_title_macros, title_from_latex_captions
 import gc
 
 
@@ -408,7 +408,7 @@ class CoordinatorAgent:
                 "type": "project_metadata",
                 "project_name": Path(self.project_dir).name,
                 "output_dir": output_dir,
-                "title": title_from_latex_captions(captions),
+                "title": title_from_latex_captions(captions, read_project_title_macros(Path(output_dir))),
             })
 
     async def workflow_latextrans_async(self) -> Dict[str, Any]:
