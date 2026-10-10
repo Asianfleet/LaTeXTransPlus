@@ -470,7 +470,36 @@ class LatexCompilerLanguageTests(unittest.TestCase):
         )
         self.assertTrue(pdf_path.endswith("build_xelatex\\main.pdf") or pdf_path.endswith("build_xelatex/main.pdf"))
 
-    def test_compile_returns_none_when_all_pdf_outputs_have_hard_errors(self):
+    def test_compile_accepts_pdf_when_log_has_command_already_defined(self):
+        """真实回归样本：preamble 与新版 hyperref 重复定义命令，PDF 仍然可用。"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text(
+                "\\documentclass{article}\n\\begin{document}\n本文\n\\end{document}\n",
+                encoding="utf-8",
+            )
+
+            def fake_compile(tex_file, out_dir, engine):
+                out_path = Path(out_dir)
+                (out_path / "main.pdf").write_bytes(b"%PDF")
+                (out_path / "main.log").write_text(
+                    "main.tex:16: LaTeX Error: Command \\theHalgorithm already defined.\n"
+                    "               Or name \\end... illegal, see p.192 of the manual.\n",
+                    encoding="utf-8",
+                )
+
+            compiler = LaTexCompiler(str(project_dir), target_language="ch")
+
+            with patch.object(compiler, "_compile_with_pdflatex", side_effect=fake_compile), \
+                    patch.object(compiler, "_compile_with_xelatex", side_effect=fake_compile), \
+                    patch("builtins.print"):
+                pdf_path = compiler.compile()
+
+        self.assertIsNotNone(pdf_path)
+        self.assertTrue(pdf_path.endswith("main.pdf"))
+
+    def test_compile_accepts_pdf_when_log_has_undefined_control_sequence(self):
+        """译文丢失命令只会产生可恢复的未定义控制序列，不应丢弃已生成的 PDF。"""
         with tempfile.TemporaryDirectory() as tmp_dir:
             project_dir = Path(tmp_dir)
             (project_dir / "main.tex").write_text(
@@ -483,6 +512,32 @@ class LatexCompilerLanguageTests(unittest.TestCase):
                 (out_path / "main.pdf").write_bytes(b"%PDF")
                 (out_path / "main.log").write_text(
                     "! Undefined control sequence.\n",
+                    encoding="utf-8",
+                )
+
+            compiler = LaTexCompiler(str(project_dir), target_language="ch")
+
+            with patch.object(compiler, "_compile_with_pdflatex", side_effect=fake_compile), \
+                    patch.object(compiler, "_compile_with_xelatex", side_effect=fake_compile), \
+                    patch("builtins.print"):
+                pdf_path = compiler.compile()
+
+        self.assertIsNotNone(pdf_path)
+        self.assertTrue(pdf_path.endswith("main.pdf"))
+
+    def test_compile_returns_none_when_all_pdf_outputs_have_hard_errors(self):
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project_dir = Path(tmp_dir)
+            (project_dir / "main.tex").write_text(
+                "\\documentclass{article}\n\\begin{document}\n本文\n\\end{document}\n",
+                encoding="utf-8",
+            )
+
+            def fake_compile(tex_file, out_dir, engine):
+                out_path = Path(out_dir)
+                (out_path / "main.pdf").write_bytes(b"%PDF")
+                (out_path / "main.log").write_text(
+                    "! Emergency stop.\n",
                     encoding="utf-8",
                 )
 

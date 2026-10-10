@@ -6,12 +6,21 @@ from pathlib import Path
 from .utils import *
 
 
-LATEX_HARD_ERROR_PATTERNS = [
+# 日志中可能出现的错误行，用于把整段日志逐条切分成候选错误
+LATEX_ERROR_LINE_PATTERNS = [
     re.compile(r"LaTeX Error:", re.IGNORECASE),
     re.compile(r"Undefined control sequence\.", re.IGNORECASE),
     re.compile(r"Emergency stop\.", re.IGNORECASE),
     re.compile(r"Fatal error occurred", re.IGNORECASE),
     re.compile(r"can't write on file", re.IGNORECASE),
+]
+
+# LaTeX 会自行忽略、且不影响 PDF 产出的错误；命中时只记警告，不判失败
+LATEX_RECOVERABLE_ERROR_PATTERNS = [
+    # 例：源文件里的 \newcommand{\theHalgorithm} 与新版 hyperref 重复定义
+    re.compile(r"LaTeX Error: Command \\[^\s]+ already defined", re.IGNORECASE),
+    # 译文丢失命令导致的未定义控制序列，LaTeX 跳过该命令继续排版
+    re.compile(r"Undefined control sequence\.", re.IGNORECASE),
 ]
 
 
@@ -87,14 +96,32 @@ class LaTexCompiler:
         self._log("⚠️  Failed to generate PDF with all configured engines. Please check the log.", "warning")
         return None
 
-    def _log_has_hard_errors(self, log_file: str) -> bool:
+    def _log_error_lines(self, log_file: str) -> List[str]:
+        """读取编译日志中的错误行，供致命/可恢复判定复用。"""
         try:
             with open(log_file, "r", encoding="utf-8", errors="ignore") as f:
                 content = f.read()
         except OSError:
-            return False
+            return []
 
-        return any(pattern.search(content) for pattern in LATEX_HARD_ERROR_PATTERNS)
+        return [
+            line.strip()
+            for line in content.splitlines()
+            if any(pattern.search(line) for pattern in LATEX_ERROR_LINE_PATTERNS)
+        ]
+
+    def _log_has_hard_errors(self, log_file: str) -> bool:
+        """判断日志是否包含真正阻断 PDF 产出的致命错误。
+
+        命中 ``LATEX_RECOVERABLE_ERROR_PATTERNS`` 的错误由 LaTeX 自行忽略，
+        产物仍然完整，因此只记警告而不判失败。
+        """
+        for line in self._log_error_lines(log_file):
+            if any(pattern.search(line) for pattern in LATEX_RECOVERABLE_ERROR_PATTERNS):
+                self._log(f"⚠️  可恢复的 LaTeX 错误（已忽略）：{line}", "warning")
+                continue
+            return True
+        return False
 
     def _success_marker_path(self) -> str:
         return os.path.join(self.output_latex_dir, "success.txt")
