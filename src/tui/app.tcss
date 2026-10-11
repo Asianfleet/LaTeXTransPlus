@@ -90,6 +90,7 @@
         height: 1fr;
     }
 
+    #task-table,
     #terms-table,
     #errors-table {
         height: 1fr;

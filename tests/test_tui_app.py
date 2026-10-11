@@ -2362,6 +2362,34 @@ class TuiResultViewsTests(TuiAppTests):
 class TuiProjectManagerTests(TuiAppTests):
     """验证项目管理表的多选和批量操作按钮状态。"""
 
+    async def test_project_table_fills_available_height_and_resizes(self):
+        """确认列表高度不随项目数量变化，缩放后仍填满操作栏下方空间。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.action_project_manager()
+            await pilot.pause()
+            table = app.query_one("#task-table", DataTable)
+            page = app.query_one("#tasks")
+            actions = app.query_one("#project-actions")
+            for project_count in (0, 2, 60):
+                task = TaskViewState(input_type="arxiv", inputs=[], total=project_count)
+                task.projects = [
+                    ProjectViewState(project_name=f"paper-{index}", status=ProjectStatus.COMPLETED)
+                    for index in range(project_count)
+                ]
+                app.tasks = [task]
+                app.refresh_task_table()
+                await pilot.pause()
+                for size in ((120, 40), (100, 28)):
+                    await pilot.resize_terminal(*size)
+                    await pilot.pause()
+                    with self.subTest(project_count=project_count, size=size):
+                        self.assertEqual(table.row_count, project_count)
+                        self.assertEqual(table.region.bottom, page.content_region.bottom)
+                        self.assertEqual(table.region.y, actions.region.bottom + actions.styles.margin.bottom)
+                        if project_count == 60:
+                            self.assertGreater(table.max_scroll_y, 0)
+
     async def test_clear_project_selection_button_clears_rows_and_disables_actions(self):
         """确认两种引擎均可取消所有勾选，并能在取消后重新选择项目。"""
         for engine in ("heavy", "lite"):
