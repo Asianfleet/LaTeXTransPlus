@@ -202,6 +202,7 @@ class LaTeXTransTuiApp(App[None]):
                         yield Button("终止翻译", id="terminate-translation-button", flat=True, disabled=True)
                         yield Button("删除", id="delete-project-button", flat=True, disabled=True)
                         yield Button("重新翻译", id="retry-translation-button", flat=True, disabled=True)
+                        yield Button("清空选择", id="clear-project-selection-button", flat=True, disabled=True)
                     yield ProjectManagementTable(id="task-table", cursor_type="row")
                 yield self.config_page
         yield Footer()
@@ -419,16 +420,23 @@ class LaTeXTransTuiApp(App[None]):
             self.selected_project_keys.add(key)
         self.refresh_task_table()
 
+    def _clear_project_selection(self) -> None:
+        """清空项目管理表的全部勾选并刷新选择标记和操作按钮。"""
+        self.selected_project_keys.clear()
+        self.refresh_task_table()
+
     def _refresh_project_action_buttons(self) -> None:
-        """根据全选项目状态更新终止、删除和重译按钮可用性。"""
+        """根据选中项目状态更新批量操作和取消选择按钮可用性。"""
         try:
             terminate = self.query_one("#terminate-translation-button", Button)
             delete = self.query_one("#delete-project-button", Button)
             retry = self.query_one("#retry-translation-button", Button)
+            clear_selection = self.query_one("#clear-project-selection-button", Button)
         except NoMatches:
             return
         selected = self._selected_project_states()
         has_selection = bool(selected)
+        clear_selection.disabled = not has_selection
         all_running = has_selection and all(project.status == ProjectStatus.RUNNING for _, project in selected)
         all_stopped = has_selection and all(project.status != ProjectStatus.RUNNING for _, project in selected)
         lite_batch_retry = bool(selected) and selected[0][0].engine == "lite" and len(selected) > 1
@@ -587,6 +595,8 @@ class LaTeXTransTuiApp(App[None]):
         elif event.button.id == "retry-translation-button":
             if hasattr(self, "_retry_selected_projects"):
                 self._retry_selected_projects()
+        elif event.button.id == "clear-project-selection-button":
+            self._clear_project_selection()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         """入口引擎开关变化时切换当前会话。"""

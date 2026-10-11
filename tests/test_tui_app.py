@@ -2362,6 +2362,50 @@ class TuiResultViewsTests(TuiAppTests):
 class TuiProjectManagerTests(TuiAppTests):
     """验证项目管理表的多选和批量操作按钮状态。"""
 
+    async def test_clear_project_selection_button_clears_rows_and_disables_actions(self):
+        """确认两种引擎均可取消所有勾选，并能在取消后重新选择项目。"""
+        for engine in ("heavy", "lite"):
+            with self.subTest(engine=engine):
+                app = LaTeXTransTuiApp(initial_engine=engine, load_history_on_mount=False)
+                async with app.run_test(size=(120, 40)) as pilot:
+                    running, completed = self._task_with_projects()
+                    running.engine = completed.engine = engine
+                    app.tasks = [running, completed]
+                    app.refresh_task_table()
+                    app.action_project_manager()
+                    await pilot.pause()
+
+                    clear = app.query_one("#clear-project-selection-button", Button)
+                    self.assertEqual(str(clear.label), "清空选择")
+                    self.assertTrue(clear.disabled)
+                    table = app.query_one("#task-table", DataTable)
+                    table.move_cursor(row=1)
+                    app._toggle_project_selection(0)
+                    app._toggle_project_selection(1)
+                    self.assertFalse(clear.disabled)
+
+                    await pilot.click("#clear-project-selection-button")
+                    await pilot.pause()
+
+                    self.assertEqual(app.selected_project_keys, set())
+                    self.assertEqual([table.get_cell_at((row, 0)) for row in range(2)], ["[]", "[]"])
+                    self.assertEqual(table.cursor_row, 1)
+                    self.assertEqual(app.tasks, [running, completed])
+                    for button_id in (
+                        "clear-project-selection-button", "terminate-translation-button",
+                        "delete-project-button", "retry-translation-button",
+                    ):
+                        self.assertTrue(app.query_one(f"#{button_id}", Button).disabled)
+
+                    app._toggle_project_selection(1)
+                    self.assertFalse(clear.disabled)
+                    self.assertFalse(app.query_one("#delete-project-button", Button).disabled)
+                    self.assertFalse(app.query_one("#retry-translation-button", Button).disabled)
+                    await pilot.click("#clear-project-selection-button")
+                    await pilot.pause()
+                    self.assertEqual(app.selected_project_keys, set())
+                    self.assertTrue(clear.disabled)
+
     def _task_with_projects(self) -> tuple[TaskViewState, TaskViewState]:
         """构造一个包含运行项目和已完成项目的任务集合。"""
         running = TaskViewState(input_type="arxiv", inputs=["running"], task_id="task-running", total=1)
