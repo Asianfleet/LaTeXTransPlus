@@ -387,6 +387,9 @@ class LaTeXTransTuiApp(App[None]):
                 project.status.value,
                 task.task_id,
             )
+            row = table.row_count - 1
+            table.set_cell_tooltip(row, 2, project.title or "未识别标题")
+            table.set_cell_tooltip(row, 3, project.translation_model or "unknown")
         if table.row_count:
             table.move_cursor(row=min(cursor.row, table.row_count - 1), column=min(cursor.column, 5), scroll=False)
         table.scroll_to(x=scroll_x, y=scroll_y, animate=False)

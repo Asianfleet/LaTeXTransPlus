@@ -12,6 +12,7 @@ from textual.message import Message
 from textual.widgets import DataTable, Input, Static, TabbedContent, TextArea
 
 from src.engines.base import normalize_engine
+from src.tui.table_tooltips import CellTooltipTable
 
 APP_TITLE_PLAIN = "LaTeXTransPlus"
 APP_TITLE_ART = "\n".join(
@@ -115,7 +116,7 @@ class ResponsiveAppTitle(Static):
         self.update(next_title, layout=False)
 
 
-class ErrorReportsTable(DataTable):
+class ErrorReportsTable(CellTooltipTable):
     """错误记录表，尺寸变化时按新的可视宽度重新生成列。"""
 
     class ResizeRequested(Message):
@@ -131,7 +132,7 @@ class ErrorReportsTable(DataTable):
             self.post_message(self.ResizeRequested())
 
 
-class ProjectManagementTable(DataTable):
+class ProjectManagementTable(CellTooltipTable):
     """项目管理表，单击数据行即可切换项目选择状态。"""
 
     def __init__(self, *args: object, **kwargs: object) -> None:

@@ -332,7 +332,7 @@ class ProjectDetail(Vertical):
 
     def _refresh_errors_table(self, project: ProjectViewState) -> None:
         """重画错误记录表并展示内容及解决状态。"""
-        table = self.query_one("#errors-table", DataTable)
+        table = self.query_one("#errors-table", ErrorReportsTable)
         cursor = table.cursor_coordinate
         scroll_x, scroll_y = table.scroll_x, table.scroll_y
         table.clear(columns=True)
@@ -355,6 +355,11 @@ class ProjectDetail(Vertical):
                 self._truncated_plain_text(translation, widths[5]),
                 height=1,
             )
+            row = table.row_count - 1
+            table.set_cell_tooltip(row, 0, error_reports.error_report_position(report))
+            table.set_cell_tooltip(row, 2, error_reports.error_report_problem(report))
+            table.set_cell_tooltip(row, 4, source)
+            table.set_cell_tooltip(row, 5, translation)
         if table.row_count:
             table.move_cursor(
                 row=min(cursor.row, table.row_count - 1),
