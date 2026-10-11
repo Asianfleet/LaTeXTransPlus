@@ -1,6 +1,7 @@
 """两种 TUI 模式的 profile、标题展示和项目表回归测试。"""
 
 import hashlib
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -13,32 +14,53 @@ from src.tui.history import read_project_metadata
 from src.tui.state import TaskViewState
 
 
+def _file_summary(path: Path) -> tuple[bool, str | None]:
+    """返回文件存在状态和摘要，不在测试输出中暴露内容。"""
+    if not path.exists():
+        return False, None
+    return True, hashlib.sha256(path.read_bytes()).hexdigest()
+
+
 class TuiMetadataUiTests(unittest.IsolatedAsyncioTestCase):
     """在完整交互生命周期隔离真实 UI 配置保存。"""
 
     async def asyncSetUp(self):
-        """记录配置哈希并拦截全部保存入口。"""
-        self.config_path = Path.cwd() / "config/ui.toml"
-        self.config_hash = hashlib.sha256(self.config_path.read_bytes()).hexdigest()
+        """在临时目录运行 UI，并记录真实配置的存在状态和摘要。"""
+        self.original_cwd = Path.cwd()
+        self.config_path = self.original_cwd / "config/ui.toml"
+        self.config_summary = _file_summary(self.config_path)
+        self.temporary = TemporaryDirectory()
+        os.chdir(self.temporary.name)
         self.save = Mock()
-        self.patchers = [patch("src.tui.app.save_ui_config", self.save),
-                         patch("src.tui.config.save_ui_config", self.save)]
+        targets = {
+            "src.tui.app.load_ui_config": Mock(return_value={}),
+            "src.tui.config_page.load_ui_config": Mock(return_value={}),
+            "src.tui.config_page.save_ui_config": self.save,
+            "src.tui.config.save_ui_config": self.save,
+            "src.tui.config_page.list_llm_profiles": Mock(return_value=[]),
+            "src.tui.config_page.list_available_font_families": Mock(return_value=[]),
+        }
+        self.patchers = [patch(target, replacement) for target, replacement in targets.items()]
         for patcher in self.patchers:
             patcher.start()
 
     async def asyncTearDown(self):
         """确保异步事件结束后真实配置仍完全相同。"""
-        for patcher in reversed(self.patchers):
-            patcher.stop()
-        self.assertEqual(hashlib.sha256(self.config_path.read_bytes()).hexdigest(), self.config_hash)
+        try:
+            os.chdir(self.original_cwd)
+            self.assertEqual(_file_summary(self.config_path), self.config_summary)
+        finally:
+            for patcher in reversed(self.patchers):
+                patcher.stop()
+            self.temporary.cleanup()
 
     async def test_profile_selection_saves_in_both_modes(self):
         """下拉选中项写入 profile，初次填充不触发保存。"""
         for engine in ("heavy", "lite"):
             self.save.reset_mock()
             config = {"engine": engine, "llm_config": {"profile": "a"}}
-            with patch("src.tui.app.load_ui_config", return_value=config), patch(
-                "src.tui.app.list_llm_profiles", return_value=[("a", "a"), ("b", "b")], create=True
+            with patch("src.tui.config_page.load_ui_config", return_value=config), patch(
+                "src.tui.config_page.list_llm_profiles", return_value=[("a", "a"), ("b", "b")]
             ):
                 app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine=engine)
                 async with app.run_test() as pilot:
@@ -57,8 +79,8 @@ class TuiMetadataUiTests(unittest.IsolatedAsyncioTestCase):
         for profile in ("missing", ""):
             self.save.reset_mock()
             config = {"llm_config": {"profile": profile}}
-            with patch("src.tui.app.load_ui_config", return_value=config), patch(
-                "src.tui.app.list_llm_profiles", return_value=[], create=True
+            with patch("src.tui.config_page.load_ui_config", return_value=config), patch(
+                "src.tui.config_page.list_llm_profiles", return_value=[]
             ):
                 app = LaTeXTransTuiApp(load_history_on_mount=False)
                 async with app.run_test() as pilot:

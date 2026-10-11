@@ -1,5 +1,6 @@
 import hashlib
 import json
+import os
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
@@ -28,6 +29,7 @@ from textual.widgets import (
 
 from setup import load_requirements
 from src.tui import app as tui_app
+from src.tui import error_reports
 from src.tui.app import (
     PAGE_CONFIG,
     PAGE_DETAIL,
@@ -39,14 +41,16 @@ from src.tui.app import (
     compact_progress_log_for_display,
     run,
 )
-from src.tui.history import TUI_PROJECT_METADATA_FILENAME
+from src.tui.history import TUI_PROJECT_METADATA_FILENAME, write_project_metadata
 from src.tui.config import UI_CONFIG_PATH
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
 
 
-def _file_sha256(path: Path) -> str:
-    """Return a file digest without exposing its contents in test output."""
-    return hashlib.sha256(path.read_bytes()).hexdigest()
+def _file_summary(path: Path) -> tuple[bool, str | None]:
+    """Return file existence and digest without exposing its contents."""
+    if not path.exists():
+        return False, None
+    return True, hashlib.sha256(path.read_bytes()).hexdigest()
 
 
 class TuiPackagingTests(unittest.TestCase):
@@ -87,31 +91,86 @@ class TuiAppTests(unittest.IsolatedAsyncioTestCase):
     """为所有 TUI 测试隔离真实项目配置文件。"""
 
     async def asyncSetUp(self) -> None:
-        """在整个异步测试生命周期内拦截 UI 配置保存。"""
-        self._ui_config_hash = _file_sha256(Path.cwd() / UI_CONFIG_PATH)
+        """将整个异步测试生命周期放入临时目录并拦截配置访问。"""
+        self.original_cwd = Path.cwd()
+        self.original_config = self.original_cwd / UI_CONFIG_PATH
+        self.original_config_summary = _file_summary(self.original_config)
+        self.temporary = TemporaryDirectory()
+        os.chdir(self.temporary.name)
         self.save_ui_config = Mock()
-        self._save_ui_config_patchers = [
-            patch("src.tui.app.save_ui_config", self.save_ui_config),
-            patch("src.tui.config.save_ui_config", self.save_ui_config),
-        ]
-        for save_ui_config_patcher in self._save_ui_config_patchers:
-            save_ui_config_patcher.start()
+        targets = {
+            "src.tui.app.load_ui_config": Mock(return_value={}),
+            "src.tui.config_page.load_ui_config": Mock(return_value={}),
+            "src.tui.config_page.save_ui_config": self.save_ui_config,
+            "src.tui.config.save_ui_config": self.save_ui_config,
+            "src.tui.config_page.list_llm_profiles": Mock(return_value=[]),
+            "src.tui.config_page.list_available_font_families": Mock(return_value=[]),
+        }
+        self._config_patchers = []
+        for target, replacement in targets.items():
+            config_patcher = patch(target, replacement)
+            config_patcher.start()
+            self._config_patchers.append(config_patcher)
 
     async def asyncTearDown(self) -> None:
         """在异步测试完成后恢复 UI 配置保存函数。"""
         try:
+            os.chdir(self.original_cwd)
             self.assertEqual(
-                _file_sha256(Path.cwd() / UI_CONFIG_PATH),
-                self._ui_config_hash,
-                "TUI 测试不得修改真实 UI 配置文件。",
+                _file_summary(self.original_config),
+                self.original_config_summary,
+                "TUI 测试不得创建或修改真实 UI 配置文件。",
             )
         finally:
-            for save_ui_config_patcher in reversed(self._save_ui_config_patchers):
-                save_ui_config_patcher.stop()
+            for config_patcher in reversed(self._config_patchers):
+                config_patcher.stop()
+            self.temporary.cleanup()
 
 
 class TuiEngineModeTests(TuiAppTests):
     """Verify the TUI keeps heavy and lite session state isolated."""
+
+    async def test_mode_round_trip_does_not_duplicate_completed_project(self):
+        """确认相对历史路径与绝对运行路径在模式往返切换后仍是同一项目。"""
+        for engine, other_engine in (("heavy", "lite"), ("lite", "heavy")):
+            with self.subTest(engine=engine):
+                app = LaTeXTransTuiApp(initial_engine=engine)
+                app.current_config = {
+                    "heavy": {"output_dir": str(Path(engine) / "outputs")},
+                    "lite": {"output_dir": str(Path(engine) / "output-lite")},
+                }
+                async with app.run_test() as pilot:
+                    output = Path(engine) / ("outputs" if engine == "heavy" else "output-lite") / "paper"
+                    task = TaskViewState(
+                        input_type="arxiv", inputs=["2508.18791"],
+                        task_id=f"completed-{engine}", engine=engine, total=1,
+                    )
+                    task.apply_event({
+                        "type": "project_complete", "project_name": "paper",
+                        "output_dir": str(output.resolve()),
+                    })
+                    write_project_metadata(
+                        output, task.task_id, task.input_type, task.inputs[0],
+                        "paper", ProjectStatus.COMPLETED, engine=engine,
+                    )
+                    app.tasks = [task]
+                    app.current_task = task
+                    app.refresh_project_list()
+                    await pilot.pause()
+                    self.assertEqual(len(app.query_one("#project-list", ListView).children), 1)
+
+                    for _ in range(2):
+                        app.set_engine(other_engine)
+                        await app.workers.wait_for_complete()
+                        await pilot.pause()
+                        self.assertEqual(len(app.query_one("#project-list", ListView).children), 0)
+                        app.set_engine(engine)
+                        await app.workers.wait_for_complete()
+                        await pilot.pause()
+                        self.assertEqual(len(app.query_one("#project-list", ListView).children), 1)
+                        self.assertEqual(len(app.tasks), 1)
+                        self.assertIs(app.tasks[0], task)
+                        self.assertEqual(task.projects[0].status, ProjectStatus.COMPLETED)
 
     async def test_initial_engine_mount_does_not_persist_configuration(self):
         """Mounting an engine-specific form must not overwrite the saved UI default."""
@@ -124,14 +183,14 @@ class TuiEngineModeTests(TuiAppTests):
     async def test_settings_default_engine_persists_without_changing_active_session(self):
         """Changing the saved default engine must leave the current Heavy session intact."""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="heavy")
-        with patch("src.tui.app.load_ui_config", return_value={"engine": "heavy"}):
+        with patch("src.tui.config_page.load_ui_config", return_value={"engine": "heavy"}):
             async with app.run_test() as pilot:
                 await app.workers.wait_for_complete()
                 await pilot.pause()
                 app.load_config_page()
                 await app.workers.wait_for_complete()
                 await pilot.pause()
-                self.assertFalse(app.loading_config_form)
+                self.assertFalse(app.config_page.loading_config_form)
                 self.save_ui_config.reset_mock()
 
                 app.query_one("#config-engine", Select).value = "lite"
@@ -249,13 +308,13 @@ class TuiEngineModeTests(TuiAppTests):
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
         detected = ["SimSun", "宋体", "FandolSong"]
         with patch(
-            "src.tui.app.list_available_font_families", return_value=detected
+            "src.tui.config_page.list_available_font_families", return_value=detected
         ) as lister:
             async with app.run_test():
                 panel = app.query_one(
                     "#config-lite-cjk_mainfont_candidates-hint", Collapsible
                 )
-                self.assertEqual(panel.title, "可用字体（3）")
+                self.assertEqual(panel.title, "可用字体 (3)")
                 self.assertTrue(panel.collapsed)
                 listed = str(panel.query_one(".config-font-list").content)
                 for family in detected:
@@ -279,7 +338,7 @@ class TuiEngineModeTests(TuiAppTests):
     async def test_lite_font_hint_reports_a_missing_font_listing(self):
         """未检测到字体列表时，提示文字必须说明原因且不出现折叠面板。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")
-        with patch("src.tui.app.list_available_font_families", return_value=[]):
+        with patch("src.tui.config_page.list_available_font_families", return_value=[]):
             async with app.run_test():
                 hint = app.query_one("#config-lite-cjk_mainfont_candidates-hint")
                 self.assertIsInstance(hint, Static)
@@ -407,19 +466,22 @@ class TuiLayoutTests(TuiAppTests):
 
     def test_detail_page_adds_top_padding_above_tabs(self):
         """确认项目详情页顶部和 Tab 标签之间保留间距。"""
-        self.assertIn("#detail {", LaTeXTransTuiApp.DEFAULT_CSS)
-        self.assertIn("padding-top: 1;", LaTeXTransTuiApp.DEFAULT_CSS)
+        css = Path(tui_app.__file__).with_name("app.tcss").read_text(encoding="utf-8")
+        self.assertIn("#detail {", css)
+        self.assertIn("padding-top: 1;", css)
 
     def test_entry_form_allows_wide_art_title(self):
         """确认入口表单宽度足够容纳多行艺术字标题。"""
-        self.assertIn("#entry-form {", LaTeXTransTuiApp.DEFAULT_CSS)
-        self.assertIn("max-width: 124;", LaTeXTransTuiApp.DEFAULT_CSS)
+        css = Path(tui_app.__file__).with_name("app.tcss").read_text(encoding="utf-8")
+        self.assertIn("#entry-form {", css)
+        self.assertIn("max-width: 124;", css)
 
     def test_app_title_keeps_art_lines_left_aligned(self):
         """确认艺术字内部不逐行居中，避免短行错位。"""
+        css = Path(tui_app.__file__).with_name("app.tcss").read_text(encoding="utf-8")
         self.assertIsNone(build_app_title().justify)
-        self.assertNotIn("text-align: center;", LaTeXTransTuiApp.DEFAULT_CSS)
-        self.assertIn("height: 6;", LaTeXTransTuiApp.DEFAULT_CSS)
+        self.assertNotIn("text-align: center;", css)
+        self.assertIn("height: 6;", css)
 
     def test_compact_art_title_is_narrower_than_wide_title(self):
         """确认窄版艺术字存在，并且宽度小于宽屏艺术字。"""
@@ -981,11 +1043,11 @@ class TuiConfigPageTests(TuiAppTests):
             "lite": {"output_dir": "output-lite", "mineru_api_key_env": "MINERU_TOKEN"},
         }
         async with app.run_test() as pilot:
-            with patch("src.tui.app.load_ui_config", return_value=config):
+            with patch("src.tui.config_page.load_ui_config", return_value=config):
                 app.load_config_page()
             await app.workers.wait_for_complete()
             await pilot.pause()
-            self.assertFalse(app.loading_config_form)
+            self.assertFalse(app.config_page.loading_config_form)
             self.save_ui_config.reset_mock()
 
             app.query_one("#config-lite-cjk_mainfont_candidates", Input).value = (
@@ -1047,8 +1109,8 @@ class TuiConfigPageTests(TuiAppTests):
             },
         }
         async with app.run_test() as pilot:
-            with patch("src.tui.app.save_ui_config"):
-                with patch("src.tui.app.load_ui_config", return_value=config):
+            with patch("src.tui.config_page.save_ui_config"):
+                with patch("src.tui.config_page.load_ui_config", return_value=config):
                     await pilot.click("#settings-button")
                 await pilot.pause()
 
@@ -1147,7 +1209,7 @@ class TuiConfigPageTests(TuiAppTests):
             search_input.value = "Paper"
             search_input.focus()
 
-            with patch.object(app, "search_zotero_items") as search:
+            with patch.object(app.zotero_panel, "search_zotero_items") as search:
                 await pilot.press("enter")
                 await pilot.pause()
 
@@ -1171,8 +1233,8 @@ class TuiConfigPageTests(TuiAppTests):
         """确认配置字段变化后会即时保存 UI 配置并刷新 TOML 预览。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
         async with app.run_test() as pilot:
-            with patch("src.tui.app.save_ui_config") as save_config:
-                with patch("src.tui.app.load_ui_config", return_value={"target_language": "ja"}):
+            with patch("src.tui.config_page.save_ui_config") as save_config:
+                with patch("src.tui.config_page.load_ui_config", return_value={"target_language": "ja"}):
                     app.load_config_page()
 
                 app.query_one("#config-target_language", Select).value = "fr"
@@ -1187,14 +1249,14 @@ class TuiConfigPageTests(TuiAppTests):
         """确认延迟处理的配置变更不会越过测试生命周期写入真实文件。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
         async with app.run_test() as pilot:
-            with patch("src.tui.app.load_ui_config", return_value={"llm_config": {"profile": "profile-ja"}}), patch(
-                "src.tui.app.list_llm_profiles", return_value=[("profile-ja", "profile-ja"), ("profile-fr", "profile-fr")]
+            with patch("src.tui.config_page.load_ui_config", return_value={"llm_config": {"profile": "profile-ja"}}), patch(
+                "src.tui.config_page.list_llm_profiles", return_value=[("profile-ja", "profile-ja"), ("profile-fr", "profile-fr")]
             ):
                 app.load_config_page()
             await app.workers.wait_for_complete()
             await pilot.pause()
 
-            self.assertFalse(app.loading_config_form)
+            self.assertFalse(app.config_page.loading_config_form)
             self.save_ui_config.assert_not_called()
             app.query_one("#config-llm_config-profile", Select).value = "profile-fr"
             await pilot.pause(delay=0.1)
@@ -1240,11 +1302,12 @@ class TuiConfigPageTests(TuiAppTests):
             },
         }
         async with app.run_test() as pilot:
-            with patch("src.tui.app.save_ui_config") as save_config:
-                with patch("src.tui.app.load_ui_config", return_value=config), patch(
-                    "src.tui.app.list_llm_profiles", return_value=[("deepseek", "deepseek"), ("profile-x", "profile-x")]
+            with patch("src.tui.config_page.save_ui_config") as save_config:
+                with patch("src.tui.config_page.load_ui_config", return_value=config), patch(
+                    "src.tui.config_page.list_llm_profiles", return_value=[("deepseek", "deepseek"), ("profile-x", "profile-x")]
                 ):
                     app.load_config_page()
+                await pilot.pause()
 
                 app.query_one("#config-target_language", Select).value = "fr"
                 app.query_one("#config-source_language", Select).value = "de"
@@ -1280,12 +1343,13 @@ class TuiConfigPageTests(TuiAppTests):
     async def test_config_change_rejects_invalid_integer_fields(self):
         """确认非法整数配置会显示错误并阻止即时保存。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
-        async with app.run_test():
-            with patch("src.tui.app.load_ui_config", return_value={"terminology": {"max_llm_candidates": 30}}):
+        async with app.run_test() as pilot:
+            with patch("src.tui.config_page.load_ui_config", return_value={"terminology": {"max_llm_candidates": 30}}):
                 app.load_config_page()
+            await pilot.pause()
 
             app.query_one("#config-terminology-max_llm_candidates", Input).value = "-1"
-            with patch("src.tui.app.save_ui_config") as save_config:
+            with patch("src.tui.config_page.save_ui_config") as save_config:
                 app.persist_config_form_change()
 
             save_config.assert_not_called()
@@ -1494,11 +1558,10 @@ class TuiTaskEventTests(TuiAppTests):
             app.handle_runtime_event({"type": "project_start", "project_name": "2508.18791"})
             app.select_project("2508.18791")
 
-            with patch.object(app, "_refresh_project_log") as refresh_log:
+            with patch.object(app.project_detail, "refresh_log") as refresh_log:
                 app.handle_runtime_event({"type": "task_log", "line": "Downloading metadata"})
 
-            refresh_log.assert_called_once()
-            self.assertIn("Downloading metadata", refresh_log.call_args.args[1])
+            refresh_log.assert_called_once_with(app.current_task.task_log_lines)
 
     def test_project_log_refresh_preserves_prepare_lines_missing_from_file(self):
         """项目日志文件刷新时不应覆盖尚未落盘的准备阶段日志。"""
@@ -1511,9 +1574,10 @@ class TuiTaskEventTests(TuiAppTests):
         app = LaTeXTransTuiApp(load_history_on_mount=False)
         project = ProjectViewState(project_name="paper", log_path=r"D:\\missing\\latextrans.log")
         log_widget = Mock()
+        app.project_detail.task_log_lines = ["Downloading paper"]
 
-        with patch.object(app, "query_one", return_value=log_widget):
-            app._refresh_project_log(project, ["Downloading paper"])
+        with patch.object(app.project_detail, "query_one", return_value=log_widget):
+            app.project_detail._refresh_project_log(project)
 
         rendered = str(log_widget.write.call_args.args[0])
         self.assertIn("Downloading paper", rendered)
@@ -1807,12 +1871,12 @@ class TuiNotificationTests(TuiAppTests):
                 pdf_error="Pandoc PDF generation failed with exit code 43.",
             )
 
-            rows = app._error_reports_with_status(project)
+            rows = error_reports.error_reports_with_status(project, None)
             self.assertEqual(len(rows), 1)
             report, status = rows[0]
             self.assertEqual(status, "warning")
             self.assertIn("exit code 43", str(report["error"]))
-            self.assertEqual(app._error_status_text("warning").plain, "警告")
+            self.assertEqual(app.project_detail._error_status_text("warning").plain, "警告")
 
 
 class TuiResultViewsTests(TuiAppTests):
@@ -2124,11 +2188,14 @@ class TuiResultViewsTests(TuiAppTests):
                 event = Mock()
                 event.tabbed_content.id = "detail-tabs"
                 event.pane.id = "errors-tab"
-                app.on_tabbed_content_tab_activated(event)
+                app.project_detail.on_tabbed_content_tab_activated(event)
                 await pilot.pause()
 
                 visible_width = sum(column.get_render_width(errors_table) for column in errors_table.ordered_columns)
-                self.assertLessEqual(visible_width, app._errors_table_available_width(errors_table))
+                self.assertLessEqual(
+                    visible_width,
+                    app.project_detail._errors_table_available_width(errors_table),
+                )
 
     async def test_errors_table_recomputes_columns_after_terminal_resize(self):
         """确认终端宽度变化时错误记录表会按新宽度重新分配列宽。"""
@@ -2508,7 +2575,7 @@ class TuiZoteroImportTests(TuiAppTests):
                 },
                 task,
             )
-            with patch.object(app, "load_zotero_libraries"):
+            with patch.object(app.zotero_panel, "load_zotero_libraries"):
                 app.query_one("#detail-tabs", TabbedContent).active = "zotero-tab"
                 await pilot.pause()
 
@@ -2668,7 +2735,7 @@ class TuiZoteroImportTests(TuiAppTests):
 
             select = app.query_one("#zotero-library-select", Select)
             self.assertEqual(select.value, "user:7")
-            self.assertEqual(app.zotero_libraries[1]["library_type"], "group")
+            self.assertEqual(app.zotero_panel.zotero_libraries[1]["library_type"], "group")
 
     async def test_activating_zotero_tab_loads_libraries(self):
         """确认打开 Zotero tab 时会自动加载可选库。"""
@@ -2678,8 +2745,8 @@ class TuiZoteroImportTests(TuiAppTests):
         event.pane.id = "zotero-tab"
 
         async with app.run_test():
-            with patch.object(app, "load_zotero_libraries") as load_libraries:
-                app.on_tabbed_content_tab_activated(event)
+            with patch.object(app.zotero_panel, "load_zotero_libraries") as load_libraries:
+                app.project_detail.on_tabbed_content_tab_activated(event)
 
         load_libraries.assert_called_once_with()
 
@@ -2700,7 +2767,9 @@ class TuiZoteroImportTests(TuiAppTests):
 
         async with app.run_test():
             app.zotero_adapter_factory = lambda api_key, local_api_base: adapter
-            app.zotero_libraries = [{"library_id": "42", "library_type": "group", "name": "Reading Group"}]
+            app.zotero_panel.zotero_libraries = [
+                {"library_id": "42", "library_type": "group", "name": "Reading Group"}
+            ]
             app.query_one("#zotero-library-select", Select).set_options([("Reading Group", "group:42")])
             app.query_one("#zotero-library-select", Select).value = "group:42"
             app.query_one("#zotero-search-input", Input).value = "Paper"
@@ -2720,8 +2789,8 @@ class TuiZoteroImportTests(TuiAppTests):
         event.input.id = "zotero-search-input"
 
         async with app.run_test():
-            with patch.object(app, "search_zotero_items") as search:
-                app.on_input_submitted(event)
+            with patch.object(app.zotero_panel, "search_zotero_items") as search:
+                app.zotero_panel.on_input_submitted(event)
 
         search.assert_called_once_with()
 
@@ -2744,8 +2813,10 @@ class TuiZoteroImportTests(TuiAppTests):
             app.zotero_adapter_factory = lambda api_key, local_api_base: adapter
             app.current_task = TaskViewState(input_type="arxiv", inputs=["2508.18791"])
             app.current_task.projects.append(ProjectViewState(project_name="2508.18791", status=ProjectStatus.COMPLETED))
-            app.selected_project_name = "2508.18791"
-            app.zotero_libraries = [{"library_id": "7", "library_type": "user", "name": "Ada"}]
+            app.select_project("2508.18791", app.current_task.task_id)
+            app.zotero_panel.zotero_libraries = [
+                {"library_id": "7", "library_type": "user", "name": "Ada"}
+            ]
             app.query_one("#zotero-library-select", Select).set_options([("Ada", "user:7")])
             app.query_one("#zotero-library-select", Select).value = "user:7"
 
@@ -2815,7 +2886,7 @@ class TuiZoteroImportTests(TuiAppTests):
             task.projects.append(ProjectViewState(project_name="2407.01648", status=ProjectStatus.COMPLETED))
             app.current_task = task
             app.tasks = [task]
-            app.selected_project_name = "2508.18791"
+            app.select_project("2508.18791", task.task_id)
             app.populate_zotero_results(
                 [
                     {
@@ -2832,8 +2903,8 @@ class TuiZoteroImportTests(TuiAppTests):
 
             app.select_project("2407.01648", "task")
 
-            self.assertEqual(app.zotero_results, [])
-            self.assertEqual(app.zotero_selected_keys, set())
+            self.assertEqual(app.zotero_panel.zotero_results, [])
+            self.assertEqual(app.zotero_panel.zotero_selected_keys, set())
             self.assertEqual(app.query_one("#zotero-results", DataTable).row_count, 0)
 
     async def test_import_zotero_button_attaches_selected_project_pdf(self):
@@ -2861,8 +2932,7 @@ class TuiZoteroImportTests(TuiAppTests):
                     pdf_path=r"D:\out\paper.pdf",
                 )
             )
-            app.selected_project_name = "2508.18791"
-            app.switch_page(PAGE_DETAIL)
+            app.select_project("2508.18791", app.current_task.task_id)
             with patch.dict("os.environ", {"ZOTERO_API_KEY": "ui-key"}):
                 app.populate_zotero_results(
                     [
@@ -2918,8 +2988,7 @@ class TuiZoteroImportTests(TuiAppTests):
                 )
             )
             app.current_task.completed = 1
-            app.selected_project_name = "2508.18791"
-            app.switch_page(PAGE_DETAIL)
+            app.select_project("2508.18791", app.current_task.task_id)
             app.populate_zotero_results(
                 [
                     {
@@ -2949,8 +3018,8 @@ class TuiZoteroImportTests(TuiAppTests):
         event.button.id = "import-zotero-button"
 
         async with app.run_test():
-            with patch.object(app, "import_selected_project_to_zotero") as import_method:
-                app.on_button_pressed(event)
+            with patch.object(app.zotero_panel, "import_selected_project_to_zotero") as import_method:
+                app.zotero_panel.on_button_pressed(event)
 
         import_method.assert_called_once_with()
 
@@ -2969,8 +3038,7 @@ class TuiZoteroImportTests(TuiAppTests):
                     translated_markdown_path=r"D:\out\translated.md",
                 )
             )
-            lite.selected_project_name = "paper"
-            lite.refresh_detail_page()
+            lite.select_project("paper", lite.current_task.task_id)
 
             self.assertTrue(lite.query_one("#import-zotero-button", Button).display)
             self.assertTrue(lite.query_one("#import-zotero-markdown-button", Button).display)
@@ -2985,8 +3053,7 @@ class TuiZoteroImportTests(TuiAppTests):
                     translated_markdown_path=r"D:\out\translated.md",
                 )
             )
-            heavy.selected_project_name = "paper"
-            heavy.refresh_detail_page()
+            heavy.select_project("paper", heavy.current_task.task_id)
 
             self.assertTrue(heavy.query_one("#import-zotero-button", Button).display)
             self.assertFalse(heavy.query_one("#import-zotero-markdown-button", Button).display)
@@ -3019,7 +3086,7 @@ class TuiZoteroImportTests(TuiAppTests):
                         translated_markdown_path=str(translated_path),
                     )
                 )
-                app.selected_project_name = "paper"
+                app.select_project("paper", app.current_task.task_id)
                 app.populate_zotero_results(
                     [
                         {
@@ -3078,7 +3145,7 @@ class TuiZoteroImportTests(TuiAppTests):
                         translated_markdown_path=str(translated_path),
                     )
                 )
-                app.selected_project_name = "paper"
+                app.select_project("paper", app.current_task.task_id)
                 app.populate_zotero_results(
                     [
                         {
@@ -3127,7 +3194,7 @@ class TuiZoteroImportTests(TuiAppTests):
                     translated_markdown_path=r"D:\out\missing-translated.md",
                 )
             )
-            app.selected_project_name = "paper"
+            app.select_project("paper", app.current_task.task_id)
             app.populate_zotero_results(
                 [
                     {
@@ -3170,7 +3237,7 @@ class TuiZoteroImportTests(TuiAppTests):
                         translated_markdown_path=str(translated_path),
                     )
                 )
-                app.selected_project_name = "paper"
+                app.select_project("paper", app.current_task.task_id)
                 app.populate_zotero_results(
                     [
                         {
@@ -3200,8 +3267,8 @@ class TuiZoteroImportTests(TuiAppTests):
         event.button.id = "import-zotero-markdown-button"
 
         async with app.run_test():
-            with patch.object(app, "import_selected_project_markdown_to_zotero") as import_method:
-                app.on_button_pressed(event)
+            with patch.object(app.zotero_panel, "import_selected_project_markdown_to_zotero") as import_method:
+                app.zotero_panel.on_button_pressed(event)
 
         import_method.assert_called_once_with()
 
