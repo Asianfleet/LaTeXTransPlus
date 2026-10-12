@@ -3,6 +3,7 @@ pylatexenc==2.10
 PyYAML==6.0.2
 regex==2024.11.6
 Requests==2.32.4
+keyring>=25,<26
 tiktoken==0.9.0
 toml==0.10.2
 tqdm==4.67.1

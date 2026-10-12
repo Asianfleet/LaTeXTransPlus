@@ -45,9 +45,10 @@ class ZoteroAdapterTests(unittest.TestCase):
             }
             session.post.side_effect = [auth, create, upload_auth, Mock(), Mock()]
 
-            result = ZoteroAdapter(session=session).attach_pdf_local(
-                "ITEM1", str(pdf_path), "0", "user"
-            )
+            with patch("keyring.get_password", return_value=None), patch("keyring.set_password"):
+                result = ZoteroAdapter(session=session).attach_pdf_local(
+                    "ITEM1", str(pdf_path), "0", "user"
+                )
 
         self.assertEqual(result, {"attachment_key": "ATTACH1", "status": "uploaded"})
         self.assertEqual(session.post.call_args_list[0].args[0], "http://127.0.0.1:23119/api/local/authorize")
@@ -70,10 +71,56 @@ class ZoteroAdapterTests(unittest.TestCase):
         adapter = ZoteroAdapter(session=session)
         headers = {"Zotero-API-Key": "OLDKEY", "Zotero-Server-ID": "SERVER1"}
 
-        adapter._post_local_write("http://127.0.0.1:23119/api/users/0/items", headers=headers)
+        with patch("keyring.get_password", return_value=None), patch("keyring.delete_password"):
+            adapter._post_local_write("http://127.0.0.1:23119/api/users/0/items", headers=headers)
 
         self.assertEqual(session.post.call_args_list[1].kwargs["headers"]["Zotero-Server-ID"], "SERVER1")
         self.assertEqual(session.post.call_args_list[2].kwargs["headers"]["Zotero-API-Key"], "NEWKEY")
+
+    def test_remembered_local_key_is_reused_by_new_adapter(self):
+        """用户选择始终允许后，下次导入直接使用系统凭据。"""
+        stored: dict[tuple[str, str], str] = {}
+        session = Mock()
+        authorization = Mock()
+        authorization.json.return_value = {"key": "PERSISTENT", "remember": True}
+        session.post.return_value = authorization
+        with patch("keyring.get_password", side_effect=lambda service, account: stored.get((service, account))), patch(
+            "keyring.set_password", side_effect=lambda service, account, key: stored.__setitem__((service, account), key)
+        ):
+            first = ZoteroAdapter(session=session)._local_api_key("SERVER1")
+            second = ZoteroAdapter(session=session)._local_api_key("SERVER1")
+
+        self.assertEqual((first, second), ("PERSISTENT", "PERSISTENT"))
+        self.assertEqual(session.post.call_count, 1)
+        self.assertIn("PERSISTENT", stored.values())
+
+    def test_one_time_local_key_is_not_saved(self):
+        """一次允许产生的 key 不保存到系统凭据。"""
+        session = Mock()
+        session.post.return_value.json.return_value = {"key": "ONETIME", "remember": False}
+        with patch("keyring.get_password", return_value=None), patch("keyring.set_password") as save:
+            key = ZoteroAdapter(session=session)._local_api_key("SERVER1")
+
+        self.assertEqual(key, "ONETIME")
+        save.assert_not_called()
+
+    def test_unauthorized_stored_key_is_removed_before_reauthorization(self):
+        """401 清除被 Zotero 撤销的持久 key 后再次请求授权。"""
+        session = Mock()
+        denied = Mock(status_code=401)
+        authorization = Mock()
+        authorization.json.return_value = {"key": "NEWKEY", "remember": True}
+        accepted = Mock(status_code=204)
+        session.post.side_effect = [denied, authorization, accepted]
+        headers = {"Zotero-API-Key": "OLDKEY", "Zotero-Server-ID": "SERVER1"}
+        with patch("keyring.get_password", return_value="OLDKEY"), patch("keyring.delete_password") as delete, patch("keyring.set_password") as save:
+            ZoteroAdapter(session=session)._post_local_write(
+                "http://127.0.0.1:23119/api/users/0/items", headers=headers
+            )
+
+        delete.assert_called_once()
+        save.assert_called_once()
+        self.assertEqual(headers["Zotero-API-Key"], "NEWKEY")
 
     def test_list_libraries_reads_user_and_group_scopes_from_local_api(self):
         """List libraries through the configured local Zotero API."""

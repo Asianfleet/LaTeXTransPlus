@@ -8,7 +8,12 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+import keyring
 import requests
+from keyring.errors import PasswordDeleteError
+
+
+LOCAL_KEY_SERVICE = "LaTeXTransPlus/Zotero"
 
 
 class ZoteroAdapter:
@@ -117,7 +122,7 @@ class ZoteroAdapter:
             raise FileNotFoundError(str(path))
         server_id = self.check_local_write_support()
         headers = {
-            "Zotero-API-Key": self._authorize_local_write(server_id),
+            "Zotero-API-Key": self._local_api_key(server_id),
             "Zotero-API-Version": "3",
             "Zotero-Server-ID": server_id,
         }
@@ -147,8 +152,13 @@ class ZoteroAdapter:
         )
         return {"attachment_key": attachment_key, "status": "uploaded"}
 
+    def _local_api_key(self, server_id: str) -> str:
+        """复用当前 Zotero 实例已保存的持久授权。"""
+        saved_key = keyring.get_password(LOCAL_KEY_SERVICE, server_id)
+        return saved_key or self._authorize_local_write(server_id)
+
     def _authorize_local_write(self, server_id: str) -> str:
-        """向 Zotero 请求仅用于当前导入操作的本地写入 key。"""
+        """请求本地写入 key，并仅保存用户选择始终允许的授权。"""
         authorization = self.session.post(
             f"{self.local_api_base}/local/authorize",
             json={"appName": "LaTeXTransPlus"},
@@ -156,17 +166,27 @@ class ZoteroAdapter:
             timeout=60,
         )
         authorization.raise_for_status()
-        local_key = authorization.json().get("key", "")
+        payload = authorization.json()
+        local_key = payload.get("key", "")
         if not local_key:
             raise RuntimeError("Zotero 未授予本地 API 写入权限。")
+        if payload.get("remember") is True:
+            keyring.set_password(LOCAL_KEY_SERVICE, server_id, local_key)
         return local_key
 
     def _post_local_write(self, url: str, **kwargs: Any) -> requests.Response:
         """一次授权过期时重新授权并重试当前本地写请求。"""
         response = self.session.post(url, **kwargs)
         if response.status_code == 401:
+            server_id = kwargs["headers"]["Zotero-Server-ID"]
+            saved_key = keyring.get_password(LOCAL_KEY_SERVICE, server_id)
+            if saved_key == kwargs["headers"]["Zotero-API-Key"]:
+                try:
+                    keyring.delete_password(LOCAL_KEY_SERVICE, server_id)
+                except PasswordDeleteError:
+                    pass
             kwargs["headers"]["Zotero-API-Key"] = self._authorize_local_write(
-                kwargs["headers"]["Zotero-Server-ID"]
+                server_id
             )
             response = self.session.post(url, **kwargs)
         response.raise_for_status()
