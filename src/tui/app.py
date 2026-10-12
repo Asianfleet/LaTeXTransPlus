@@ -22,7 +22,6 @@ from textual.widgets import (
     Footer,
     ListItem,
     ListView,
-    Rule,
     Select,
     Static,
     Switch,
@@ -52,6 +51,7 @@ from src.tui.project_detail import (
 from src.tui.runner import run_tui_task as _DEFAULT_RUN_TUI_TASK
 from src.tui.runner import run_tui_task
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
+from src.tui.sidebar import SidebarDivider, SidebarLayout
 from src.tui.widgets import (
     APP_TITLE_ART,
     APP_TITLE_ART_COMPACT,
@@ -167,13 +167,13 @@ class LaTeXTransTuiApp(App[None]):
 
     def compose(self) -> ComposeResult:
         """Compose the persistent sidebar, content switcher, and footer."""
-        with Horizontal(id="app-body"):
+        with SidebarLayout(id="app-body"):
             with Vertical(id="sidebar"):
                 yield Button("新建任务", id="new-task-button", flat=True)
                 yield Button("项目管理", id="project-manager-button", flat=True)
                 yield ListView(id="project-list")
                 yield Button("设置", id="settings-button", flat=True)
-            yield Rule(orientation="vertical", id="sidebar-rule")
+            yield SidebarDivider(id="sidebar-rule")
             with ContentSwitcher(initial=PAGE_ENTRY, id="main-switcher"):
                 with Vertical(id=PAGE_ENTRY):
                     with Vertical(id="entry-form"):

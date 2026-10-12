@@ -17,8 +17,14 @@
     }
 
     #sidebar-rule {
+        width: 1;
         margin: 0;
         padding: 0;
+    }
+
+    #sidebar-rule:hover,
+    #sidebar-rule.dragging {
+        color: $accent;
     }
 
     #project-list ListItem:hover {
