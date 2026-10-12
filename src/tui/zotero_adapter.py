@@ -101,6 +101,77 @@ class ZoteroAdapter:
         self._register_upload(attachment_key, auth_payload["uploadKey"], library_id, library_type)
         return {"attachment_key": attachment_key, "status": "uploaded"}
 
+    def check_local_write_support(self) -> str:
+        """检查本地服务是否提供带实例标识的可写 API。"""
+        response = self.session.get(f"{self.local_api_base}/", timeout=5)
+        response.raise_for_status()
+        server_id = response.headers.get("Zotero-Server-ID", "")
+        if not server_id:
+            raise RuntimeError("当前 Zotero 版本不支持本地写入，或本地 API 未启用。")
+        return server_id
+
+    def attach_pdf_local(self, item_key: str, pdf_path: str, library_id: str, library_type: str) -> dict[str, Any]:
+        """经 Zotero 本地可写 API 创建子附件并上传 PDF。"""
+        path = Path(pdf_path).resolve()
+        if not path.is_file():
+            raise FileNotFoundError(str(path))
+        server_id = self.check_local_write_support()
+        headers = {
+            "Zotero-API-Key": self._authorize_local_write(server_id),
+            "Zotero-API-Version": "3",
+            "Zotero-Server-ID": server_id,
+        }
+        attachment_key = self._create_child_attachment(
+            item_key, path, library_id, library_type,
+            api_base=self.local_api_base, headers=headers,
+        )
+        auth_payload = self._authorize_upload(
+            attachment_key, path, library_id, library_type,
+            api_base=self.local_api_base, headers=headers,
+        )
+        if auth_payload.get("exists") == 1:
+            return {"attachment_key": attachment_key, "status": "exists"}
+        upload_body = (
+            str(auth_payload["prefix"]).encode("utf-8")
+            + path.read_bytes()
+            + str(auth_payload["suffix"]).encode("utf-8")
+        )
+        upload_response = self.session.post(
+            auth_payload["url"], data=upload_body,
+            headers={"Content-Type": auth_payload["contentType"]},
+        )
+        upload_response.raise_for_status()
+        self._register_upload(
+            attachment_key, auth_payload["uploadKey"], library_id, library_type,
+            api_base=self.local_api_base, headers=headers,
+        )
+        return {"attachment_key": attachment_key, "status": "uploaded"}
+
+    def _authorize_local_write(self, server_id: str) -> str:
+        """向 Zotero 请求仅用于当前导入操作的本地写入 key。"""
+        authorization = self.session.post(
+            f"{self.local_api_base}/local/authorize",
+            json={"appName": "LaTeXTransPlus"},
+            headers={"Zotero-Server-ID": server_id},
+            timeout=60,
+        )
+        authorization.raise_for_status()
+        local_key = authorization.json().get("key", "")
+        if not local_key:
+            raise RuntimeError("Zotero 未授予本地 API 写入权限。")
+        return local_key
+
+    def _post_local_write(self, url: str, **kwargs: Any) -> requests.Response:
+        """一次授权过期时重新授权并重试当前本地写请求。"""
+        response = self.session.post(url, **kwargs)
+        if response.status_code == 401:
+            kwargs["headers"]["Zotero-API-Key"] = self._authorize_local_write(
+                kwargs["headers"]["Zotero-Server-ID"]
+            )
+            response = self.session.post(url, **kwargs)
+        response.raise_for_status()
+        return response
+
     def create_note(
         self,
         item_key: str,
@@ -215,7 +286,7 @@ class ZoteroAdapter:
             "Zotero-API-Version": "3",
         }
 
-    def _create_child_attachment(self, item_key: str, pdf_path: Path, library_id: str, library_type: str) -> str:
+    def _create_child_attachment(self, item_key: str, pdf_path: Path, library_id: str, library_type: str, *, api_base: str | None = None, headers: dict[str, str] | None = None) -> str:
         """Create a child attachment item and return its item key."""
         prefix = self._library_prefix(library_id, library_type)
         payload = [
@@ -234,11 +305,12 @@ class ZoteroAdapter:
                 "mtime": None,
             }
         ]
-        response = self.session.post(
-            f"{self.api_base_url}/{prefix}/items",
+        post = self._post_local_write if api_base == self.local_api_base else self.session.post
+        response = post(
+            f"{api_base or self.api_base_url}/{prefix}/items",
             json=payload,
             headers={
-                **self._api_headers(),
+                **(headers if headers is not None else self._api_headers()),
                 "Content-Type": "application/json",
                 "Zotero-Write-Token": uuid.uuid4().hex,
             },
@@ -259,6 +331,9 @@ class ZoteroAdapter:
         pdf_path: Path,
         library_id: str,
         library_type: str,
+        *,
+        api_base: str | None = None,
+        headers: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         """Request Zotero upload authorization for the attachment file."""
         prefix = self._library_prefix(library_id, library_type)
@@ -270,20 +345,22 @@ class ZoteroAdapter:
             "mtime": str(int(pdf_path.stat().st_mtime * 1000)),
             "contentType": mimetypes.guess_type(pdf_path.name)[0] or "application/pdf",
         }
-        response = self.session.post(
-            f"{self.api_base_url}/{prefix}/items/{attachment_key}/file",
+        post = self._post_local_write if api_base == self.local_api_base else self.session.post
+        response = post(
+            f"{api_base or self.api_base_url}/{prefix}/items/{attachment_key}/file",
             data=data,
-            headers={**self._api_headers(), "If-None-Match": "*"},
+            headers={**(headers if headers is not None else self._api_headers()), "If-None-Match": "*"},
         )
         response.raise_for_status()
         return response.json()
 
-    def _register_upload(self, attachment_key: str, upload_key: str, library_id: str, library_type: str) -> None:
+    def _register_upload(self, attachment_key: str, upload_key: str, library_id: str, library_type: str, *, api_base: str | None = None, headers: dict[str, str] | None = None) -> None:
         """Register a completed Zotero file upload."""
         prefix = self._library_prefix(library_id, library_type)
-        response = self.session.post(
-            f"{self.api_base_url}/{prefix}/items/{attachment_key}/file",
+        post = self._post_local_write if api_base == self.local_api_base else self.session.post
+        response = post(
+            f"{api_base or self.api_base_url}/{prefix}/items/{attachment_key}/file",
             data={"upload": upload_key},
-            headers={**self._api_headers(), "If-None-Match": "*"},
+            headers={**(headers if headers is not None else self._api_headers()), "If-None-Match": "*"},
         )
         response.raise_for_status()

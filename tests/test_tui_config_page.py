@@ -69,6 +69,7 @@ def _complete_config(engine: str = "heavy") -> dict[str, object]:
         "llm_config": {"profile": "profile-a"},
         "zotero": {
             "local_api_base": "http://127.0.0.1:23119/api",
+            "pdf_import_api": "web",
             "web_api_key_env": "ZOTERO_API_KEY",
         },
     }
@@ -139,6 +140,39 @@ class TuiConfigPageTests(unittest.IsolatedAsyncioTestCase):
             self.save.assert_called_once()
             self.assertEqual(page.get_config()["target_language"], "ja")
             self.assertEqual(app.effective_engine, "lite")
+
+    async def test_unsupported_local_pdf_api_restores_web_selection(self) -> None:
+        """本地写入不可用时提示用户且不保存切换。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            page = app.config_page
+            page.set_config(_complete_config())
+            page._populate_config_form(page.get_config())
+            await pilot.pause()
+            select = app.query_one("#config-zotero-pdf_import_api", Select)
+            with patch("src.tui.config_page.ZoteroAdapter") as adapter:
+                adapter.return_value.check_local_write_support.side_effect = RuntimeError("unsupported")
+                select.value = "local"
+                await pilot.pause()
+            self.assertEqual(select.value, "web")
+            self.assertEqual(page.get_config()["zotero"]["pdf_import_api"], "web")
+            self.assertIn("unsupported", str(app.query_one("#config-error", Static).render()))
+            self.save.assert_not_called()
+
+    async def test_supported_local_pdf_api_is_saved(self) -> None:
+        """支持本地写入时保存所选 PDF 导入方式。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            page = app.config_page
+            page.set_config(_complete_config())
+            page._populate_config_form(page.get_config())
+            await pilot.pause()
+            with patch("src.tui.config_page.ZoteroAdapter") as adapter:
+                app.query_one("#config-zotero-pdf_import_api", Select).value = "local"
+                await pilot.pause()
+            adapter.return_value.check_local_write_support.assert_called_once_with()
+            self.assertEqual(page.get_config()["zotero"]["pdf_import_api"], "local")
+            self.assertEqual(self.save.call_args.args[1]["zotero"]["pdf_import_api"], "local")
 
     async def test_config_snapshot_and_message_are_deep_copies(self) -> None:
         """外部配置与变化消息都不能共享组件内部的可变字典。"""

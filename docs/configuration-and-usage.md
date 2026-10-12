@@ -190,6 +190,8 @@ latextrans-tui -e lite
 
 Heavy 接受 arXiv、本地 LaTeX 项目、压缩包和公开源码 URL。Lite 每个任务只接受一个 arXiv ID、PDF URL 或本地 PDF 路径；批量任务请在同一 TUI 会话中分别创建。
 
+在 TUI 设置页的 Zotero 区域可选择 PDF 导入 API。默认使用 Web API，需要设置 `web_api_key_env` 指定的环境变量；选择本地 API 时会先检查 Zotero 本地服务是否支持写入，检查失败会保留原选项。导入时 Zotero 会请求本地写入授权。搜索条目始终使用本地 API，Markdown 笔记导入仍使用 Web API。
+
 Lite 的 MinerU token 从 `[lite].mineru_api_key_env` 指定的环境变量读取：
 
 ```powershell

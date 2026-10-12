@@ -295,6 +295,26 @@ class TuiZoteroPanelTests(unittest.IsolatedAsyncioTestCase):
                 "导入完成：成功 1，失败 1。 ONE: rejected",
             )
 
+    async def test_local_pdf_import_does_not_require_web_key(self) -> None:
+        """本地 PDF 导入按配置分流，不读取 Web API key。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        project = ProjectViewState(project_name="paper", pdf_path=str(Path.cwd() / "paper.pdf"))
+        adapter = Mock()
+        async with app.run_test():
+            panel = app.zotero_panel
+            panel.adapter_factory = Mock(return_value=adapter)
+            self._set_project_context(panel, project, config={"pdf_import_api": "local"})
+            panel.populate_zotero_results([
+                {"item_key": "ONE", "library_id": "0", "library_type": "user"}
+            ])
+            panel.toggle_zotero_row_selection(0)
+            with patch.dict(os.environ, {}, clear=True):
+                panel.import_selected_project_to_zotero()
+            adapter.attach_pdf_local.assert_called_once_with(
+                "ONE", project.pdf_path, "0", "user"
+            )
+            self.assertEqual(project.zotero_status, "导入完成：成功 1，失败 0。")
+
     async def test_markdown_import_continues_after_one_item_fails(self) -> None:
         """Markdown 单项导入失败后继续创建其余子笔记。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False, initial_engine="lite")

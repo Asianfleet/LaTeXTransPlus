@@ -303,17 +303,21 @@ class ZoteroPanel(TabPane):
         if not selected_items:
             self._set_zotero_status("失败：未选择任何条目。")
             return
-        api_key = self._web_api_key()
-        if api_key is None:
-            return
-
-        adapter = self._zotero_adapter(api_key=api_key)
+        local_import = self.config.get("pdf_import_api", "web") == "local"
+        if local_import:
+            adapter = self._zotero_adapter()
+        else:
+            api_key = self._web_api_key()
+            if api_key is None:
+                return
+            adapter = self._zotero_adapter(api_key=api_key)
         success_count = 0
         failures: list[str] = []
         for item in selected_items:
             item_key = str(item.get("item_key") or "")
             try:
-                adapter.attach_pdf(
+                attach = adapter.attach_pdf_local if local_import else adapter.attach_pdf
+                attach(
                     item_key,
                     project.pdf_path,
                     str(item.get("library_id") or ""),

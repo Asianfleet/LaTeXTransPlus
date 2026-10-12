@@ -19,6 +19,7 @@ profile = "default"
 
 [zotero]
 local_api_base = "http://127.0.0.1:23119/api"
+pdf_import_api = "web"
 web_api_key_env = "ZOTERO_API_KEY"
 
 [heavy]

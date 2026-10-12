@@ -11,6 +11,70 @@ from src.tui.zotero_adapter import ZoteroAdapter
 class ZoteroAdapterTests(unittest.TestCase):
     """Verify Zotero CLI delegation and Web API PDF attachment upload."""
 
+    def test_local_write_capability_requires_server_identity(self):
+        """旧版只读本地 API 不应被当成可写接口。"""
+        session = Mock()
+        session.get.return_value.headers = {"Zotero-API-Version": "3"}
+        adapter = ZoteroAdapter(session=session)
+
+        with self.assertRaisesRegex(RuntimeError, "不支持本地写入"):
+            adapter.check_local_write_support()
+
+        session.get.return_value.headers = {
+            "Zotero-API-Version": "3", "Zotero-Server-ID": "SERVER1"
+        }
+        adapter.check_local_write_support()
+
+    def test_attach_pdf_locally_authorizes_and_uploads(self):
+        """本地模式使用本地写入凭据和附件上传接口。"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            pdf_path = Path(tmp_dir) / "translated.pdf"
+            pdf_path.write_bytes(b"%PDF translated")
+            session = Mock()
+            session.get.return_value.headers = {
+                "Zotero-API-Version": "3", "Zotero-Server-ID": "SERVER1"
+            }
+            auth = Mock()
+            auth.json.return_value = {"key": "LOCALKEY", "remember": True}
+            create = Mock()
+            create.json.return_value = {"successful": {"0": {"key": "ATTACH1"}}}
+            upload_auth = Mock()
+            upload_auth.json.return_value = {
+                "url": "http://127.0.0.1:23119/api/local/uploads/UPLOAD1",
+                "contentType": "application/pdf", "prefix": "", "suffix": "", "uploadKey": "UPLOAD1"
+            }
+            session.post.side_effect = [auth, create, upload_auth, Mock(), Mock()]
+
+            result = ZoteroAdapter(session=session).attach_pdf_local(
+                "ITEM1", str(pdf_path), "0", "user"
+            )
+
+        self.assertEqual(result, {"attachment_key": "ATTACH1", "status": "uploaded"})
+        self.assertEqual(session.post.call_args_list[0].args[0], "http://127.0.0.1:23119/api/local/authorize")
+        self.assertEqual(session.post.call_args_list[0].kwargs["headers"]["Zotero-Server-ID"], "SERVER1")
+        self.assertEqual(session.post.call_args_list[1].kwargs["headers"]["Zotero-Server-ID"], "SERVER1")
+        self.assertEqual(session.post.call_args_list[1].kwargs["headers"]["Zotero-API-Key"], "LOCALKEY")
+        self.assertEqual(session.post.call_args_list[1].kwargs["json"][0]["parentItem"], "ITEM1")
+        self.assertEqual(session.post.call_args_list[2].args[0], "http://127.0.0.1:23119/api/users/0/items/ATTACH1/file")
+        self.assertEqual(session.post.call_args_list[3].kwargs["data"], b"%PDF translated")
+        self.assertEqual(session.post.call_args_list[4].kwargs["data"], {"upload": "UPLOAD1"})
+
+    def test_local_write_reauthorizes_after_one_time_key_expires(self):
+        """一次性 key 被消费后重新授权并重试写请求。"""
+        session = Mock()
+        expired = Mock(status_code=401)
+        accepted = Mock(status_code=204)
+        authorization = Mock()
+        authorization.json.return_value = {"key": "NEWKEY"}
+        session.post.side_effect = [expired, authorization, accepted]
+        adapter = ZoteroAdapter(session=session)
+        headers = {"Zotero-API-Key": "OLDKEY", "Zotero-Server-ID": "SERVER1"}
+
+        adapter._post_local_write("http://127.0.0.1:23119/api/users/0/items", headers=headers)
+
+        self.assertEqual(session.post.call_args_list[1].kwargs["headers"]["Zotero-Server-ID"], "SERVER1")
+        self.assertEqual(session.post.call_args_list[2].kwargs["headers"]["Zotero-API-Key"], "NEWKEY")
+
     def test_list_libraries_reads_user_and_group_scopes_from_local_api(self):
         """List libraries through the configured local Zotero API."""
         session = Mock()

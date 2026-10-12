@@ -32,6 +32,7 @@ from src.tui.config_schema import (
     select_value_for_field,
 )
 from src.tui.widgets import ConfigTabbedContent
+from src.tui.zotero_adapter import ZoteroAdapter
 
 
 class ConfigPage(Vertical):
@@ -148,6 +149,18 @@ class ConfigPage(Vertical):
         """消费配置下拉框变化并立即保存。"""
         if self._is_config_widget(event.select.id):
             event.stop()
+            if event.select.id == "config-zotero-pdf_import_api" and event.value == "local" and not self.loading_config_form:
+                config = self.get_config().get("zotero", {})
+                base = str(config.get("local_api_base", "http://127.0.0.1:23119/api"))
+                try:
+                    ZoteroAdapter(local_api_base=base).check_local_write_support()
+                except Exception as exc:
+                    message = f"无法切换到本地 API：{exc}"
+                    self.query_one("#config-error", Static).update(message)
+                    self.app.notify(message, severity="warning")
+                    with self.prevent(Select.Changed):
+                        event.select.value = "web"
+                    return
             self.persist_form()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
