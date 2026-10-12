@@ -25,6 +25,7 @@ from textual.widgets import (
     Switch,
     TabbedContent,
     TextArea,
+    Tooltip,
 )
 
 from setup import load_requirements
@@ -2361,6 +2362,106 @@ class TuiResultViewsTests(TuiAppTests):
 
 class TuiProjectManagerTests(TuiAppTests):
     """验证项目管理表的多选和批量操作按钮状态。"""
+
+    async def test_project_cells_show_full_text_on_hover(self):
+        """标题和模型悬停展示全文，其他列及刷新后不残留提示。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        app.TOOLTIP_DELAY = 0.1
+        async with app.run_test(size=(160, 40), tooltips=True) as pilot:
+            task = TaskViewState(input_type="arxiv", inputs=["paper"])
+            project = ProjectViewState(
+                project_name="paper", title="长标题 [literal] " * 30,
+                translation_model="provider/model-with-a-long-name",
+            )
+            task.projects = [project]
+            app.tasks = [task]
+            app.refresh_task_table()
+            app.action_project_manager()
+            await pilot.pause()
+            table = app.query_one("#task-table", DataTable)
+            for column, expected in ((2, project.title), (3, project.translation_model)):
+                x = sum(item.get_render_width(table) for item in table.ordered_columns[:column]) + 1
+                await pilot.hover(table, offset=(x, 1))
+                self.assertIsInstance(table.tooltip, Text)
+                self.assertEqual(table.tooltip.plain, expected)
+            await pilot.hover(table, offset=(1, 1))
+            self.assertIsNone(table.tooltip)
+            project.title = "更新后的标题"
+            app.refresh_task_table()
+            self.assertIsNone(table.tooltip)
+            await pilot.hover(table, offset=(1, 0))
+            x = sum(item.get_render_width(table) for item in table.ordered_columns[:2]) + 1
+            await pilot.hover(table, offset=(x, 1))
+            await pilot.pause(0.2)
+            self.assertEqual(table.tooltip.plain, project.title)
+            tooltip = app.screen.query_one(Tooltip)
+            self.assertTrue(tooltip.display)
+            self.assertEqual(tooltip.content.plain, project.title)
+            await pilot.resize_terminal(120, 35)
+            await pilot.pause()
+            await pilot.hover(table, offset=(1, 0))
+            await pilot.hover(table, offset=(x, 1))
+            self.assertEqual(table.tooltip.plain, project.title)
+            await pilot.hover("#project-manager-button")
+            self.assertIsNone(table.tooltip)
+            self.assertEqual(app.selected_project_keys, set())
+
+    async def test_error_cells_show_untruncated_multiline_text_on_hover(self):
+        """错误记录指定列悬停保留全文和换行，表头及空白不显示旧提示。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        report = {"part": "sec", "num_or_ph": "long-position-identifier", "error": "问题 [literal]\n" * 30}
+        source, translation = "原文 \\alpha\n" * 40, "译文 [literal]\n" * 40
+        project = ProjectViewState(project_name="paper")
+        async with app.run_test(size=(180, 40)) as pilot:
+            task = TaskViewState(input_type="arxiv", inputs=["paper"])
+            task.projects = [project]
+            app.tasks = [task]
+            with patch.object(app.project_detail, "_error_reports_with_status", return_value=[(report, "unresolved")]), patch(
+                "src.tui.project_detail.error_reports.error_report_content", return_value=(source, translation)
+            ):
+                app.select_project("paper", task.task_id)
+                app.query_one("#detail-tabs", TabbedContent).active = "errors-tab"
+                await pilot.pause()
+                table = app.query_one("#errors-table", DataTable)
+                for column, expected in ((0, "章节 long-position-identifier"), (2, report["error"]), (4, source), (5, translation)):
+                    x = sum(item.get_render_width(table) for item in table.ordered_columns[:column]) + 1
+                    await pilot.hover(table, offset=(x, 1))
+                    self.assertIsInstance(table.tooltip, Text)
+                    self.assertEqual(table.tooltip.plain, expected)
+                await pilot.hover(table, offset=(1, 0))
+                self.assertIsNone(table.tooltip)
+                await pilot.hover(table, offset=(1, 3))
+                self.assertIsNone(table.tooltip)
+                table.clear()
+                self.assertIsNone(table.tooltip)
+
+    async def test_project_table_fills_available_height_and_resizes(self):
+        """确认列表高度不随项目数量变化，缩放后仍填满操作栏下方空间。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test(size=(120, 40)) as pilot:
+            app.action_project_manager()
+            await pilot.pause()
+            table = app.query_one("#task-table", DataTable)
+            page = app.query_one("#tasks")
+            actions = app.query_one("#project-actions")
+            for project_count in (0, 2, 60):
+                task = TaskViewState(input_type="arxiv", inputs=[], total=project_count)
+                task.projects = [
+                    ProjectViewState(project_name=f"paper-{index}", status=ProjectStatus.COMPLETED)
+                    for index in range(project_count)
+                ]
+                app.tasks = [task]
+                app.refresh_task_table()
+                await pilot.pause()
+                for size in ((120, 40), (100, 28)):
+                    await pilot.resize_terminal(*size)
+                    await pilot.pause()
+                    with self.subTest(project_count=project_count, size=size):
+                        self.assertEqual(table.row_count, project_count)
+                        self.assertEqual(table.region.bottom, page.content_region.bottom)
+                        self.assertEqual(table.region.y, actions.region.bottom + actions.styles.margin.bottom)
+                        if project_count == 60:
+                            self.assertGreater(table.max_scroll_y, 0)
 
     async def test_clear_project_selection_button_clears_rows_and_disables_actions(self):
         """确认两种引擎均可取消所有勾选，并能在取消后重新选择项目。"""
