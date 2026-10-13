@@ -16,9 +16,10 @@ class ProjectListItem(ListItem):
         """构建单行标题和可隐藏的进度行，保留原有任务颜色。"""
         self.project_key = (task_id, project.project_name)
         self._progress_indent = min(len(project.project_name), 10) + 3
-        text = project.project_name + (f" · {project.title}" if project.title else "")
+        display_title = project.title or "未识别标题"
+        text = f"{project.project_name} · {display_title}"
         title = Static(Text(text, overflow="ellipsis", no_wrap=True))
-        tooltip = Text(project.project_name + "\n" + (project.title or "未识别标题"))
+        tooltip = Text(project.project_name + "\n" + display_title)
         title.tooltip = tooltip
         if running_task:
             title.add_class("running-task-project")

@@ -34,6 +34,39 @@ class ProjectProgressTests(unittest.IsolatedAsyncioTestCase):
             patcher.start()
             self.addCleanup(patcher.stop)
 
+    async def test_missing_title_has_placeholder_until_metadata_arrives(self) -> None:
+        """进度先到时显示标题占位符，元数据到达后替换为真实标题。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        task = TaskViewState(input_type="arxiv", inputs=["2609.14858"], task_id="task")
+        app.tasks = [task]
+        async with app.run_test(size=(160, 40)) as pilot:
+            app.handle_runtime_event(
+                {"type": "project_start", "project_name": "2609.14858"}, task,
+            )
+            await pilot.pause()
+            view = app.query_one("#project-list", ListView)
+            title = view.children[0].children[0]
+            self.assertEqual(str(title.content), "2609.14858 · 未识别标题")
+            app.handle_runtime_event(
+                {"type": "project_log", "project_name": "2609.14858",
+                 "line": "Parsing LaTeX document..."}, task,
+            )
+            await pilot.pause()
+            self.assertEqual(str(title.content), "2609.14858 · 未识别标题")
+            self.assertTrue(view.children[0].query_one(".project-progress", Static).display)
+            self.assertEqual(task.projects[0].title, "")
+            app.handle_runtime_event(
+                {"type": "project_metadata", "project_name": "2609.14858",
+                 "title": "Context Language Models"}, task,
+            )
+            await pilot.pause()
+            item = view.children[0]
+            self.assertEqual(str(item.children[0].content),
+                             "2609.14858 · Context Language Models")
+            self.assertIn("Context Language Models", str(item.tooltip))
+            self.assertNotIn("未识别标题", str(item.tooltip))
+            self.assertTrue(item.query_one(".project-progress", Static).display)
+
     async def test_log_updates_only_matching_item_without_rebuilding_list(self) -> None:
         """同名项目的进度不串任务，更新保留条目、选择和滚动位置。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
