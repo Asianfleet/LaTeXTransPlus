@@ -390,9 +390,19 @@ class LaTeXTransTuiApp(App[None]):
         self._refresh_project_action_buttons()
 
     def _project_column_widths(self, table: DataTable) -> tuple[int, int, int, int, int, int]:
-        """将剩余可视宽度分配给标题；窄屏保留最小宽度并允许横向滚动。"""
+        """收紧标识列并完整显示状态，剩余空间给标题，窄屏允许横向滚动。"""
         available = table.size.width or self.query_one("#main-switcher").size.width
-        fixed = (4, 18, 20, 17, 23)
+        project_states = self._iter_project_states()
+        project_width = min(14, max(10, max(
+            (Text(project.project_name).cell_len for _, project in project_states), default=0,
+        )))
+        status_width = max(19, max(
+            (Text(project.status_label).cell_len for _, project in project_states), default=0,
+        ))
+        task_width = max(7, max(
+            (Text(task.task_id).cell_len for task, _ in project_states), default=0,
+        ))
+        fixed = (4, project_width, 20, status_width, task_width)
         title_width = max(18, available - sum(fixed) - 12 * table.cell_padding - 2)
         return fixed[0], fixed[1], title_width, fixed[2], fixed[3], fixed[4]
 
