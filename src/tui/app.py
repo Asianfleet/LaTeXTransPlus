@@ -20,7 +20,6 @@ from textual.widgets import (
     ContentSwitcher,
     DataTable,
     Footer,
-    ListItem,
     ListView,
     Select,
     Static,
@@ -51,6 +50,7 @@ from src.tui.project_detail import (
 from src.tui.runner import run_tui_task as _DEFAULT_RUN_TUI_TASK
 from src.tui.runner import run_tui_task
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
+from src.tui.project_list import ProjectListItem
 from src.tui.sidebar import SidebarDivider, SidebarLayout
 from src.tui.widgets import (
     APP_TITLE_ART,
@@ -321,14 +321,7 @@ class LaTeXTransTuiApp(App[None]):
         list_view.clear()
 
         for task, project in self._iter_project_states():
-            text = project.project_name + (f" · {project.title}" if project.title else "")
-            label = Static(Text(text, overflow="ellipsis", no_wrap=True))
-            tooltip = Text(project.project_name + "\n" + (project.title or "未识别标题"))
-            label.tooltip = tooltip
-            if self._task_is_running(task):
-                label.add_class("running-task-project")
-            item = ListItem(label)
-            item.tooltip = tooltip
+            item = ProjectListItem(task.task_id, project, self._task_is_running(task))
             list_view.append(item)
 
     def refresh_detail_page(self, *, reset_zotero: bool = False) -> None:
@@ -684,6 +677,20 @@ class LaTeXTransTuiApp(App[None]):
         target_task.apply_event(event_payload)
         if event_payload.get("type") in {"project_log", "task_log"}:
             self._refresh_selected_project_log(event_payload, target_task)
+            if event_type == "project_log":
+                project_name = str(event_payload.get("project_name") or "project")
+                project = next(
+                    (item for item in target_task.projects if item.project_name == project_name),
+                    None,
+                )
+                if project is not None:
+                    for item in self.query_one("#project-list", ListView).children:
+                        if (
+                            isinstance(item, ProjectListItem)
+                            and item.project_key == (target_task.task_id, project_name)
+                        ):
+                            item.update_progress(project)
+                            break
             return
 
         self._replace_history_project(target_task)

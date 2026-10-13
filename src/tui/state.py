@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
+from src.tui.project_progress import extract_progress_text
+
 
 class ProjectStatus(str, Enum):
     """Project processing status displayed in the UI."""
@@ -41,6 +43,7 @@ class ProjectViewState:
     pdf_error: str | None = None
     title: str = ""
     translation_model: str = ""
+    progress_text: str = ""
 
 
 @dataclass
@@ -78,6 +81,7 @@ class TaskViewState:
         if event_type == "project_start":
             project = self._get_or_create_project(str(event.get("project_name") or "project"))
             project.status = ProjectStatus.RUNNING
+            project.progress_text = ""
             self.running_project = project.project_name
             self._copy_project_fields(project, event)
             return
@@ -92,6 +96,10 @@ class TaskViewState:
             line = str(event.get("line") or event.get("message") or "")
             if line:
                 project.log_lines.append(line)
+            if project.status == ProjectStatus.RUNNING:
+                progress = extract_progress_text(str(event.get("message") or line))
+                if progress is not None:
+                    project.progress_text = progress
             self._copy_project_fields(project, event)
             return
 
@@ -99,6 +107,7 @@ class TaskViewState:
             project = self._get_or_create_project(str(event.get("project_name") or "project"))
             self._copy_project_fields(project, event)
             project.status = self._project_status_from_event(event_type, event)
+            project.progress_text = ""
             self.completed = sum(1 for item in self.projects if item.status == ProjectStatus.COMPLETED)
             self.failed = sum(1 for item in self.projects if item.status == ProjectStatus.FAILED)
             return

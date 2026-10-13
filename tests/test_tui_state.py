@@ -6,11 +6,59 @@ import unittest
 from pathlib import Path
 
 from src.tui.history import load_output_history
-from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
+from src.tui.state import (
+    ProjectStatus,
+    ProjectViewState,
+    TaskViewState,
+    extract_progress_text,
+)
 
 
 class TuiStateTests(unittest.TestCase):
     """Regression tests for runtime event merging into UI state."""
+
+    def test_extract_progress_text_normalizes_known_progress_logs(self):
+        """Known workflow logs become concise sidebar progress text."""
+        examples = {
+            "[############------------] 52.6% Translating sections: 10/19":
+                "Translating sections: 10/19",
+            "Retranslating error parts: 1/3": "Retranslating error parts: 1/3",
+            "Parsing LaTeX document...": "Parsing LaTeX document",
+            "Requesting terminology decisions from LLM.": "Requesting terminology decisions",
+            "Validating translation results...": "Validating translation results",
+            "🤖💬 Start generating for project...⏳: paper.": "Start generating for project",
+            "🔨 Refactoring LaTeX document...": "Refactoring LaTeX document",
+            "🛠️ Compiling PDF document...": "Compiling PDF document",
+        }
+        for message, expected in examples.items():
+            with self.subTest(message=message):
+                self.assertEqual(extract_progress_text(message), expected)
+        self.assertIsNone(extract_progress_text("Successfully translated sections."))
+
+    def test_project_progress_is_updated_and_cleared_on_terminal_event(self):
+        """Project progress follows logs and disappears after completion."""
+        for terminal in (
+            {"type": "project_complete"},
+            {"type": "project_error"},
+            {"type": "project_cancelled"},
+            {"type": "project_error", "status": "needs_term_review"},
+        ):
+            with self.subTest(terminal=terminal):
+                state = TaskViewState(input_type="arxiv", inputs=["2508.18791"])
+                start = {"type": "project_start", "project_name": "2508.18791"}
+                progress = {
+                    "type": "project_log", "project_name": "2508.18791",
+                    "line": "Translating sections: 10/19",
+                }
+                state.apply_event(start)
+                state.apply_event(progress)
+                state.apply_event({**progress, "line": "Successfully translated sections."})
+                self.assertEqual(state.projects[0].progress_text, "Translating sections: 10/19")
+                state.apply_event({**terminal, "project_name": "2508.18791"})
+                state.apply_event(progress)
+                self.assertEqual(state.projects[0].progress_text, "")
+                state.apply_event(start)
+                self.assertEqual(state.projects[0].progress_text, "")
 
     def test_apply_run_start_sets_total(self):
         """run_start events should set the task total."""

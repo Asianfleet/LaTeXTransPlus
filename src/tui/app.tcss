@@ -32,7 +32,7 @@
     }
 
     #project-list ListItem {
-        height: 1;
+        height: auto;
     }
 
     #project-list Static {
@@ -44,6 +44,10 @@
 
     .running-task-project {
         color: orange;
+    }
+
+    #project-list .project-progress {
+        color: $text-muted;
     }
 
     #main-switcher {
