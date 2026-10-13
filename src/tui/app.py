@@ -377,12 +377,13 @@ class LaTeXTransTuiApp(App[None]):
                 Text(project.project_name, overflow="ellipsis", no_wrap=True),
                 Text(project.title or "未识别标题", overflow="ellipsis", no_wrap=True),
                 Text(project.translation_model or "unknown", overflow="ellipsis", no_wrap=True),
-                project.status.value,
+                project.status_label,
                 task.task_id,
             )
             row = table.row_count - 1
             table.set_cell_tooltip(row, 2, project.title or "未识别标题")
             table.set_cell_tooltip(row, 3, project.translation_model or "unknown")
+            table.set_cell_tooltip(row, 4, project.status_label)
         if table.row_count:
             table.move_cursor(row=min(cursor.row, table.row_count - 1), column=min(cursor.column, 5), scroll=False)
         table.scroll_to(x=scroll_x, y=scroll_y, animate=False)
@@ -754,7 +755,19 @@ class LaTeXTransTuiApp(App[None]):
         """根据任务事件发送轻量通知，不依赖已删除的进度页。"""
         event_type = event.get("type")
         project_name = str(event.get("project_name") or "project")
-        if event_type == "project_complete":
+        project = next((item for item in task.projects if item.project_name == project_name), None)
+        if (
+            event_type in {"project_complete", "project_error"}
+            and project is not None
+            and project.status == ProjectStatus.COMPLETED_WITH_ERRORS
+        ):
+            if self._should_notify_project_event(task, project_name, "project_complete"):
+                self._notify(
+                    f"项目完成：{project_name}，仍有 {(project.validation_summary or {}).get('errors', 0)} 个校验错误，任务 id：{task.task_id}",
+                    title="LaTeXTransPlus",
+                    severity="warning",
+                )
+        elif event_type == "project_complete":
             if self._should_notify_project_event(task, project_name, "project_complete"):
                 pdf_error = str(event.get("pdf_error") or "").strip()
                 if pdf_error:
@@ -857,6 +870,7 @@ class LaTeXTransTuiApp(App[None]):
         """返回已离开后台处理状态的项目数量。"""
         stopped_statuses = {
             ProjectStatus.COMPLETED,
+            ProjectStatus.COMPLETED_WITH_ERRORS,
             ProjectStatus.FAILED,
             ProjectStatus.TERMS_READY,
             ProjectStatus.CANCELLED,
@@ -957,6 +971,8 @@ class LaTeXTransTuiApp(App[None]):
             engine=task.engine,
             title=project.title if project else None,
             translation_model=project.translation_model if project else None,
+            validation_summary=project.validation_summary if project else None,
+            pdf_error=project.pdf_error if project else None,
             source_markdown_path=(
                 project.source_markdown_path if project is not None else None
             ),

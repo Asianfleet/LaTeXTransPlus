@@ -16,6 +16,7 @@ class ProjectStatus(str, Enum):
     RUNNING = "running"
     TERMS_READY = "terms_ready"
     COMPLETED = "completed"
+    COMPLETED_WITH_ERRORS = "completed_with_errors"
     FAILED = "failed"
     CANCELLED = "cancelled"
 
@@ -44,6 +45,14 @@ class ProjectViewState:
     title: str = ""
     translation_model: str = ""
     progress_text: str = ""
+
+    @property
+    def status_label(self) -> str:
+        """返回含未解决校验错误数的项目状态文本。"""
+        if self.status == ProjectStatus.COMPLETED_WITH_ERRORS:
+            errors = (self.validation_summary or {}).get("errors", 0)
+            return f"completed({errors}errors)"
+        return self.status.value
 
 
 @dataclass
@@ -108,7 +117,10 @@ class TaskViewState:
             self._copy_project_fields(project, event)
             project.status = self._project_status_from_event(event_type, event)
             project.progress_text = ""
-            self.completed = sum(1 for item in self.projects if item.status == ProjectStatus.COMPLETED)
+            self.completed = sum(
+                1 for item in self.projects
+                if item.status in {ProjectStatus.COMPLETED, ProjectStatus.COMPLETED_WITH_ERRORS}
+            )
             self.failed = sum(1 for item in self.projects if item.status == ProjectStatus.FAILED)
             return
 
@@ -152,6 +164,12 @@ class TaskViewState:
             return ProjectStatus.CANCELLED
         if event.get("status") == "needs_term_review":
             return ProjectStatus.TERMS_READY
+        if (
+            event.get("pdf_path")
+            and not event.get("pdf_error")
+            and (event.get("validation_summary") or {}).get("errors", 0) > 0
+        ):
+            return ProjectStatus.COMPLETED_WITH_ERRORS
         if event_type == "project_complete":
             return ProjectStatus.COMPLETED
         return ProjectStatus.FAILED

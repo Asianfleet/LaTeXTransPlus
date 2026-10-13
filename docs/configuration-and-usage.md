@@ -190,6 +190,8 @@ latextrans-tui -e lite
 
 Heavy 接受 arXiv、本地 LaTeX 项目、压缩包和公开源码 URL。Lite 每个任务只接受一个 arXiv ID、PDF URL 或本地 PDF 路径；批量任务请在同一 TUI 会话中分别创建。
 
+项目管理中，PDF 已生成但仍有未解决校验错误的项目显示为 `completed(nerrors)`，其中 `n` 是最终校验报告中 error 级别的条目数（同一条目中的多个问题合并计数），warning 不计入。该状态计入已完成项目，并保留错误记录供检查；历史项目加载时也采用此规则。未生成 PDF 的失败项目仍显示为 `failed`。此状态用于 TUI 展示，CLI 的严格校验退出规则仍由 `validation.retry.fail_on_error` 控制。
+
 在 TUI 设置页的 Zotero 区域可选择 PDF 导入 API。默认使用 Web API，需要设置 `web_api_key_env` 指定的环境变量；选择本地 API 时会先检查 Zotero 本地服务是否支持写入，检查失败会保留原选项。首次导入时 Zotero 会请求本地写入授权；选择“始终允许”后，授权会保存在系统凭据存储中，后续导入无需再次确认。选择“一次允许”则每次写入都可能需要重新授权。搜索条目始终使用本地 API，Markdown 笔记导入仍使用 Web API。
 
 Lite 的 MinerU token 从 `[lite].mineru_api_key_env` 指定的环境变量读取：

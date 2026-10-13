@@ -31,6 +31,7 @@ def load_output_history(output_root: Path, engine: str = "heavy") -> list[TaskVi
         input_type = str(metadata.get("input_type") or "history")
         input_item = str(metadata.get("input_item") or project_name)
         status = infer_project_status(project_output_dir, engine=project_engine)
+        validation_summary = _read_validation_summary(project_output_dir, metadata)
         pdf_path = _find_pdf(project_output_dir, project_engine)
         source_title = read_project_title(
             project_output_dir, project_engine, metadata.get("source_markdown_path")
@@ -45,6 +46,8 @@ def load_output_history(output_root: Path, engine: str = "heavy") -> list[TaskVi
             translation_model=str(metadata.get("translation_model") or ""),
             engine=project_engine,
             status=status,
+            validation_summary=validation_summary,
+            pdf_error=metadata.get("pdf_error"),
             output_dir=str(project_output_dir),
             project_dir=str(_infer_project_dir(project_output_dir, metadata, project_name)),
             pdf_path=str(pdf_path) if pdf_path else None,
@@ -78,7 +81,9 @@ def load_output_history(output_root: Path, engine: str = "heavy") -> list[TaskVi
             task_id=task_id,
         )
         task.projects.append(project)
-        task.completed = 1 if status == ProjectStatus.COMPLETED else 0
+        task.completed = 1 if status in {
+            ProjectStatus.COMPLETED, ProjectStatus.COMPLETED_WITH_ERRORS,
+        } else 0
         task.failed = 1 if status == ProjectStatus.FAILED else 0
         task.total = 1
         tasks.append(task)
@@ -109,6 +114,8 @@ def write_project_metadata(
     translated_markdown_path: str | None = None,
     title: str | None = None,
     translation_model: str | None = None,
+    validation_summary: dict[str, Any] | None = None,
+    pdf_error: str | None = None,
 ) -> None:
     """Persist TUI task metadata for one output project."""
     selected_engine = normalize_engine(engine)
@@ -124,6 +131,8 @@ def write_project_metadata(
         "input_item": input_item,
         "project_name": project_name,
         "status": status.value,
+        "validation_summary": validation_summary,
+        "pdf_error": pdf_error,
         "source_markdown_path": source_markdown_path,
         "translated_markdown_path": translated_markdown_path,
         "title": title or previous.get("title") or "",
@@ -139,8 +148,18 @@ def write_project_metadata(
 def infer_project_status(project_dir: Path, engine: str = "heavy") -> ProjectStatus:
     """Infer project status from artifacts owned by the selected engine."""
     selected_engine = normalize_engine(engine)
-    metadata_status = _metadata_status(read_project_metadata(project_dir))
-    if metadata_status in {ProjectStatus.FAILED, ProjectStatus.CANCELLED}:
+    metadata = read_project_metadata(project_dir)
+    metadata_status = _metadata_status(metadata)
+    if metadata_status == ProjectStatus.CANCELLED:
+        return metadata_status
+
+    summary = _read_validation_summary(project_dir, metadata)
+    if summary is None:
+        return ProjectStatus.FAILED
+    has_pdf = _find_pdf(project_dir, selected_engine) is not None
+    if has_pdf and summary["errors"] > 0 and not metadata.get("pdf_error"):
+        return ProjectStatus.COMPLETED_WITH_ERRORS
+    if metadata_status == ProjectStatus.FAILED:
         return metadata_status
 
     if selected_engine == "lite":
@@ -150,7 +169,7 @@ def infer_project_status(project_dir: Path, engine: str = "heavy") -> ProjectSta
             return ProjectStatus.FAILED
         return ProjectStatus.PENDING
 
-    if _errors_report_has_errors(project_dir / "errors_report.json"):
+    if summary["errors"] > 0:
         return ProjectStatus.FAILED
     if _find_pdf(project_dir, selected_engine) is not None:
         return ProjectStatus.COMPLETED
@@ -197,19 +216,29 @@ def _metadata_status(metadata: dict[str, Any]) -> ProjectStatus | None:
         return None
 
 
-def _errors_report_has_errors(errors_report_path: Path) -> bool:
-    """Return whether errors_report.json contains at least one error entry."""
+def _read_validation_summary(project_dir: Path, metadata: dict[str, Any]) -> dict[str, int] | None:
+    """按运行时报告条目的严重级别计数，缺少报告时使用持久化摘要。"""
+    errors_report_path = project_dir / "errors_report.json"
     if not errors_report_path.is_file():
-        return False
+        stored = metadata.get("validation_summary")
+        summary = {"errors": 0, "warnings": 0, "total": 0}
+        if stored is not None:
+            if not isinstance(stored, dict):
+                return None
+            summary.update(stored)
+            if any(not isinstance(value, int) or value < 0 for value in summary.values()):
+                return None
+        return summary
     try:
         data = json.loads(errors_report_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
-        return True
+        return None
     if isinstance(data, list):
-        return len(data) > 0
-    if isinstance(data, dict):
-        return bool(data)
-    return bool(data)
+        if any(not isinstance(report, dict) for report in data):
+            return None
+        warnings = sum(1 for report in data if report.get("severity") == "warning")
+        return {"errors": len(data) - warnings, "warnings": warnings, "total": len(data)}
+    return None
 
 
 def _find_pdf(project_dir: Path, engine: str = "heavy") -> Path | None:
