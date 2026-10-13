@@ -13,6 +13,25 @@ from src.tui.history import load_output_history
 class ProjectTitleExtractionTests(unittest.TestCase):
     """验证标题只保留可读文字并恢复项目自定义宏。"""
 
+    def test_font_size_arguments_are_not_title_text(self):
+        """两篇 ClawGym 标题中的字号参数不会混入正文。"""
+        titles = (
+            ("\n", "ClawGym II: Exploring Black-Box RL  on  Agent  Harness",
+             "ClawGym II: Exploring Black-Box RL on Agent Harness"),
+            ("", "ClawGym: A Scalable Framework for Building Effective Claw Agents",
+             "ClawGym: A Scalable Framework for Building Effective Claw Agents"),
+        )
+        for blank_line, title, expected in titles:
+            with self.subTest(title=title):
+                content = (
+                    "\\title{\n\\vspace{-0.2in}\n"
+                    "\\centering \\fontsize{15pt}{16pt}\\selectfont\n"
+                    + blank_line + title + "\n\n\\vspace{-0.2in}\n}"
+                )
+                self.assertEqual(title_from_latex_captions([
+                    {"cap_type": "title", "content": content}
+                ]), expected)
+
     def test_model_name_inside_centering(self):
         """标题中的模型名称来自宏定义，保留中文正文。"""
         captions = [{"cap_type": "title", "content":

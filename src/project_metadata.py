@@ -19,10 +19,13 @@ def _title_converter(newcommands: list[dict[str, Any]]) -> tuple[LatexNodes2Text
     parser_context = latexwalker.get_default_latex_context_db()
     text_context = latex2text.get_default_latex_context_db()
     parser_specs = [MacroSpec("includegraphics", "*[{"), MacroSpec("raisebox", "{[[{"),
-                    MacroSpec("centering", "")]
+                    MacroSpec("centering", ""), MacroSpec("fontsize", "{{"),
+                    MacroSpec("selectfont", "")]
     text_specs = [MacroTextSpec("includegraphics", discard=True),
                   MacroTextSpec("raisebox", simplify_repl="%(4)s"),
-                  MacroTextSpec("centering", discard=True)]
+                  MacroTextSpec("centering", discard=True),
+                  MacroTextSpec("fontsize", discard=True),
+                  MacroTextSpec("selectfont", discard=True)]
     definitions = {}
     pattern = get_newcommand_pattern()
     for command in newcommands:
@@ -30,7 +33,7 @@ def _title_converter(newcommands: list[dict[str, Any]]) -> tuple[LatexNodes2Text
             continue
         for match in pattern.finditer(str(command.get("content") or "")):
             name = match.group(1) or match.group(2)
-            if name in {"includegraphics", "raisebox", "centering"}:
+            if name in {"includegraphics", "raisebox", "centering", "fontsize", "selectfont"}:
                 continue
             definitions[name] = (int(match.group(3) or 0), match.group(5))
     active_macros = set()
