@@ -2363,6 +2363,52 @@ class TuiResultViewsTests(TuiAppTests):
 class TuiProjectManagerTests(TuiAppTests):
     """验证项目管理表的多选和批量操作按钮状态。"""
 
+    async def test_long_source_tooltip_stays_visible_after_layout(self):
+        """原文和译文使用宽弹层，布局后持续显示且离开时恢复样式。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        app.TOOLTIP_DELAY = 0.05
+        source = "Long source paragraph with LaTeX \\alpha and details. " * 100
+        translation = "译文包含公式和详细说明。" * 100
+        report = {"part": "sec", "num_or_ph": "1", "error": "问题"}
+        task = TaskViewState(input_type="arxiv", inputs=["paper"])
+        task.projects = [ProjectViewState(project_name="paper")]
+        app.tasks = [task]
+        async with app.run_test(size=(120, 35), tooltips=True) as pilot:
+            with patch.object(app.project_detail, "_error_reports_with_status", return_value=[(report, "unresolved")]), patch(
+                "src.tui.project_detail.error_reports.error_report_content", return_value=(source, translation)
+            ):
+                app.select_project("paper", task.task_id)
+                app.query_one("#detail-tabs", TabbedContent).active = "errors-tab"
+                await pilot.pause()
+                table = app.query_one("#errors-table", DataTable)
+                x = sum(item.get_render_width(table) for item in table.ordered_columns[:4]) + 1
+                await pilot.hover(table, offset=(x, 1))
+                await pilot.pause(0.2)
+                tooltip = app.screen.query_one(Tooltip)
+                self.assertTrue(tooltip.display)
+                self.assertEqual(tooltip.content.plain, source)
+                self.assertGreater(tooltip.size.width, 40)
+                self.assertLessEqual(tooltip.size.width, int(app.size.width * 0.8))
+                self.assertIs(app.screen.get_widget_at(*app.mouse_position)[0], table)
+                await pilot.pause(0.2)
+                self.assertTrue(tooltip.display)
+                await pilot.hover(table, offset=(1, 0))
+                await pilot.pause(0.2)
+                self.assertFalse(tooltip.display)
+                self.assertIsNone(table.tooltip)
+                x = sum(item.get_render_width(table) for item in table.ordered_columns[:5]) + 1
+                await pilot.hover(table, offset=(x, 1))
+                await pilot.pause(0.2)
+                self.assertTrue(tooltip.display)
+                self.assertEqual(tooltip.content.plain, translation)
+                self.assertGreater(tooltip.size.width, 40)
+                self.assertLessEqual(tooltip.size.width, int(app.size.width * 0.8))
+                await pilot.hover("#project-manager-button")
+                await pilot.pause(0.2)
+                self.assertIsNone(table.tooltip)
+                self.assertIsNone(tooltip.styles.max_height)
+                self.assertEqual(tooltip.styles.max_width.value, 40)
+
     async def test_project_cells_show_full_text_on_hover(self):
         """标题和模型悬停展示全文，其他列及刷新后不残留提示。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)

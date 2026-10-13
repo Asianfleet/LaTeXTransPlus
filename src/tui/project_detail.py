@@ -358,8 +358,8 @@ class ProjectDetail(Vertical):
             row = table.row_count - 1
             table.set_cell_tooltip(row, 0, error_reports.error_report_position(report))
             table.set_cell_tooltip(row, 2, error_reports.error_report_problem(report))
-            table.set_cell_tooltip(row, 4, source)
-            table.set_cell_tooltip(row, 5, translation)
+            table.set_cell_tooltip(row, 4, source, wide=True)
+            table.set_cell_tooltip(row, 5, translation, wide=True)
         if table.row_count:
             table.move_cursor(
                 row=min(cursor.row, table.row_count - 1),
