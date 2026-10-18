@@ -15,6 +15,7 @@ from src.formats.latex.prompts import language_label
 from src.formats.latex.utils import (
     LatexNodes2Text,
     delete_ph,
+    get_command_pattern,
     replace_href,
     replace_includegraphics,
 )
@@ -438,25 +439,14 @@ class TerminologyAgent(BaseToolAgent):
         if env_match:
             return self._process_latex_to_text(env_match.group(1))
 
-        command_match = re.search(
-            r"\\abstract\s*\{(.*?)\}",
-            content,
-            flags=re.DOTALL | re.IGNORECASE,
-        )
-        if command_match:
-            return self._process_latex_to_text(command_match.group(1))
-
-        return self._process_latex_to_text(content)
+        return self._extract_command_text(content, ["abstract"])
 
     def _extract_command_text(self, content: str, command_names: list[str]) -> str:
+        """提取完整命令参数，保留嵌套格式中的正文并忽略可选短标题。"""
         for command_name in command_names:
-            match = re.search(
-                rf"\\{re.escape(command_name)}(?:\[[^\]]*\])?\s*\{{(.*?)\}}",
-                content,
-                flags=re.DOTALL | re.IGNORECASE,
-            )
+            match = get_command_pattern(re.escape(command_name)).search(content)
             if match:
-                return self._process_latex_to_text(match.group(1))
+                return self._process_latex_to_text(match.group(3)[1:-1])
         return self._process_latex_to_text(content)
 
     def _extract_rule_candidates(self, records: list[dict[str, str]]) -> list[str]:

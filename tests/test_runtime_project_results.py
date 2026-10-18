@@ -1,5 +1,5 @@
 import unittest
-from contextlib import redirect_stdout
+from contextlib import nullcontext, redirect_stdout
 from io import StringIO
 from pathlib import Path
 import tempfile
@@ -1033,6 +1033,33 @@ profile = "test"
             any(event["type"] == "project_log" and "halfway" in event["line"] for event in events)
         )
         self.assertTrue(any(event["type"] == "project_log" and event["line"] == "done" for event in events))
+
+    def test_run_projects_exception_preserves_traceback_in_diagnostics(self):
+        """确保文件日志和 CLI 捕获输出都保留异常类型及调用栈。"""
+        for use_context in (False, True):
+            with self.subTest(use_context=use_context), tempfile.TemporaryDirectory() as tmp_dir:
+                output_dir = Path(tmp_dir) / "outputs"
+                project_dir = Path(tmp_dir) / "paper"
+                stdout = StringIO()
+                events = []
+                with patch("src.runtime.HeavyEngine.run", side_effect=KeyError("3")):
+                    with redirect_stdout(stdout):
+                        status = run_projects(
+                            config={"target_language": "ch"},
+                            projects=[str(project_dir)],
+                            output_dir=str(output_dir),
+                            event_callback=events.append,
+                            project_context=(lambda *args: nullcontext()) if use_context else None,
+                        )
+                diagnostics = stdout.getvalue() if use_context else (
+                    output_dir / "ch_paper" / "latextrans.log"
+                ).read_text(encoding="utf-8")
+
+                self.assertIn("Traceback (most recent call last)", diagnostics)
+                self.assertIn("KeyError: '3'", diagnostics)
+                self.assertIn("runtime.py", diagnostics)
+                self.assertEqual(status["failed_projects"][0]["error"], "'3'")
+                self.assertEqual(events[-1]["type"], "project_error")
 
     def test_run_projects_exception_event_includes_paths_and_null_result_fields(self):
         events = []

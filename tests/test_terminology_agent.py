@@ -23,6 +23,47 @@ class _FakeResponse:
 
 
 class TerminologyAgentContextTests(unittest.TestCase):
+    def test_extracts_complete_nested_command_arguments(self):
+        """确保嵌套格式和可选短标题不会截断术语上下文。"""
+        agent = TerminologyAgent({}, "paper", "unused")
+        for title_command in ("title", "icmltitle"):
+            with self.subTest(command=title_command):
+                captions = [
+                    {
+                        "cap_type": title_command,
+                        "content": (
+                            rf"\{title_command}[Short title]{{Emergent Misalignment: \\ "
+                            r"Narrow finetuning \small{\textcolor{red}{Warning}} after warning}"
+                        ),
+                    },
+                    {
+                        "cap_type": "keywords",
+                        "content": r"\keywords{\textbf{model alignment}, finetuning}",
+                    },
+                ]
+
+                context = agent._extract_paper_context(sections=[], captions=captions)
+
+                self.assertEqual(
+                    " ".join(context["title"].split()),
+                    "Emergent Misalignment: Narrow finetuning Warning after warning",
+                )
+                self.assertEqual(context["keywords"], ["model alignment", "finetuning"])
+
+    def test_extracts_complete_nested_abstract_command(self):
+        """确保命令形式的摘要保留嵌套格式后的完整内容。"""
+        agent = TerminologyAgent({}, "paper", "unused")
+
+        context = agent._extract_paper_context(
+            sections=[{
+                "section": "0",
+                "content": r"\abstract{We study \textbf{model alignment} after finetuning.}",
+            }],
+            captions=[],
+        )
+
+        self.assertEqual(context["abstract"], "We study model alignment after finetuning.")
+
     def test_extracts_paper_context_from_captions_and_sections(self):
         agent = TerminologyAgent(
             config={

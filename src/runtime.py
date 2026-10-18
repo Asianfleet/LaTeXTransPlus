@@ -1,5 +1,6 @@
 import os
 import tarfile
+import traceback
 import zipfile
 from copy import deepcopy
 from contextlib import nullcontext
@@ -455,10 +456,11 @@ def run_projects(
                         )
                     except Exception as e:
                         error_line = f"Error processing project {project_name}: {e}"
+                        diagnostic_text = f"{error_line}\n{traceback.format_exc()}"
                         if project_context is not None:
-                            print(error_line)
+                            print(diagnostic_text)
                         else:
-                            log_file.write(f"{error_line}\n")
+                            log_file.write(diagnostic_text)
                         failure_result = {
                             "type": "failed",
                             "ok": False,
