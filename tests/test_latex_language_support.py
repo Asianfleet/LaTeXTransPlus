@@ -630,6 +630,31 @@ class LatexCompilerLanguageTests(unittest.TestCase):
 
         self.assertEqual(checked_dirs, [True])
 
+    def test_prepare_include_dirs_follows_nested_inputs_and_cycles(self):
+        """递归发现子文件中的 include，并允许循环引用及缺失源码。"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            project = Path(tmp_dir)
+            (project / "sections").mkdir()
+            main = project / "main.tex"
+            main.write_text(r"\input{sections/appendix}", encoding="utf-8")
+            (project / "sections/appendix.tex").write_text(
+                r"\input{sections/details.tex}", encoding="utf-8"
+            )
+            (project / "sections/details.tex").write_text(
+                "\\input{main}\n"
+                "\\include{sections/examples/missing}\n"
+                "% \\include{ignored/comment}\n"
+                "\\include{../outside/missing}\n",
+                encoding="utf-8",
+            )
+            output = project / "build"
+
+            LaTexCompiler(str(project))._prepare_include_output_dirs(str(main), str(output))
+
+            self.assertTrue((output / "sections/examples").is_dir())
+            self.assertFalse((output / "ignored").exists())
+            self.assertFalse((project / "outside").exists())
+
     def test_compile_routes_status_messages_to_log_callback(self):
         """编译状态消息应进入显式项目日志回调。"""
         with tempfile.TemporaryDirectory() as tmp_dir:

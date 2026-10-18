@@ -137,20 +137,34 @@ class LaTexCompiler:
             pass
 
     def _prepare_include_output_dirs(self, tex_file: str, out_dir: str) -> None:
-        try:
-            with open(tex_file, "r", encoding="utf-8", errors="ignore") as f:
-                latex_code = remove_comments(f.read())
-        except OSError:
-            return
+        """沿源码引用链准备 include 的辅助目录，避免循环扫描和路径越界。"""
+        project_root = Path(tex_file).resolve().parent
+        pending = [Path(tex_file).resolve()]
+        visited = set()
+        while pending:
+            source = pending.pop()
+            if source in visited:
+                continue
+            visited.add(source)
+            try:
+                latex_code = remove_comments(source.read_text(encoding="utf-8", errors="ignore"))
+            except OSError:
+                continue
 
-        for match in re.finditer(r"\\include\s*\{([^{}]+)\}", latex_code):
-            include_path = Path(match.group(1))
-            parent = include_path.parent
-            if str(parent) in ("", "."):
-                continue
-            if include_path.is_absolute() or ".." in parent.parts:
-                continue
-            os.makedirs(os.path.join(out_dir, *parent.parts), exist_ok=True)
+            for match in re.finditer(r"\\(input|include)\s*\{([^{}]+)\}", latex_code):
+                relative_path = Path(match.group(2).strip())
+                if relative_path.is_absolute() or ".." in relative_path.parts:
+                    continue
+                # 标准 input/include 路径相对于编译工作目录，而非当前子文件。
+                referenced = project_root / relative_path
+                if not referenced.is_file():
+                    referenced = Path(str(referenced) + ".tex")
+                referenced = referenced.resolve()
+                if not referenced.is_relative_to(project_root):
+                    continue
+                if match.group(1) == "include":
+                    (Path(out_dir) / relative_path.parent).mkdir(parents=True, exist_ok=True)
+                pending.append(referenced)
 
     def _compile_with_engine(self, engine: str, tex_file: str, out_dir: str):
         if engine == "pdflatex":
