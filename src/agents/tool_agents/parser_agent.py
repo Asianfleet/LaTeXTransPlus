@@ -1,6 +1,6 @@
 from typing import Dict, Any
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
-from src.config import merge_llm_payload, parse_custom_json
+from src.config import build_llm_custom_json, merge_llm_payload
 import src.formats.latex.prompts as pm
 from pathlib import Path
 import sys
@@ -24,7 +24,7 @@ class ParserAgent(BaseToolAgent):
         self.model = config["llm_config"].get("model", "gpt-4o")
         self.base_url = config["llm_config"].get("base_url", None)
         self.API_KEY = config["llm_config"].get("api_key", None)
-        self.custom_json = parse_custom_json(config["llm_config"].get("custom_json"))
+        self.custom_json = build_llm_custom_json(config["llm_config"])
 
     def execute(self) -> Any:
         pm.init_prompts(self.config["source_language"], self.config["target_language"])

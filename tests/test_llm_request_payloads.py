@@ -1,11 +1,13 @@
 import asyncio
 import json
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 
 import requests
 
 from src.agents.tool_agents.parser_agent import ParserAgent
+from src.agents.tool_agents.markdown_translator_agent import MarkdownTranslatorAgent
 from src.agents.tool_agents.terminology_agent import TerminologyAgent
 from src.agents.tool_agents.translator_agent import TranslatorAgent
 
@@ -50,6 +52,50 @@ class _CapturingAsyncSession:
 
 
 class LlmRequestPayloadTests(unittest.TestCase):
+    def test_explicit_reasoning_effort_reaches_all_agent_request_bodies(self):
+        """各请求入口均使用显式强度覆盖 profile，而非仅在运行时展开生效。"""
+        config = {
+            "source_language": "en", "target_language": "ja",
+            "llm_config": {
+                "api_key": "test-key", "base_url": "https://example.test",
+                "custom_json": CUSTOM_JSON, "reasoning_effort": "ultra",
+            },
+        }
+        parser = ParserAgent(config=config)
+        with patch(
+            "src.agents.tool_agents.parser_agent.requests.post",
+            return_value=_ParserResponse(),
+        ) as post:
+            parser._request_llm_for_judge("Judge this.", "text")
+            self.assertEqual(post.call_args.kwargs["json"]["reasoning_effort"], "ultra")
+
+        translator = TranslatorAgent(config=config)
+        session = _CapturingAsyncSession()
+        asyncio.run(translator._request_llm_for_retrans_error_parts(
+            "Retry prompt.", part={"content": "source", "trans_content": "text"},
+            error_message="validation error", fail_part="1", type="sec", session=session,
+        ))
+        self.assertEqual(session.payloads[0]["reasoning_effort"], "ultra")
+
+        terminology = TerminologyAgent(config=config, project_dir="paper", output_dir="unused")
+        with patch(
+            "src.agents.tool_agents.terminology_agent.requests.post",
+            return_value=_TerminologyResponse(),
+        ) as post:
+            terminology._request_llm_for_term_decisions(
+                ["power sampling"], {"title": "Sampling"},
+                {"power sampling": ["Power sampling works."]}, {},
+            )
+            self.assertEqual(post.call_args.kwargs["json"]["reasoning_effort"], "ultra")
+
+        markdown = MarkdownTranslatorAgent(
+            config=config, source_markdown=Path("source.md"), output_dir=Path("unused"),
+            blocks=[],
+        )
+        markdown._session = session = _CapturingAsyncSession()
+        asyncio.run(markdown._request_provider_translation("source", {}, 0))
+        self.assertEqual(session.payloads[0]["reasoning_effort"], "ultra")
+
     def test_parser_request_includes_custom_json_at_top_level(self):
         agent = ParserAgent(
             config={

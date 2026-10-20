@@ -14,6 +14,7 @@ LLM_RESERVED_FIELDS = {
     "max_new_tokens",
 }
 LLM_PROFILE_FIELDS = ("model", "api_key_env", "base_url", "custom_json")
+REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max", "ultra")
 
 
 def _reject_json_constant(value: str) -> NoReturn:
@@ -51,6 +52,21 @@ def parse_custom_json(value: Any) -> Dict[str, Any]:
     return parsed
 
 
+def build_llm_custom_json(llm_config: Dict[str, Any]) -> Dict[str, Any]:
+    """合并 profile 自定义参数与显式思考强度，不修改原配置。"""
+    custom_json = parse_custom_json(llm_config.get("custom_json"))
+    effort = llm_config.get("reasoning_effort", "")
+    if not isinstance(effort, str) or (effort and effort not in REASONING_EFFORTS):
+        raise ValueError(
+            "llm_config.reasoning_effort must be empty or one of: "
+            + ", ".join(REASONING_EFFORTS)
+            + "."
+        )
+    if effort:
+        custom_json["reasoning_effort"] = effort
+    return custom_json
+
+
 def merge_llm_payload(
     payload: Dict[str, Any],
     custom_json: Dict[str, Any],
@@ -72,13 +88,13 @@ def load_llm_profile(config: Dict[str, Any], config_path: str) -> Dict[str, Any]
     """从主配置旁的 provider 目录加载并展开唯一的 LLM profile。"""
     llm_config = config.get("llm_config")
     if not isinstance(llm_config, dict):
-        raise ValueError("[llm_config] must contain only a non-empty string profile.")
+        raise ValueError("[llm_config] must define a non-empty string profile.")
 
-    unsupported = sorted(set(llm_config) - {"profile"})
+    unsupported = sorted(set(llm_config) - {"profile", "reasoning_effort"})
     if unsupported:
         fields = ", ".join(unsupported)
         raise ValueError(
-            f"[llm_config] only supports profile; unsupported field(s): {fields}."
+            f"[llm_config] only supports profile and reasoning_effort; unsupported field(s): {fields}."
         )
 
     profile = llm_config.get("profile")
@@ -110,6 +126,8 @@ def load_llm_profile(config: Dict[str, Any], config_path: str) -> Dict[str, Any]
             raise ValueError(f"LLM provider field '{field}' must be a string.")
 
     config["llm_config"] = {"profile": profile}
+    if "reasoning_effort" in llm_config:
+        config["llm_config"]["reasoning_effort"] = llm_config["reasoning_effort"]
     config["llm_config"].update(
         {field: provider_config[field] for field in LLM_PROFILE_FIELDS}
     )

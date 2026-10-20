@@ -11,7 +11,7 @@ from typing import Any
 import aiohttp
 
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
-from src.config import merge_llm_payload, parse_custom_json
+from src.config import build_llm_custom_json, merge_llm_payload
 from src.engines.lite_markdown import (
     MarkdownBlock,
     ProtectedMarkdown,
@@ -55,7 +55,7 @@ class MarkdownTranslatorAgent(BaseToolAgent):
         self.model = llm_config.get("model", "gpt-4o")
         self.base_url = llm_config.get("base_url") or "https://api.openai.com/v1/chat/completions"
         self.api_key = llm_config.get("api_key")
-        self.custom_json = parse_custom_json(llm_config.get("custom_json"))
+        self.custom_json = build_llm_custom_json(llm_config)
         self.source_language = config.get("source_language", "en")
         self.target_language = config.get("target_language", "ch")
         self.max_concurrency = self._configured_concurrency(config)

@@ -7,6 +7,7 @@ import json
 from dataclasses import dataclass
 from typing import Any, Literal
 
+from src.config import REASONING_EFFORTS
 from src.engines.base import normalize_engine
 from src.engines.lite_fonts import DEFAULT_CJK_FONT_CANDIDATES, parse_font_candidates
 
@@ -67,6 +68,11 @@ PDF_IMPORT_API_OPTIONS: tuple[tuple[str, str], ...] = (
     ("本地 API", "local"),
 )
 
+REASONING_EFFORT_OPTIONS: tuple[tuple[str, str], ...] = (
+    ("未设置", ""),
+    *((effort, effort) for effort in REASONING_EFFORTS),
+)
+
 SHARED_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("engine",), "默认引擎", "select", "基础", "heavy", ENGINE_OPTIONS),
     ConfigField(("source_language",), "源语言", "select", "基础", "en", LANGUAGE_OPTIONS),
@@ -79,6 +85,7 @@ SHARED_CONFIG_FIELDS: tuple[ConfigField, ...] = (
     ConfigField(("terminology", "review_before_translate"), "术语审核后再翻译", "switch", "术语", False),
     ConfigField(("terminology", "max_llm_candidates"), "候选术语上限", "integer", "术语", 30),
     ConfigField(("llm_config", "profile"), "LLM 配置 profile", "select", "LLM", ""),
+    ConfigField(("llm_config", "reasoning_effort"), "思考强度", "select", "LLM", "", REASONING_EFFORT_OPTIONS),
     ConfigField(("zotero", "local_api_base"), "Zotero 本地 API", "input", "Zotero", "http://127.0.0.1:23119/api"),
     ConfigField(("zotero", "pdf_import_api"), "PDF 导入 API", "select", "Zotero", "web", PDF_IMPORT_API_OPTIONS),
     ConfigField(("zotero", "web_api_key_env"), "Zotero Web API key 环境变量", "input", "Zotero", "ZOTERO_API_KEY"),

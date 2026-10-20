@@ -17,19 +17,32 @@ from src.tui.config_schema import (
 class TuiConfigSchemaTests(unittest.TestCase):
     """测试 TUI 配置 schema、引擎字段过滤与表单转换。"""
 
-    def test_llm_section_contains_only_profile_field(self):
+    def test_llm_section_contains_profile_then_reasoning_effort(self):
+        """共享 LLM 表单在 profile 下方提供可选的思考强度。"""
         llm_fields = [field for field in CONFIG_FIELDS if field.section == "LLM"]
 
-        self.assertEqual([field.path for field in llm_fields], [("llm_config", "profile")])
+        self.assertEqual([field.path for field in llm_fields], [
+            ("llm_config", "profile"), ("llm_config", "reasoning_effort"),
+        ])
         self.assertEqual(llm_fields[0].label, "LLM 配置 profile")
         self.assertEqual(llm_fields[0].kind, "select")
+        self.assertEqual(llm_fields[1].label, "思考强度")
+        self.assertEqual(llm_fields[1].kind, "select")
+        self.assertEqual(llm_fields[1].default, "")
+        self.assertEqual([value for _, value in llm_fields[1].options], [
+            "", "low", "medium", "high", "xhigh", "max", "ultra",
+        ])
 
     def test_grouped_fields_preserve_llm_profile_section(self):
+        """分组后保持 profile 和思考强度的排列顺序。"""
         sections = dict(grouped_config_fields("heavy"))
 
-        self.assertEqual([field.path for field in sections["LLM"]], [("llm_config", "profile")])
+        self.assertEqual([field.path for field in sections["LLM"]], [
+            ("llm_config", "profile"), ("llm_config", "reasoning_effort"),
+        ])
 
     def test_normalized_form_removes_legacy_llm_fields(self):
+        """保存表单时去除旧模型字段并保留显式思考强度。"""
         config = {
             "llm_config": {
                 "profile": "deepseek",
@@ -45,10 +58,13 @@ class TuiConfigSchemaTests(unittest.TestCase):
             {
                 **{field.path: field.default for field in CONFIG_FIELDS},
                 ("llm_config", "profile"): "qwen",
+                ("llm_config", "reasoning_effort"): "ultra",
             },
         )
 
-        self.assertEqual(normalized["llm_config"], {"profile": "qwen"})
+        self.assertEqual(normalized["llm_config"], {
+            "profile": "qwen", "reasoning_effort": "ultra",
+        })
 
     def test_engine_field_is_shared_and_selectable(self):
         """Every settings form should expose the persisted engine selector."""

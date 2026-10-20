@@ -7,6 +7,29 @@ from src.runtime import load_runtime_config
 
 
 class RuntimeConfigTests(unittest.TestCase):
+    def test_reasoning_effort_survives_profile_loading_and_overrides_custom_json(self):
+        """主配置中的强度须经过 profile 展开并进入最终请求参数。"""
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            root = Path(tmp_dir)
+            (root / "provider").mkdir()
+            (root / "provider" / "test.toml").write_text(
+                'model = "test"\napi_key_env = ""\nbase_url = "https://example.test"\n'
+                + 'custom_json = \'{"reasoning_effort": "low", "enable_thinking": true}\'',
+                encoding="utf-8",
+            )
+            config_path = root / "config.toml"
+            for effort in ("", "low", "medium", "high", "xhigh", "max", "ultra"):
+                with self.subTest(effort=effort):
+                    config_path.write_text(
+                        f'[llm_config]\nprofile = "test"\nreasoning_effort = "{effort}"',
+                        encoding="utf-8",
+                    )
+                    config = load_runtime_config(str(config_path))
+                    self.assertEqual(config["llm_config"]["reasoning_effort"], effort)
+                    self.assertEqual(config["llm_config"]["custom_json"], {
+                        "reasoning_effort": effort or "low", "enable_thinking": True,
+                    })
+
     def test_load_runtime_config_loads_llm_profile_from_config_directory(self):
         with tempfile.TemporaryDirectory() as tmp_dir:
             root = Path(tmp_dir)

@@ -51,6 +51,7 @@ user_term = ""
 
 [llm_config]
 profile = "deepseek"
+reasoning_effort = ""
 
 [terminology]
 enabled = true
@@ -95,6 +96,8 @@ latextrans --model deepseek-chat \
 ```
 
 实际 API key 建议放入环境变量，不要写入配置文件或命令历史。`custom_json` 只能追加供应商字段，不能覆盖 `model`、`messages`、`temperature`、`max_tokens` 等请求字段。
+
+TUI 设置页在“LLM 配置 profile”下方提供“思考强度”下拉框，支持 `low`、`medium`、`high`、`xhigh`、`max`、`ultra`，保存到 `[llm_config].reasoning_effort`。默认“未设置”（空字符串或省略该配置项），不额外添加请求参数；若 profile 的 `custom_json` 已设置 `reasoning_effort`，则保留其原值。选择具体强度后，该值优先于 profile 中的同名参数，并作为 OpenAI-compatible 请求体的顶层字段发送，对 Heavy、Lite 翻译及术语提取统一生效。不按模型过滤选项，服务端是否接受该值取决于供应商和模型；遇到不支持的参数错误时，可切回“未设置”并检查 profile 的 `custom_json`。
 
 ### 术语与校验
 

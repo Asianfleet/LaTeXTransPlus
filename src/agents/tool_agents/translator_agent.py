@@ -1,6 +1,6 @@
 ﻿from typing import Dict, Any, List, Optional
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
-from src.config import merge_llm_payload, parse_custom_json
+from src.config import build_llm_custom_json, merge_llm_payload
 #from TransLatex.src.formats.latex.prompts import *
 import src.formats.latex.prompts as pm
 from src.formats.latex.utils import *
@@ -56,7 +56,7 @@ class TranslatorAgent(BaseToolAgent):
         self.model = config["llm_config"].get("model", "gpt-4o")
         self.base_url = config["llm_config"].get("base_url", None)
         self.API_KEY = config["llm_config"].get("api_key", None)
-        self.custom_json = parse_custom_json(config["llm_config"].get("custom_json"))
+        self.custom_json = build_llm_custom_json(config["llm_config"])
         self.user_term = config.get("user_term", None)
         self.target_language = config.get("target_language", "ch")
         self.category = config.get("category", None)

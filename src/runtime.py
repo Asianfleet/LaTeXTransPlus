@@ -10,7 +10,7 @@ from typing import Any, Callable, ContextManager, Dict, Iterable, List, Optional
 import toml
 
 from src.agents.coordinator_agent import CoordinatorAgent
-from src.config import load_llm_profile, parse_custom_json, resolve_llm_api_key
+from src.config import build_llm_custom_json, load_llm_profile, resolve_llm_api_key
 from src.engines.base import engine_config, engine_runtime_fields, normalize_engine
 from src.engines.heavy import HeavyEngine
 from src.engines.lite import LiteEngine
@@ -155,8 +155,7 @@ def load_runtime_config(
 
     load_llm_profile(config, config_path)
     llm_config = config["llm_config"]
-    if "custom_json" in llm_config:
-        llm_config["custom_json"] = parse_custom_json(llm_config["custom_json"])
+    llm_config["custom_json"] = build_llm_custom_json(llm_config)
     if overrides.get("url"):
         llm_config["base_url"] = overrides["url"]
     if overrides.get("model"):

@@ -342,6 +342,50 @@ class TuiConfigPageTests(unittest.IsolatedAsyncioTestCase):
             self.save.assert_not_called()
             self.assertIn("非负整数", str(app.query_one("#config-error", Static).content))
 
+    async def test_reasoning_effort_loads_saves_and_survives_engine_rebuild(self) -> None:
+        """强度选择应自动保存、跨引擎保留，并可恢复为未设置。"""
+        config = _complete_config()
+        config["llm_config"]["reasoning_effort"] = "xhigh"
+        self.replacements["src.tui.config_page.load_ui_config"].return_value = config
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            app.load_config_page()
+            await pilot.pause()
+            select = app.query_one("#config-llm_config-reasoning_effort", Select)
+            self.assertEqual(select.value, "xhigh")
+            self.save.assert_not_called()
+
+            for effort in ("low", "medium", "high", "xhigh", "max", "ultra"):
+                select.value = effort
+                await pilot.pause()
+                self.assertEqual(
+                    self.save.call_args.args[1]["llm_config"],
+                    {"profile": "profile-a", "reasoning_effort": effort},
+                )
+
+            app.set_engine("lite")
+            await app.workers.wait_for_complete()
+            await pilot.pause()
+            select = app.query_one("#config-llm_config-reasoning_effort", Select)
+            self.assertEqual(select.value, "ultra")
+            select.value = ""
+            await pilot.pause()
+            self.assertEqual(
+                self.save.call_args.args[1]["llm_config"]["reasoning_effort"], "",
+            )
+
+    async def test_reasoning_effort_defaults_to_unset_for_existing_config(self) -> None:
+        """旧配置加载新字段时保持未设置，且不触发额外保存。"""
+        self.replacements["src.tui.config_page.load_ui_config"].return_value = _complete_config()
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+        async with app.run_test() as pilot:
+            app.load_config_page()
+            await pilot.pause()
+            self.assertEqual(
+                app.query_one("#config-llm_config-reasoning_effort", Select).value, "",
+            )
+            self.save.assert_not_called()
+
     async def test_profiles_are_populated_in_both_engines_and_fonts_only_in_lite(self) -> None:
         """两种引擎都刷新 profile，只有 Lite 构建字体字段和提示。"""
         profiles = self.replacements["src.tui.config_page.list_llm_profiles"]

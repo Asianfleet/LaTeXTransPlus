@@ -16,6 +16,7 @@ max_llm_candidates = 30
 
 [llm_config]
 profile = "default"
+reasoning_effort = "" # 留空沿用 profile，支持 low / medium / high / xhigh / max / ultra
 
 [zotero]
 local_api_base = "http://127.0.0.1:23119/api"
