@@ -1,5 +1,6 @@
 from typing import Any, Dict, Optional
 from .utils import *
+from .utils import _find_matching_brace
 import tiktoken
 import sys
 
@@ -274,6 +275,33 @@ class LatexParser:
 
         return full_tex
     
+    def _hypertarget_section_starts(self, document: str) -> Dict[int, int]:
+        """将锚点正文的起始位置映射到完整命令开头，避免拆开标题包装。"""
+        starts = {}
+        for anchor in re.finditer(r"\\hypertarget\b", document):
+            pos = anchor.end()
+            arguments = []
+            for _ in range(2):
+                while pos < len(document) and document[pos].isspace():
+                    pos += 1
+                if pos >= len(document) or document[pos] != "{":
+                    break
+                end = _find_matching_brace(document, pos)
+                if end is None:
+                    break
+                arguments.append((pos, end))
+                pos = end + 1
+            if len(arguments) != 2:
+                continue
+            body_start, body_end = arguments[1]
+            pos = body_start + 1
+            while pos < body_end and document[pos].isspace():
+                pos += 1
+            # 只有正文直接以标题起始时才会命中后续章节位置，空锚点不移动。
+            if pos < body_end:
+                starts[pos] = anchor.start()
+        return starts
+
     def _split_to_sections(self, tex: str) -> Any:
         """
         Split the full tex to sections and genarate a json file for the sections.
@@ -307,8 +335,11 @@ class LatexParser:
             })
             return
 
-        before_section = document[:first_section_match.start()] if first_section_match else document # \begin{document}...\section{...}
-        sections_tex = document[first_section_match.start():] if first_section_match else document
+        wrapper_starts = self._hypertarget_section_starts(document)
+        first_start = wrapper_starts.get(first_section_match.start(), first_section_match.start())
+        before_section = document[:first_start]
+        sections_tex = document[first_start:]
+        wrapper_starts = {pos - first_start: start - first_start for pos, start in wrapper_starts.items()}
         
         self.sections_json.append({
             "section": "0",
@@ -320,14 +351,15 @@ class LatexParser:
         last_result = first_section_match
 
         for result in pattern_section.finditer(sections_tex):
-            if last_pos != result.start():
+            section_start = wrapper_starts.get(result.start(), result.start())
+            if last_pos != section_start:
                 if last_result.group(1) == "section" or last_result.group(1) == "section*":
                     section_count += 1
                     subsection_count = 0
                     subsubsection_count = 0
                     self.sections_json.append({
                         "section": f'{section_count}',
-                        "content": sections_tex[last_pos:result.start()],
+                        "content": sections_tex[last_pos:section_start],
                         "trans_content": ''
                     })
                 elif last_result.group(1) == "subsection" or last_result.group(1) == "subsection*":
@@ -335,17 +367,17 @@ class LatexParser:
                     subsubsection_count = 0
                     self.sections_json.append({
                         "section": f'{section_count}_{subsection_count}',
-                        "content": sections_tex[last_pos:result.start()],
+                        "content": sections_tex[last_pos:section_start],
                         "trans_content": ''
                     })
                 elif last_result.group(1) == "subsubsection" or last_result.group(1) == "subsubsection*":
                     subsubsection_count += 1
                     self.sections_json.append({
                         "section": f'{section_count}_{subsection_count}_{subsubsection_count}',
-                        "content": sections_tex[last_pos:result.start()],
+                        "content": sections_tex[last_pos:section_start],
                         "trans_content": ''
                     })
-            last_pos = result.start()
+            last_pos = section_start
             last_result = result
 
         if last_result.group(1) == "section" or last_result.group(1) == "section*":
