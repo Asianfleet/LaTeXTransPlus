@@ -10,6 +10,20 @@
         height: auto;
     }
 
+    #project-sort-select {
+        width: 100%;
+        min-width: 16;
+        height: 3;
+        margin: 0 0 1 0;
+    }
+
+    #project-sort-select > SelectCurrent {
+        width: 100%;
+        min-width: 16;
+        height: 3;
+        border: block $surface;
+    }
+
     #project-list {
         background: transparent;
         padding: 0;

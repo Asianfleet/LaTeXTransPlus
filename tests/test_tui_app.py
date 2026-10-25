@@ -830,6 +830,63 @@ class TuiEntryPageTests(TuiAppTests):
 class TuiTaskProjectSemanticsTests(TuiAppTests):
     """验证任务历史和项目列表遵循一次提交一个任务的语义。"""
 
+    async def test_sidebar_sort_select_changes_project_order(self):
+        """确认排序选择器位于项目管理下方，并按选择刷新项目列表。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+
+        async with app.run_test(size=(120, 40)) as pilot:
+            task = TaskViewState(input_type="arxiv", inputs=["zeta", "beta"], task_id="task")
+            task.projects.extend(
+                [
+                    ProjectViewState(project_name="zeta", title="Alpha"),
+                    ProjectViewState(project_name="beta", title="Zulu"),
+                ]
+            )
+            app.tasks = [task]
+            app.selected_task_id = task.task_id
+            app.selected_project_name = "zeta"
+            app.refresh_project_list()
+            await pilot.pause()
+
+            select = app.query_one("#project-sort-select", Select)
+            button = app.query_one("#project-manager-button", Button)
+            select_current = select.query_one("SelectCurrent")
+            self.assertEqual(select_current.styles.width.value, 100)
+            self.assertEqual(select_current.styles.border.left[0], "block")
+            self.assertEqual(select_current.styles.border.right[0], "block")
+            self.assertEqual(select_current.region.x, button.region.x)
+            self.assertEqual(select_current.region.width, button.region.width)
+            sidebar_ids = [child.id for child in app.query_one("#sidebar").children]
+            self.assertLess(
+                sidebar_ids.index("project-manager-button"),
+                sidebar_ids.index("project-sort-select"),
+            )
+            self.assertLess(
+                sidebar_ids.index("project-sort-select"),
+                sidebar_ids.index("project-list"),
+            )
+            self.assertEqual(select.value, "initial")
+            self.assertEqual(
+                [item.project_key[1] for item in app.query_one("#project-list", ListView).children],
+                ["beta", "zeta"],
+            )
+
+            list_view = app.query_one("#project-list", ListView)
+            self.assertEqual(list_view.index, 1)
+            self.assertEqual(app.selected_project_name, "zeta")
+
+            select.value = "title"
+            await pilot.pause()
+
+            self.assertEqual(list_view.index, 0)
+            self.assertEqual(app.selected_project_name, "zeta")
+            self.assertEqual(
+                [item.project_key[1] for item in app.query_one("#project-list", ListView).children],
+                ["zeta", "beta"],
+            )
+            self.assertEqual(app.project_sort_mode, "title")
+            self.save_ui_config.assert_not_called()
+
     async def test_sequential_single_id_tasks_keep_both_projects_in_sidebar(self):
         """确认连续提交两个单项目任务后，侧栏项目列表不会丢失第一个项目。"""
         app = LaTeXTransTuiApp(load_history_on_mount=False)
@@ -936,14 +993,42 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
             app.current_task = second_task
             app.refresh_project_list()
 
-            event = Mock()
-            event.list_view = app.query_one("#project-list", ListView)
-            event.index = 1
-            app.on_list_view_selected(event)
+            list_view = app.query_one("#project-list", ListView)
+            app.on_list_view_selected(
+                ListView.Selected(list_view, list_view.children[1], 1)
+            )
 
             self.assertEqual(app.selected_task_id, "task-2")
             self.assertEqual(app.selected_project_name, "paper")
             self.assertEqual(app.query_one("#main-switcher", ContentSwitcher).current, PAGE_DETAIL)
+
+    async def test_sidebar_selection_uses_sorted_project_identity(self):
+        """确认排序后点击侧栏项目仍按当前条目的任务身份打开详情。"""
+        app = LaTeXTransTuiApp(load_history_on_mount=False)
+
+        async with app.run_test():
+            task = TaskViewState(input_type="arxiv", inputs=["beta", "zeta"], task_id="task")
+            task.projects.extend(
+                [
+                    ProjectViewState(project_name="beta", title="Zulu"),
+                    ProjectViewState(project_name="zeta", title="Alpha"),
+                ]
+            )
+            app.tasks = [task]
+            app.project_sort_mode = "title"
+            app.refresh_project_list()
+
+            list_view = app.query_one("#project-list", ListView)
+            self.assertEqual(
+                [item.project_key[1] for item in list_view.children],
+                ["zeta", "beta"],
+            )
+            app.on_list_view_selected(
+                ListView.Selected(list_view, list_view.children[0], 0)
+            )
+
+            self.assertEqual(app.selected_task_id, task.task_id)
+            self.assertEqual(app.selected_project_name, "zeta")
 
     async def test_mount_loads_existing_outputs_into_sidebar(self):
         """确认打开 TUI 时左侧列表会包含 outputs 中已有项目。"""

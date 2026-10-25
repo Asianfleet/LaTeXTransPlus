@@ -50,7 +50,12 @@ from src.tui.project_detail import (
 from src.tui.runner import run_tui_task as _DEFAULT_RUN_TUI_TASK
 from src.tui.runner import run_tui_task
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
-from src.tui.project_list import ProjectListItem
+from src.tui.project_list import (
+    PROJECT_SORT_BY_INITIAL,
+    PROJECT_SORT_OPTIONS,
+    ProjectListItem,
+    sort_project_states,
+)
 from src.tui.sidebar import SidebarDivider, SidebarLayout
 from src.tui.widgets import (
     APP_TITLE_ART,
@@ -128,6 +133,7 @@ class LaTeXTransTuiApp(App[None]):
         self.selected_project_name = None
         self.selected_task_id = None
         self.selected_project_keys = set()
+        self.project_sort_mode = PROJECT_SORT_BY_INITIAL
         self.load_history_on_mount = load_history_on_mount
         self.task_processes: dict[str, TuiTaskProcess] = {}
         self.cancelled_task_ids: set[str] = set()
@@ -171,6 +177,12 @@ class LaTeXTransTuiApp(App[None]):
             with Vertical(id="sidebar"):
                 yield Button("新建任务", id="new-task-button", flat=True)
                 yield Button("项目管理", id="project-manager-button", flat=True)
+                yield Select(
+                    PROJECT_SORT_OPTIONS,
+                    id="project-sort-select",
+                    value=self.project_sort_mode,
+                    allow_blank=False,
+                )
                 yield ListView(id="project-list")
                 yield Button("设置", id="settings-button", flat=True)
             yield SidebarDivider(id="sidebar-rule")
@@ -318,11 +330,21 @@ class LaTeXTransTuiApp(App[None]):
     def refresh_project_list(self) -> None:
         """Refresh the left-side project list from all known task states."""
         list_view = self.query_one("#project-list", ListView)
+        selected_key = (self.selected_task_id, self.selected_project_name)
         list_view.clear()
 
-        for task, project in self._iter_project_states():
+        project_states = sort_project_states(
+            self._iter_project_states(),
+            self.project_sort_mode,
+        )
+        selected_index: int | None = None
+        for index, (task, project) in enumerate(project_states):
             item = ProjectListItem(task.task_id, project, self._task_is_running(task))
             list_view.append(item)
+            if selected_key == (task.task_id, project.project_name):
+                selected_index = index
+        if selected_index is not None:
+            list_view.index = selected_index
 
     def refresh_detail_page(self, *, reset_zotero: bool = False) -> None:
         """解析完整项目身份并把展示上下文交给详情组件。"""
@@ -565,12 +587,10 @@ class LaTeXTransTuiApp(App[None]):
 
     def on_list_view_selected(self, event: ListView.Selected) -> None:
         """Handle sidebar project selection from the project list."""
-        if event.list_view.id != "project-list":
+        if event.list_view.id != "project-list" or not isinstance(event.item, ProjectListItem):
             return
-        project_states = list(self._iter_project_states())
-        if 0 <= event.index < len(project_states):
-            task, project = project_states[event.index]
-            self.select_project(project.project_name, task.task_id)
+        task_id, project_name = event.item.project_key
+        self.select_project(project_name, task_id)
 
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """切换项目管理表结果行的选中状态。"""
@@ -604,6 +624,16 @@ class LaTeXTransTuiApp(App[None]):
                 self._retry_selected_projects()
         elif event.button.id == "clear-project-selection-button":
             self._clear_project_selection()
+
+    def on_select_changed(self, event: Select.Changed) -> None:
+        """切换侧栏项目排序方式并立即刷新列表。"""
+        if event.select.id != "project-sort-select":
+            return
+        event.stop()
+        if event.value not in {option_value for _, option_value in PROJECT_SORT_OPTIONS}:
+            return
+        self.project_sort_mode = event.value
+        self.refresh_project_list()
 
     def on_switch_changed(self, event: Switch.Changed) -> None:
         """入口引擎开关变化时切换当前会话。"""
