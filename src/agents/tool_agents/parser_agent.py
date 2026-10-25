@@ -1,6 +1,7 @@
 from typing import Dict, Any
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
 from src.config import build_llm_custom_json, merge_llm_payload
+from src.llm_call_log import LlmCallLogger
 import src.formats.latex.prompts as pm
 from pathlib import Path
 import sys
@@ -25,6 +26,7 @@ class ParserAgent(BaseToolAgent):
         self.base_url = config["llm_config"].get("base_url", None)
         self.API_KEY = config["llm_config"].get("api_key", None)
         self.custom_json = build_llm_custom_json(config["llm_config"])
+        self.llm_call_logger = LlmCallLogger(output_dir, self.agent_name)
 
     def execute(self) -> Any:
         pm.init_prompts(self.config["source_language"], self.config["target_language"])
@@ -112,6 +114,10 @@ class ParserAgent(BaseToolAgent):
                 response = requests.post(self.base_url, json=payload, headers=headers, timeout=100)
                 response.raise_for_status()  
                 result = response.json()
+                self.llm_call_logger.record(
+                    operation="judge_environment", attempt=attempt, payload=payload,
+                    response=result, status_code=getattr(response, "status_code", None),
+                )
                 output = result["choices"][0]["message"]["content"].strip()
 
                 if output.lower() == "true":
@@ -121,6 +127,11 @@ class ParserAgent(BaseToolAgent):
                 else:
                     return True                
             except requests.exceptions.RequestException as e:
+                self.llm_call_logger.record(
+                    operation="judge_environment", attempt=attempt, payload=payload,
+                    status_code=getattr(getattr(e, "response", None), "status_code", None),
+                    error=str(e),
+                )
                 if attempt < 3:
                     print(f"{e}")
                     time.sleep(3)  

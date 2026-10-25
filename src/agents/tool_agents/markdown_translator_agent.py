@@ -12,6 +12,7 @@ import aiohttp
 
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
 from src.config import build_llm_custom_json, merge_llm_payload
+from src.llm_call_log import LlmCallLogger
 from src.engines.lite_markdown import (
     MarkdownBlock,
     ProtectedMarkdown,
@@ -56,6 +57,7 @@ class MarkdownTranslatorAgent(BaseToolAgent):
         self.base_url = llm_config.get("base_url") or "https://api.openai.com/v1/chat/completions"
         self.api_key = llm_config.get("api_key")
         self.custom_json = build_llm_custom_json(llm_config)
+        self.llm_call_logger = LlmCallLogger(self.output_dir, self.agent_name)
         self.source_language = config.get("source_language", "en")
         self.target_language = config.get("target_language", "ch")
         self.max_concurrency = self._configured_concurrency(config)
@@ -269,8 +271,15 @@ class MarkdownTranslatorAgent(BaseToolAgent):
                 ) as response:
                     response.raise_for_status()
                     result = await response.json()
+                    self.llm_call_logger.record(
+                        operation="markdown_translation", attempt=attempt, payload=payload,
+                        response=result, status_code=getattr(response, "status", None),
+                    )
                     return str(result["choices"][0]["message"]["content"])
             except (aiohttp.ClientError, asyncio.TimeoutError) as exc:
+                self.llm_call_logger.record(
+                    operation="markdown_translation", attempt=attempt, payload=payload, error=str(exc),
+                )
                 self.log(
                     f"Markdown block {block_index} provider attempt "
                     f"{attempt}/{_PROVIDER_ATTEMPTS} failed: {exc}",

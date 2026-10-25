@@ -11,6 +11,7 @@ import requests
 
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
 from src.config import build_llm_custom_json, merge_llm_payload
+from src.llm_call_log import LlmCallLogger
 from src.formats.latex.prompts import language_label
 from src.formats.latex.utils import (
     LatexNodes2Text,
@@ -264,6 +265,7 @@ class TerminologyAgent(BaseToolAgent):
         self.base_url = llm_config.get("base_url")
         self.api_key = llm_config.get("api_key")
         self.custom_json = build_llm_custom_json(llm_config)
+        self.llm_call_logger = LlmCallLogger(self.output_dir, self.agent_name)
 
     def execute(self) -> dict[str, Any]:
         project_name = self.project_dir.name
@@ -650,6 +652,12 @@ class TerminologyAgent(BaseToolAgent):
                     timeout=TERMINOLOGY_REQUEST_TIMEOUT,
                 )
                 response.raise_for_status()
+                result = response.json()
+                self.llm_call_logger.record(
+                    operation=f"terminology_batch_{batch_number}",
+                    attempt=attempt + 1, payload=request_payload,
+                    response=result, status_code=getattr(response, "status_code", None),
+                )
                 elapsed = time.monotonic() - started_at
                 trace_id = self._get_response_trace_id(response)
                 self.log(
@@ -659,6 +667,12 @@ class TerminologyAgent(BaseToolAgent):
                 )
                 break
             except requests.exceptions.RequestException as exc:
+                self.llm_call_logger.record(
+                    operation=f"terminology_batch_{batch_number}",
+                    attempt=attempt + 1, payload=request_payload,
+                    status_code=getattr(getattr(exc, "response", None), "status_code", None),
+                    error=str(exc),
+                )
                 elapsed = time.monotonic() - started_at
                 trace_id = self._get_response_trace_id(getattr(exc, "response", None))
                 self.log(
@@ -671,7 +685,7 @@ class TerminologyAgent(BaseToolAgent):
                     raise
                 time.sleep(TERMINOLOGY_RETRY_DELAY)
 
-        content = response.json()["choices"][0]["message"]["content"]
+        content = result["choices"][0]["message"]["content"]
         parsed = json.loads(self._extract_json_payload(content))
         if not isinstance(parsed, dict) or "decisions" not in parsed:
             raise ValueError("Terminology LLM response must contain a decisions array")

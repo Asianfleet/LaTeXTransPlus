@@ -1,6 +1,7 @@
 ﻿from typing import Dict, Any, List, Optional
 from src.agents.tool_agents.base_tool_agent import BaseToolAgent
 from src.config import build_llm_custom_json, merge_llm_payload
+from src.llm_call_log import LlmCallLogger
 #from TransLatex.src.formats.latex.prompts import *
 import src.formats.latex.prompts as pm
 from src.formats.latex.utils import *
@@ -57,6 +58,7 @@ class TranslatorAgent(BaseToolAgent):
         self.base_url = config["llm_config"].get("base_url", None)
         self.API_KEY = config["llm_config"].get("api_key", None)
         self.custom_json = build_llm_custom_json(config["llm_config"])
+        self.llm_call_logger = LlmCallLogger(output_dir, self.agent_name)
         self.user_term = config.get("user_term", None)
         self.target_language = config.get("target_language", "ch")
         self.category = config.get("category", None)
@@ -617,9 +619,16 @@ class TranslatorAgent(BaseToolAgent):
                 async with session.post(self.base_url, json=payload, headers=headers, timeout=100) as response:
                     response.raise_for_status()
                     result = await response.json()
+                    self.llm_call_logger.record(
+                        operation="translation", attempt=attempt, payload=payload,
+                        response=result, status_code=getattr(response, "status", None),
+                    )
                     return result["choices"][0]["message"]["content"].strip()
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                self.llm_call_logger.record(
+                    operation="translation", attempt=attempt, payload=payload, error=str(e),
+                )
                 if attempt < 3:
                     await asyncio.sleep(5)
                 else:
@@ -668,9 +677,16 @@ class TranslatorAgent(BaseToolAgent):
                 async with session.post(self.base_url, json=payload, headers=headers, timeout=100) as response:
                     response.raise_for_status()
                     result = await response.json()
+                    self.llm_call_logger.record(
+                        operation="translation_with_terms", attempt=attempt, payload=payload,
+                        response=result, status_code=getattr(response, "status", None),
+                    )
                     return result["choices"][0]["message"]["content"].strip()
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                self.llm_call_logger.record(
+                    operation="translation_with_terms", attempt=attempt, payload=payload, error=str(e),
+                )
                 if attempt < 3:
                     await asyncio.sleep(5)
                 else:
@@ -732,9 +748,16 @@ class TranslatorAgent(BaseToolAgent):
                 async with session.post(self.base_url, json=payload, headers=headers, timeout=100) as response:
                     response.raise_for_status()
                     result = await response.json()
+                    self.llm_call_logger.record(
+                        operation="retranslation", attempt=attempt, payload=payload,
+                        response=result, status_code=getattr(response, "status", None),
+                    )
                     return result["choices"][0]["message"]["content"].strip()
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                self.llm_call_logger.record(
+                    operation="retranslation", attempt=attempt, payload=payload, error=str(e),
+                )
                 # print(f"Warning: request {attempt} failed for {fail_part}: {e}")
                 if attempt < 3:
                     await asyncio.sleep(5)
@@ -842,9 +865,16 @@ class TranslatorAgent(BaseToolAgent):
                 async with session.post(self.base_url, json=payload, headers=headers, timeout=100) as response:
                     response.raise_for_status()
                     result = await response.json()
+                    self.llm_call_logger.record(
+                        operation="extract_terms", attempt=attempt, payload=payload,
+                        response=result, status_code=getattr(response, "status", None),
+                    )
                     return result["choices"][0]["message"]["content"].strip()
 
             except (aiohttp.ClientError, asyncio.TimeoutError) as e:
+                self.llm_call_logger.record(
+                    operation="extract_terms", attempt=attempt, payload=payload, error=str(e),
+                )
                 if attempt < 3:
                     await asyncio.sleep(5)
                 else:
@@ -882,8 +912,17 @@ class TranslatorAgent(BaseToolAgent):
                 response = requests.post(self.base_url, json=payload, headers=headers, timeout=100)
                 response.raise_for_status()  
                 result = response.json()
+                self.llm_call_logger.record(
+                    operation="summary", attempt=attempt, payload=payload,
+                    response=result, status_code=response.status_code,
+                )
                 return result["choices"][0]["message"]["content"].strip()
             except requests.exceptions.RequestException as e:
+                self.llm_call_logger.record(
+                    operation="summary", attempt=attempt, payload=payload,
+                    status_code=getattr(getattr(e, "response", None), "status_code", None),
+                    error=str(e),
+                )
                 if attempt < 3:
                     print(f"{e}")
                     time.sleep(3)  
@@ -922,8 +961,17 @@ class TranslatorAgent(BaseToolAgent):
                 response = requests.post(self.base_url, json=payload, headers=headers, timeout=100)
                 response.raise_for_status()  
                 result = response.json()
+                self.llm_call_logger.record(
+                    operation="refine_summary", attempt=attempt, payload=payload,
+                    response=result, status_code=response.status_code,
+                )
                 return result["choices"][0]["message"]["content"].strip()
             except requests.exceptions.RequestException as e:
+                self.llm_call_logger.record(
+                    operation="refine_summary", attempt=attempt, payload=payload,
+                    status_code=getattr(getattr(e, "response", None), "status_code", None),
+                    error=str(e),
+                )
                 if attempt < 3:
                     print(f"{e}")
                     time.sleep(3)  
