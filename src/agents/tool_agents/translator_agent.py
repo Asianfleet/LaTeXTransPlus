@@ -28,6 +28,21 @@ TRANSLATION_MODE_ALIASES = {
     "terms": "terms",
 }
 
+TRANSLATION_TEMPERATURE = 0.2
+
+
+def _append_translation_output_contract(system_prompt: str) -> str:
+    """Append a strict contract for responses inserted into LaTeX source."""
+    return (
+        f"{system_prompt}\n\n"
+        "### Final output contract (highest priority)\n"
+        "Your response will be inserted verbatim into a LaTeX source file. "
+        "Return only the translated or corrected LaTeX content requested by the user. "
+        "Do not explain your work, ask a question, describe missing information, or add a preface or closing remark. "
+        "Never output a Markdown code fence, bullet list, or commentary such as Here is, What would you like, "
+        "I don't see, or I assumed. Start immediately with the LaTeX content."
+    )
+
 
 def normalize_translation_mode(mode: Any) -> str:
     if mode is None:
@@ -602,10 +617,10 @@ class TranslatorAgent(BaseToolAgent):
         payload = merge_llm_payload({
             "model": f"{self.model}",
             "messages": [
-                {"role": "system", "content": f"{system_prompt}"},
+                {"role": "system", "content": _append_translation_output_contract(system_prompt)},
                 {"role": "user", "content": f"{text}"}
             ],
-            "temperature": 0.7,
+            "temperature": TRANSLATION_TEMPERATURE,
             "max_new_tokens": 8192
         }, self.custom_json)
 
@@ -655,14 +670,16 @@ class TranslatorAgent(BaseToolAgent):
             "messages": [
                 {
                     "role": "system",
-                    "content": f"{system_prompt}\nWhen translating, you must strictly use the following glossary for substitution. This is the highest priority rule to ensure the consistency of terms throughout the text.\n<Glossary>:\n{self.term_dict}\nNow, please translate the following new paragraph. Maintain the terminology from the glossary provided."
+                    "content": _append_translation_output_contract(
+                        f"{system_prompt}\nWhen translating, you must strictly use the following glossary for substitution. This is the highest priority rule to ensure the consistency of terms throughout the text.\n<Glossary>:\n{self.term_dict}\nNow, please translate the following new paragraph. Maintain the terminology from the glossary provided."
+                    )
                 },
                 {
                     "role": "user",
                     "content": f"[Current LaTeX Paragraph]:\n{text}"
                 }
             ],
-            "temperature": 0.7,
+            "temperature": TRANSLATION_TEMPERATURE,
             # "max_length": 100000,
             "max_new_tokens": 8192
         }, self.custom_json)
@@ -726,14 +743,14 @@ class TranslatorAgent(BaseToolAgent):
             "messages": [
                 {
                     "role": "system",
-                    "content": system_content
+                    "content": _append_translation_output_contract(system_content)
                 },
                 {
                     "role": "user",
                     "content": f"{user_prompt}"
                 }
             ],
-            "temperature": 0.7,
+            "temperature": TRANSLATION_TEMPERATURE,
             # "max_length": 100000,
             "max_new_tokens": 8192
         }, self.custom_json)
@@ -1095,6 +1112,7 @@ class TranslatorAgent(BaseToolAgent):
         return "\n".join(merged_content)
 
     def build_term_dict(self):
+        """合并术语来源；plain 仅加载指定分类，terms 允许回退默认词表。"""
         placeholder_terms = {
             key: value
             for key, value in self.term_dict.items()
@@ -1136,9 +1154,9 @@ class TranslatorAgent(BaseToolAgent):
                         term_dict_loaded = True
                     except FileNotFoundError:
                         continue
-                if not term_dict_loaded:
+                if not term_dict_loaded and self.trans_mode == "terms":
                     default_terms.update(self._load_default_terms_file())
-            else:
+            elif self.trans_mode == "terms":
                 default_terms.update(self._load_default_terms_file())
 
         self.term_dict.update(merge_term_pairs(

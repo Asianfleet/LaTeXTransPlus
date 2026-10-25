@@ -156,6 +156,31 @@ class LlmRequestPayloadTests(unittest.TestCase):
             CUSTOM_JSON,
         )
 
+    def test_translator_requests_use_low_temperature_and_output_contract(self):
+        """Translation requests should use a stable LaTeX-only output contract."""
+        agent = TranslatorAgent(
+            config={
+                "source_language": "en",
+                "target_language": "ch",
+                "llm_config": {
+                    "api_key": "test-key",
+                    "base_url": "https://example.test",
+                    "custom_json": {},
+                },
+            }
+        )
+        session = _CapturingAsyncSession()
+
+        asyncio.run(agent._request_llm_for_trans_with_terms(
+            "Translate only.", "A paragraph.", "1", "sec", session,
+        ))
+
+        payload = session.payloads[0]
+        self.assertEqual(payload["temperature"], 0.2)
+        system_prompt = payload["messages"][0]["content"]
+        self.assertIn("inserted verbatim into a LaTeX source file", system_prompt)
+        self.assertIn("Never output a Markdown code fence", system_prompt)
+
     def test_terminology_request_includes_custom_json_at_top_level(self):
         agent = TerminologyAgent(
             config={

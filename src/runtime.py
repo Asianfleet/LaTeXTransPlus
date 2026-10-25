@@ -10,6 +10,7 @@ from typing import Any, Callable, ContextManager, Dict, Iterable, List, Optional
 import toml
 
 from src.agents.coordinator_agent import CoordinatorAgent
+from src.agents.tool_agents.translator_agent import normalize_translation_mode
 from src.config import build_llm_custom_json, load_llm_profile, resolve_llm_api_key
 from src.engines.base import engine_config, engine_runtime_fields, normalize_engine
 from src.engines.heavy import HeavyEngine
@@ -236,7 +237,8 @@ def prepare_projects(
                 )
             else:
                 projects.extend(batch_download_arxiv_tex(paper_list, projects_dir))
-            if not config.get("user_term"):
+            # plain 的内置术语只来自显式分类，避免自动抓取覆盖空配置。
+            if normalize_translation_mode(config.get("mode", "plain")) == "terms" and not config.get("user_term"):
                 if prepare_log_callback:
                     config["category"] = get_arxiv_category(
                         paper_list,

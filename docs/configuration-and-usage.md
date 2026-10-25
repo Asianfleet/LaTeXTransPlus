@@ -101,6 +101,8 @@ TUI 设置页在“LLM 配置 profile”下方提供“思考强度”下拉框�
 
 ### 术语与校验
 
+Heavy 在 `mode = "plain"` 时，只加载 `category` 中当前项目明确列出的分类对应的内置术语文件。例如，`category = { "2507.02199" = ["cs.AI", "cs.LG"] }` 会加载 `terms/cs.AI.csv` 和 `terms/cs.LG.csv`。`category` 为空、没有当前项目的分类或分类文件不存在时，不回退到 `terms/default.csv`；`mode = "terms"` 保留默认词表回退。用户术语和项目术语仍按原规则合并，非英译中语言对不加载这些英中内置词表。通过 arXiv 输入准备项目时，`plain` 会保留配置中的分类，不自动填充或覆盖 `category`；`terms` 在未设置 `user_term` 时仍会自动获取论文分类。
+
 启用项目术语并在翻译前人工审核：
 
 ```toml
