@@ -51,11 +51,12 @@ from src.tui.runner import run_tui_task as _DEFAULT_RUN_TUI_TASK
 from src.tui.runner import run_tui_task
 from src.tui.state import ProjectStatus, ProjectViewState, TaskViewState
 from src.tui.project_list import (
-    PROJECT_SORT_BY_INITIAL,
+    PROJECT_SORT_BY_CREATED_AT,
     PROJECT_SORT_OPTIONS,
     ProjectListItem,
     sort_project_states,
 )
+from src.tui.task_table import TASK_ID_COLUMN, TASK_TABLE_COLUMNS, sort_task_table_rows
 from src.tui.sidebar import SidebarDivider, SidebarLayout
 from src.tui.widgets import (
     APP_TITLE_ART,
@@ -133,7 +134,11 @@ class LaTeXTransTuiApp(App[None]):
         self.selected_project_name = None
         self.selected_task_id = None
         self.selected_project_keys = set()
-        self.project_sort_mode = PROJECT_SORT_BY_INITIAL
+        self.project_sort_mode = PROJECT_SORT_BY_CREATED_AT
+        self.project_sort_descending = True
+        self.task_sort_column = TASK_ID_COLUMN
+        self.task_sort_descending = True
+        self._task_table_project_keys: list[tuple[str, str]] = []
         self.load_history_on_mount = load_history_on_mount
         self.task_processes: dict[str, TuiTaskProcess] = {}
         self.cancelled_task_ids: set[str] = set()
@@ -177,12 +182,18 @@ class LaTeXTransTuiApp(App[None]):
             with Vertical(id="sidebar"):
                 yield Button("新建任务", id="new-task-button", flat=True)
                 yield Button("项目管理", id="project-manager-button", flat=True)
-                yield Select(
-                    PROJECT_SORT_OPTIONS,
-                    id="project-sort-select",
-                    value=self.project_sort_mode,
-                    allow_blank=False,
-                )
+                with Horizontal(id="project-sort-controls"):
+                    yield Select(
+                        PROJECT_SORT_OPTIONS,
+                        id="project-sort-select",
+                        value=self.project_sort_mode,
+                        allow_blank=False,
+                    )
+                    direction_button = Button("↓", id="project-sort-direction-button", flat=True)
+                    # 去掉默认行填充，避免三列按钮的中间行向右多绘制两列。
+                    # Textual 8.2 的 TCSS 不接受 line-pad: 0，需直接设置样式。
+                    direction_button.styles.line_pad = 0
+                    yield direction_button
                 yield ListView(id="project-list")
                 yield Button("设置", id="settings-button", flat=True)
             yield SidebarDivider(id="sidebar-rule")
@@ -336,6 +347,7 @@ class LaTeXTransTuiApp(App[None]):
         project_states = sort_project_states(
             self._iter_project_states(),
             self.project_sort_mode,
+            descending=self.project_sort_descending,
         )
         selected_index: int | None = None
         for index, (task, project) in enumerate(project_states):
@@ -383,11 +395,18 @@ class LaTeXTransTuiApp(App[None]):
         project_states = self._iter_project_states()
         valid_keys = {(task.task_id, project.project_name) for task, project in project_states}
         self.selected_project_keys.intersection_update(valid_keys)
+        project_states = sort_task_table_rows(
+            project_states, self.task_sort_column, self.task_sort_descending,
+            self.selected_project_keys,
+        )
+        self._task_table_project_keys = [
+            (task.task_id, project.project_name) for task, project in project_states
+        ]
         cursor = table.cursor_coordinate
         scroll_x, scroll_y = table.scroll_x, table.scroll_y
         table.clear(columns=True)
         for label, width in zip(
-            ("选中", "项目", "标题", "翻译模型", "状态", "任务 id"),
+            TASK_TABLE_COLUMNS,
             self._project_column_widths(table),
         ):
             table.add_column(label, width=width)
@@ -438,11 +457,9 @@ class LaTeXTransTuiApp(App[None]):
 
     def _toggle_project_selection(self, row_index: int) -> None:
         """切换项目管理表指定行的选择状态并刷新按钮。"""
-        project_states = self._iter_project_states()
-        if not 0 <= row_index < len(project_states):
+        if not 0 <= row_index < len(self._task_table_project_keys):
             return
-        task, project = project_states[row_index]
-        key = (task.task_id, project.project_name)
+        key = self._task_table_project_keys[row_index]
         if key in self.selected_project_keys:
             self.selected_project_keys.remove(key)
         else:
@@ -592,6 +609,18 @@ class LaTeXTransTuiApp(App[None]):
         task_id, project_name = event.item.project_key
         self.select_project(project_name, task_id)
 
+    def on_data_table_header_selected(self, event: DataTable.HeaderSelected) -> None:
+        """点击任务表表头时切换排序列，再次点击同列反转方向。"""
+        if event.data_table.id != "task-table":
+            return
+        event.stop()
+        if self.task_sort_column == event.column_index:
+            self.task_sort_descending = not self.task_sort_descending
+        else:
+            self.task_sort_column = event.column_index
+            self.task_sort_descending = False
+        self.refresh_task_table()
+
     def on_data_table_row_selected(self, event: DataTable.RowSelected) -> None:
         """切换项目管理表结果行的选中状态。"""
         if event.data_table.id == "task-table":
@@ -622,6 +651,10 @@ class LaTeXTransTuiApp(App[None]):
         elif event.button.id == "retry-translation-button":
             if hasattr(self, "_retry_selected_projects"):
                 self._retry_selected_projects()
+        elif event.button.id == "project-sort-direction-button":
+            self.project_sort_descending = not self.project_sort_descending
+            event.button.label = "↓" if self.project_sort_descending else "↑"
+            self.refresh_project_list()
         elif event.button.id == "clear-project-selection-button":
             self._clear_project_selection()
 

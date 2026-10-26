@@ -30,13 +30,15 @@ PROJECT_SORT_OPTIONS: tuple[tuple[str, ProjectSortMode], ...] = (
 def sort_project_states(
     project_states: Sequence[ProjectStateRow],
     mode: str,
+    *,
+    descending: bool = False,
 ) -> list[ProjectStateRow]:
     """按侧栏选择的模式稳定排序项目状态，不修改输入序列。"""
     if mode == PROJECT_SORT_BY_TITLE:
-        return sorted(project_states, key=_title_sort_key)
+        return sorted(project_states, key=_title_sort_key, reverse=descending)
     if mode == PROJECT_SORT_BY_CREATED_AT:
-        return sorted(project_states, key=_created_at_sort_key)
-    return sorted(project_states, key=_initial_sort_key)
+        return sorted(project_states, key=_created_at_sort_key, reverse=descending)
+    return sorted(project_states, key=_initial_sort_key, reverse=descending)
 
 
 def _initial_sort_key(row: ProjectStateRow) -> tuple[str]:
@@ -50,8 +52,8 @@ def _title_sort_key(row: ProjectStateRow) -> tuple[str]:
 
 
 def _created_at_sort_key(row: ProjectStateRow) -> tuple[float]:
-    """返回按创建时间倒序排列的数值排序键。"""
-    return (-_creation_timestamp(row),)
+    """返回创建时间的数值排序键。"""
+    return (_creation_timestamp(row),)
 
 
 def _normalized_text(value: str) -> str:

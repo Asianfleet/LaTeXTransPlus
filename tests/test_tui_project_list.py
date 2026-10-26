@@ -55,9 +55,30 @@ class ProjectListSortingTests(unittest.TestCase):
             ["zeta", "alpha", "beta"],
         )
         self.assertEqual(
-            [project.project_name for _, project in sort_project_states(rows, PROJECT_SORT_BY_CREATED_AT)],
+            [project.project_name for _, project in sort_project_states(rows, PROJECT_SORT_BY_CREATED_AT, descending=True)],
             ["alpha", "zeta", "beta"],
         )
+
+    def test_sort_directions_keep_equal_keys_stable_and_leave_input_unchanged(self):
+        """方向切换反转排序键，同时保留相同创建时间项目的相对顺序。"""
+        older = TaskViewState(input_type="arxiv", inputs=[], task_id="20261001T120000.000")
+        newer = TaskViewState(input_type="arxiv", inputs=[], task_id="20261003T120000.000")
+        rows = [
+            (older, ProjectViewState(project_name="zeta", title="Alpha")),
+            (older, ProjectViewState(project_name="beta", title="Zulu")),
+            (newer, ProjectViewState(project_name="alpha", title="Middle")),
+        ]
+        original = list(rows)
+        for mode, descending, expected in (
+            (PROJECT_SORT_BY_CREATED_AT, False, ["zeta", "beta", "alpha"]),
+            (PROJECT_SORT_BY_CREATED_AT, True, ["alpha", "zeta", "beta"]),
+            (PROJECT_SORT_BY_INITIAL, True, ["zeta", "beta", "alpha"]),
+            (PROJECT_SORT_BY_TITLE, True, ["beta", "alpha", "zeta"]),
+        ):
+            with self.subTest(mode=mode, descending=descending):
+                ordered = sort_project_states(rows, mode, descending=descending)
+                self.assertEqual([project.project_name for _, project in ordered], expected)
+                self.assertEqual(rows, original)
 
     def test_equal_sort_keys_preserve_input_order(self):
         """相同首字符或标题时保持项目原有顺序。"""

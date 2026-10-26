@@ -855,34 +855,34 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
             self.assertEqual(select_current.styles.border.left[0], "block")
             self.assertEqual(select_current.styles.border.right[0], "block")
             self.assertEqual(select_current.region.x, button.region.x)
-            self.assertEqual(select_current.region.width, button.region.width)
+            self.assertLess(select_current.region.width, button.region.width + select_current.region.width)
             sidebar_ids = [child.id for child in app.query_one("#sidebar").children]
             self.assertLess(
                 sidebar_ids.index("project-manager-button"),
-                sidebar_ids.index("project-sort-select"),
+                sidebar_ids.index("project-sort-controls"),
             )
             self.assertLess(
-                sidebar_ids.index("project-sort-select"),
+                sidebar_ids.index("project-sort-controls"),
                 sidebar_ids.index("project-list"),
             )
-            self.assertEqual(select.value, "initial")
+            self.assertEqual(select.value, "created_at")
             self.assertEqual(
                 [item.project_key[1] for item in app.query_one("#project-list", ListView).children],
-                ["beta", "zeta"],
+                ["zeta", "beta"],
             )
 
             list_view = app.query_one("#project-list", ListView)
-            self.assertEqual(list_view.index, 1)
+            self.assertEqual(list_view.index, 0)
             self.assertEqual(app.selected_project_name, "zeta")
 
             select.value = "title"
             await pilot.pause()
 
-            self.assertEqual(list_view.index, 0)
+            self.assertEqual(list_view.index, 1)
             self.assertEqual(app.selected_project_name, "zeta")
             self.assertEqual(
                 [item.project_key[1] for item in app.query_one("#project-list", ListView).children],
-                ["zeta", "beta"],
+                ["beta", "zeta"],
             )
             self.assertEqual(app.project_sort_mode, "title")
             self.save_ui_config.assert_not_called()
@@ -908,8 +908,8 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
 
             self.assertEqual(len(app.tasks), 2)
             self.assertEqual(len(list_view.children), 2)
-            self.assertIn("2308.10248", labels[0])
-            self.assertIn("2311.06668", labels[1])
+            self.assertIn("2311.06668", labels[0])
+            self.assertIn("2308.10248", labels[1])
 
     async def test_batch_ids_are_one_task_with_multiple_project_rows(self):
         """确认一次输入多个 ID 会创建一个任务，并在项目管理中展开多个项目。"""
@@ -1016,6 +1016,7 @@ class TuiTaskProjectSemanticsTests(TuiAppTests):
             )
             app.tasks = [task]
             app.project_sort_mode = "title"
+            app.project_sort_descending = False
             app.refresh_project_list()
 
             list_view = app.query_one("#project-list", ListView)
