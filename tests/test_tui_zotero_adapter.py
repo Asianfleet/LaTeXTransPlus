@@ -182,6 +182,27 @@ class ZoteroAdapterTests(unittest.TestCase):
         self.assertEqual(session.get.call_args_list[0].kwargs["params"]["q"], "Paper")
         self.assertEqual(session.get.call_args_list[1].args[0], "http://127.0.0.1:23119/api/groups/42/collections")
 
+    def test_search_items_excludes_child_notes_without_titles(self):
+        """Search results contain only top-level bibliographic items, not child notes."""
+        session = Mock()
+        items_response = Mock()
+        items_response.json.return_value = [
+            {"key": "PAPER", "data": {"itemType": "preprint", "title": "Paper"}},
+            {
+                "key": "NOTE",
+                "data": {"itemType": "note", "parentItem": "PAPER"},
+            },
+        ]
+        items_response.raise_for_status.return_value = None
+        collections_response = Mock()
+        collections_response.json.return_value = []
+        collections_response.raise_for_status.return_value = None
+        session.get.side_effect = [items_response, collections_response]
+
+        result = ZoteroAdapter(session=session).search_items("Paper", "0", "user")
+
+        self.assertEqual([item["item_key"] for item in result], ["PAPER"])
+        self.assertEqual([item["title"] for item in result], ["Paper"])
     def test_match_items_by_archive_id_filters_archive_location_locally(self):
         """Auto-match returns items whose archive ID contains the current arXiv ID."""
         session = Mock()

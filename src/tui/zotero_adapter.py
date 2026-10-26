@@ -65,9 +65,19 @@ class ZoteroAdapter:
     def search_items(self, query: str, library_id: str, library_type: str) -> list[dict[str, Any]]:
         """Search existing Zotero items in a selected library through the local API."""
         items = self._get_local_items(library_id, library_type, {"q": query, "itemType": "-attachment"})
+        items = [item for item in items if self._is_top_level_search_item(item)]
         collection_names = self._get_collection_names(library_id, library_type)
         return [self._normalize_local_item(item, library_id, library_type, collection_names) for item in items]
 
+    @staticmethod
+    def _is_top_level_search_item(item: dict[str, Any]) -> bool:
+        """Return whether a local Zotero result is a selectable top-level item."""
+        data = item.get("data", {}) if isinstance(item, dict) else {}
+        if not isinstance(data, dict):
+            return False
+        if data.get("parentItem"):
+            return False
+        return str(data.get("itemType") or "").lower() != "note"
     def match_items_by_archive_id(self, arxiv_id: str, library_id: str, library_type: str) -> list[dict[str, Any]]:
         """Return local Zotero items whose archive ID field contains the arXiv ID."""
         items = self._get_local_items(library_id, library_type, {"itemType": "-attachment"})
